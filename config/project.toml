@@ -1,0 +1,65 @@
+[paths]
+data_root = "data"
+output_root = "outputs"
+work_root = "work"
+log_root = "logs"
+
+[slurm]
+partition = "shared-128"
+account = ""
+time = "02:00:00"
+
+[nldas2]
+base_url = "https://hydro1.gesdisc.eosdis.nasa.gov/data/NLDAS/NLDAS_FORA0125_H.2.0"
+data_dir = "data/forcing/nasa/nldas2/fora0125_hourly_v2.0"
+netrc = "~/.netrc"
+cookies = "~/.urs_cookies"
+download_jobs = 4
+lag_days = 5
+retries = 5
+connect_timeout_seconds = 30
+read_timeout_seconds = 300
+
+[stage4]
+realtime_base_url = "https://nomads.ncep.noaa.gov/pub/data/nccf/com/pcpanl/prod"
+archive_base_url = "https://ftp.emc.ncep.noaa.gov/mmb/sref/st2n4.arch"
+data_dir = "data/forcing/noaa/stage4"
+download_jobs = 4
+realtime_lookback_days = 7
+archive_lag_days = 8
+retries = 5
+connect_timeout_seconds = 30
+read_timeout_seconds = 300
+wgrib2 = "wgrib2"
+
+[prism]
+base_url = "https://services.nacse.org/prism/data/get"
+data_dir = "data/forcing/oregon_state/prism/an/4km/daily"
+variables = ["ppt", "tmean", "tmax", "tmin"]
+refresh_days = 215
+lag_days = 1
+retries = 5
+connect_timeout_seconds = 30
+read_timeout_seconds = 300
+request_delay_seconds = 2
+
+[hrrr]
+base_url = "https://noaa-hrrr-bdp-pds.s3.amazonaws.com"
+data_dir = "data/forcing/noaa/hrrr/conus/3km/hourly"
+download_jobs = 4
+lag_days = 1
+retries = 5
+connect_timeout_seconds = 30
+read_timeout_seconds = 300
+wgrib2 = "wgrib2"
+
+[mrms]
+base_url = "https://noaa-mrms-pds.s3.amazonaws.com"
+data_dir = "data/forcing/noaa/mrms/conus/1km/hourly"
+products = ["pass1", "pass2", "quality"]
+download_jobs = 4
+realtime_lookback_days = 1
+retries = 5
+connect_timeout_seconds = 30
+read_timeout_seconds = 300
+wgrib2 = "wgrib2"

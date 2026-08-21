@@ -1,0 +1,7 @@
+# Hydro Ops recurring jobs
+#
+# Keep this file as the version-controlled source of truth for project schedules.
+# Copy individual entries into `crontab -e` after reviewing paths for the target host.
+
+# Refresh and report forcing coverage every six hours (local cron time).
+0 */6 * * * cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --no-capture-output --name hydro-ops python bin/update_forcing.py >> logs/update-forcing.log 2>&1

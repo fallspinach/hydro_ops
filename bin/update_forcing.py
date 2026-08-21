@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Report forcing coverage and submit any refresh jobs not already active."""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import getpass
+import subprocess
+import sys
+from dataclasses import dataclass
+
+from hydro_ops.config import load_settings
+from hydro_ops.forcing_status import forcing_coverage, format_coverage
+
+
+@dataclass(frozen=True)
+class Workflow:
+    source: str
+    job_name: str
+
+
+WORKFLOWS = (
+    Workflow("nldas2", "nldas2_download"),
+    Workflow("stage4", "stage4_download"),
+    Workflow("prism", "prism_download"),
+    Workflow("hrrr", "hrrr_download"),
+    Workflow("mrms", "mrms_download"),
+)
+
+
+def active_jobs(user: str) -> set[str]:
+    result = subprocess.run(
+        ["squeue", "--noheader", "--user", user, "--format=%j"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--status-only", action="store_true", help="report without submitting")
+    parser.add_argument("--dry-run", action="store_true", help="print submissions without sbatch")
+    parser.add_argument("--force", action="store_true", help="submit even if the job name is active")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    settings = load_settings()
+    settings.work_root.mkdir(parents=True, exist_ok=True)
+    lock_path = settings.work_root / "update_forcing.lock"
+    with lock_path.open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print(f"Another forcing update is active ({lock_path})", file=sys.stderr)
+            return 1
+
+        print(format_coverage(forcing_coverage(settings)), flush=True)
+        if args.status_only:
+            return 0
+
+        try:
+            active = active_jobs(getpass.getuser())
+        except (OSError, subprocess.CalledProcessError) as error:
+            print(f"Could not query SLURM: {error}", file=sys.stderr)
+            return 1
+
+        failures = 0
+        print("\nRefresh submissions:", flush=True)
+        for workflow in WORKFLOWS:
+            if not args.force and workflow.job_name in active:
+                print(f"SKIP   {workflow.source:<8} active job {workflow.job_name}")
+                continue
+            command = [sys.executable, "-m", "hydro_ops.cli", "submit", workflow.source]
+            if args.dry_run:
+                print(f"DRYRUN {workflow.source:<8} {' '.join(command)}")
+                continue
+            result = subprocess.run(command, check=False)
+            if result.returncode:
+                failures += 1
+                print(f"FAILED {workflow.source:<8} exit {result.returncode}", file=sys.stderr)
+            else:
+                print(f"SUBMIT {workflow.source}")
+        return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

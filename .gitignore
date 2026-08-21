@@ -1,0 +1,26 @@
+# Downloaded and generated products
+data/**
+!data/**/
+!data/**/.gitkeep
+outputs/**
+!outputs/.gitkeep
+logs/**
+!logs/.gitkeep
+work/**
+!work/.gitkeep
+
+# Credentials and local overrides
+.netrc
+config/local.env
+config/local.toml
+*.secret
+
+# Editor/Python noise
+.codex/
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+.conda/
+env/
+*.egg-info/

@@ -1,0 +1,29 @@
+name: hydro-ops
+channels:
+  - conda-forge
+dependencies:
+  # Python 3.11 has broad compatibility with hydrologic and geospatial tools.
+  - python=3.11
+
+  # Downloading and configuration
+  - requests
+  - pyyaml
+
+  # Array, tabular, and labeled scientific data
+  - numpy
+  - pandas
+  - xarray
+  - dask
+
+  # NetCDF/HDF data formats and calendars
+  - netcdf4
+  - h5netcdf
+  - cftime
+  - wgrib2
+
+  # Development and testing
+  - pip
+  - pytest
+  - ruff
+  - pip:
+      - -e .
