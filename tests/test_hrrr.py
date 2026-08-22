@@ -17,6 +17,10 @@ INDEX = """1:0:d=2026081500:TMP:2 m above ground:anl:
 4:260:d=2026081500:LAND:surface:anl:
 """
 
+STATIC_INDEX = """1:0:d=2026081500:HGT:surface:anl:
+2:100:d=2026081500:TMP:2 m above ground:anl:
+"""
+
 
 def settings(tmp_path: Path):
     return SimpleNamespace(
@@ -49,6 +53,12 @@ def test_select_record_rejects_missing_or_ambiguous_record():
     duplicate = INDEX + "5:300:d=2026081500:TMP:2 m above ground:anl:\n"
     with pytest.raises(RuntimeError, match="found 2"):
         select_record(parse_index(duplicate), ("TMP", "2 m above ground", "anl"))
+
+
+def test_select_static_terrain_record():
+    record = select_record(parse_index(STATIC_INDEX), ("HGT", "surface", "anl"))
+    assert record.offset == 0
+    assert record.end == 99
 
 
 def test_urls_and_destination_layout(tmp_path):

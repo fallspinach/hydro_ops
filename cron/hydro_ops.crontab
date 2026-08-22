@@ -5,3 +5,7 @@
 
 # Refresh and report forcing coverage every six hours (local cron time).
 0 */6 * * * cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --no-capture-output --name hydro-ops python bin/update_forcing.py >> logs/update-forcing.log 2>&1
+
+# Revisit the latest 72 forcing hours after download submissions have had time to start.
+# Resumability skips already complete hours; the SLURM array is capped at four concurrent tasks.
+15 1,7,13,19 * * * cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --no-capture-output --name hydro-ops python bin/submit_forcing_production.py >> logs/submit-forcing-production.log 2>&1

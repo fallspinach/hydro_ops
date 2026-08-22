@@ -21,6 +21,12 @@ dependencies:
   - cftime
   - wgrib2
 
+  # Grid remapping and NetCDF command-line processing
+  - cdo
+  - nco
+  - esmf
+  - gdal
+
   # Development and testing
   - pip
   - pytest
