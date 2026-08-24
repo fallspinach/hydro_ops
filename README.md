@@ -2,6 +2,12 @@
 
 Portable workflows for meteorological forcing, hydrologic model runs, and analysis on SLURM.
 
+The verified cluster build procedure for the WRF-Hydro 5.4.0 code corresponding to operational
+NWM 3.1 is documented in [WRF-Hydro 5.4.0 build on AWARE](docs/wrf_hydro_build.md).
+The authoritative public NWM 3.1.6 CONUS static-input inventory, downloader, compatibility
+boundaries, and initialization strategy are documented in
+[NWM 3.1 operational inputs](docs/nwm_operational_inputs.md).
+
 ## Python environment
 
 The installed environment is not stored in Git. Its portable specification is
@@ -279,6 +285,11 @@ range-scale, and safeguard diagnostics. Pass that file as `--final-temperature` 
 each hour; the processor selects the matching timestamp and consistently reconstructs `Q2D`
 and `LWDOWN` around the corrected temperature.
 
+For revision processing, `produce_prism_constrained_day.py --complete-root PATH` reuses existing
+eight-field LDASIN hours. It changes only `T2D`, `Q2D`, and `LWDOWN`, preserving precipitation
+and avoiding source remapping. Omit `--complete-root` only when precipitation must be produced
+for the first time.
+
 ### Complete forcing production
 
 The precipitation processor conservatively remaps every available exact-time candidate and
@@ -305,6 +316,18 @@ python bin/process_precipitation_hour.py \
   --remap-grid data/static/nwm/forcing_grid/nwm_conus_1km_scrip.nc \
   --output work/precipitation.nc
 ```
+
+For a complete 12Z-to-12Z forcing day with consistent source availability, batch all 24 hours
+so each multi-gigabyte remapping operator is loaded only once:
+
+```bash
+python bin/process_precipitation_day.py \
+  --day 2026-01-20 \
+  --output-directory work/precipitation/20260120
+```
+
+The daily processor preserves the hourly output schema and source/QC provenance. It rejects a
+day whose candidate set changes within the window so the caller can use the hourly fallback.
 
 Run complete, resumable eight-variable production over an inclusive UTC-hour range with:
 

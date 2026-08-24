@@ -12,9 +12,10 @@ import numpy as np
 from netCDF4 import Dataset
 
 from hydro_ops.forcing.assemble import add_precipitation_to_ldasin
+from hydro_ops.forcing.hybrid import HybridWeights
 from hydro_ops.forcing.precipitation_hour import process_precipitation_hour
 from hydro_ops.forcing.produce import produce_seven_field_hour
-from hydro_ops.forcing.source_selection import source_path
+from hydro_ops.forcing.source_selection import source_path, source_paths
 
 REQUIRED_FINAL_VARIABLES = {
     "T2D", "Q2D", "PSFC", "U2D", "V2D", "SWDOWN", "LWDOWN", "RAINRATE"
@@ -80,8 +81,20 @@ def discover_precipitation_candidates(
         / f"st4_conus.{valid_time:%Y%m%d%H}.01h.grb2.nc",
         "stage4_realtime": layout.stage4_root / "realtime" / directory
         / f"st4_conus.{valid_time:%Y%m%d%H}.01h.grb2.nc",
-        "nldas2": source_path("nldas2", layout.nldas2_root, valid_time),
-        "hrrr": source_path("hrrr", layout.hrrr_root, valid_time),
+        "nldas2": next(
+            (
+                path for path in source_paths("nldas2", layout.nldas2_root, valid_time)
+                if path.is_file()
+            ),
+            source_path("nldas2", layout.nldas2_root, valid_time),
+        ),
+        "hrrr": next(
+            (
+                path for path in source_paths("hrrr", layout.hrrr_root, valid_time)
+                if path.is_file()
+            ),
+            source_path("hrrr", layout.hrrr_root, valid_time),
+        ),
     }
     quality = layout.mrms_root / "quality" / directory / (
         f"MRMS_RadarAccumulationQualityIndex_01H_00.00_{stamp}.grib2.nc"
@@ -112,6 +125,8 @@ def produce_complete_hour(
     work_directory: Path,
     final_temperature: Path | None = None,
     mrms_quality_threshold: float = 0.5,
+    hybrid_weights: HybridWeights | None = None,
+    hybrid_window_cells: int = 33,
     force: bool = False,
 ) -> dict:
     """Produce or resume one complete, provenance-rich eight-field LDASIN hour."""
@@ -143,11 +158,12 @@ def produce_complete_hour(
             valid_time, layout.nldas2_root, layout.hrrr_root, layout.target_grid,
             layout.target_elevation, layout.nldas2_elevation, layout.hrrr_elevation,
             layout.nldas2_bilinear, layout.hrrr_bilinear, seven,
-            final_temperature=final_temperature, work_directory=temp,
+            final_temperature=final_temperature, hybrid_weights=hybrid_weights,
+            hybrid_window_cells=hybrid_window_cells, work_directory=temp,
         )
         process_precipitation_hour(
             candidates, weights, layout.target_grid, precipitation,
-            remap_grid_path=layout.remap_grid, quality_path=quality,
+            valid_time=valid_time, remap_grid_path=layout.remap_grid, quality_path=quality,
             quality_weights=layout.mrms_quality_bilinear if quality else None,
             mrms_quality_threshold=mrms_quality_threshold, work_directory=temp,
         )
@@ -162,6 +178,8 @@ def produce_complete_hour(
         "output": str(output),
         "forcing_source": selected.product,
         "forcing_fallback": selected.fallback_used,
+        "hybrid_weights": None if hybrid_weights is None else hybrid_weights.__dict__,
+        "hybrid_window_cells": hybrid_window_cells,
         "precipitation_candidates": sorted(candidates),
         "precipitation_source_counts": {
             str(int(source)): int(count)

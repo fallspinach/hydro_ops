@@ -8,6 +8,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from hydro_ops.forcing.hybrid import HybridWeights
 from hydro_ops.forcing.operations import OperationalLayout, produce_complete_hour
 
 
@@ -20,6 +21,13 @@ def main() -> int:
     parser.add_argument("--work-directory", type=Path, default=Path("work/forcing_production"))
     parser.add_argument("--final-temperature", type=Path)
     parser.add_argument("--mrms-quality-threshold", type=float, default=0.5)
+    parser.add_argument("--hybrid-temperature-weight", type=float, default=0.0)
+    parser.add_argument("--hybrid-pressure-weight", type=float, default=0.0)
+    parser.add_argument("--hybrid-humidity-weight", type=float, default=0.0)
+    parser.add_argument("--hybrid-longwave-weight", type=float, default=0.0)
+    parser.add_argument("--hybrid-shortwave-weight", type=float, default=0.0)
+    parser.add_argument("--hybrid-wind-weight", type=float, default=0.0)
+    parser.add_argument("--hybrid-window-cells", type=int, default=33)
     parser.add_argument("--continue-on-error", action="store_true")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
@@ -28,6 +36,15 @@ def main() -> int:
     if start > end:
         parser.error("--start must not be after --end")
     layout = OperationalLayout.project_defaults(args.project_root)
+    hybrid_weights = HybridWeights(
+        temperature=args.hybrid_temperature_weight,
+        log_pressure=args.hybrid_pressure_weight,
+        relative_humidity=args.hybrid_humidity_weight,
+        log_longwave_factor=args.hybrid_longwave_weight,
+        clear_sky_index=args.hybrid_shortwave_weight,
+        wind_u=args.hybrid_wind_weight,
+        wind_v=args.hybrid_wind_weight,
+    )
     failed = 0
     current = start
     while current <= end:
@@ -37,6 +54,8 @@ def main() -> int:
                 current, layout, output, work_directory=args.work_directory,
                 final_temperature=args.final_temperature,
                 mrms_quality_threshold=args.mrms_quality_threshold, force=args.force,
+                hybrid_weights=hybrid_weights,
+                hybrid_window_cells=args.hybrid_window_cells,
             )
         except Exception as error:
             if not args.continue_on_error:

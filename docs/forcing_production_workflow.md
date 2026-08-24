@@ -64,7 +64,39 @@ radiation has an observation-based GOES/SRB bias correction.
 HRRR provides hourly, approximately 3-km analyses tied to HRRR terrain and surface physics. It
 offers substantially more mesoscale structure but remains a numerical weather prediction
 analysis with model and data-assimilation biases. HRRR analysis is the timely source while
-NLDAS-2 is delayed, and it is the preferred wind source during the modern HRRR archive.
+NLDAS-2 is delayed. During overlap, NLDAS-2 supplies the observation-informed large-scale and
+hourly retrospective baseline; HRRR is not a wholesale replacement. Instead, an evaluated
+hybrid may add only the mesoscale anomaly that HRRR resolves beyond the effective NLDAS-2
+scale. This distinction is important because remapping 3-km HRRR to 1 km preserves useful
+approximately 3-km structure but does not manufacture 1-km atmospheric information.
+
+### NLDAS-2 baseline plus HRRR anomaly
+
+For a continuous variable `F`, the candidate retrospective hybrid has the conceptual form:
+
+```text
+F_hybrid(x, t) = F_NLDAS_downscaled(x, t) + w(x, t) * A_HRRR(x, t)
+A_HRRR          = F_HRRR_fine - C_to_fine(F_HRRR_fine)
+```
+
+`C_to_fine` means coarsening HRRR to the effective NLDAS/NARR scale and returning it to the
+target grid with a documented, conservative or intensive-variable-appropriate operator. Thus
+`A_HRRR` carries spatial and temporal structure rather than HRRR's large-scale mean bias. The
+weight `w` is fitted only on calibration data and may depend on variable, region, season,
+terrain/elevation class, hour, and weather regime. It is zero wherever independent withheld
+validation does not show material improvement.
+
+The exact anomaly representation is variable-specific. Temperature may use additive anomalies;
+pressure should use log-pressure anomalies; humidity should use bounded RH or vapor-pressure
+space; shortwave should preferably use clear-sky index; longwave must remain consistent with
+the thermodynamic bundle; and wind uses earth-relative vector-component anomalies. Anomalies
+are limited with calibration-derived safeguards, and the coupled temperature-pressure-humidity-
+longwave fields must not be independently mosaicked into a physically inconsistent hour.
+
+This hybrid is a calibration target, not yet an enabled production rule. Until it passes
+withheld validation, stable retrospective output retains NLDAS-2 and near-real-time output uses
+HRRR provisionally. When NLDAS-2 arrives, affected provisional hours are regenerated rather
+than permanently splicing the two products at the latency boundary.
 
 ### Initial hierarchy by output
 
@@ -76,7 +108,7 @@ NLDAS-2 is delayed, and it is the preferred wind source during the modern HRRR a
 | Humidity | NLDAS-2, paired with temperature and pressure | HRRR analysis as the same bundle | Preserve RH; recompute specific humidity |
 | Shortwave | NLDAS-2 initially | HRRR analysis | Preserve night; evaluate HRRR detail independently |
 | Longwave | NLDAS-2, coupled to thermodynamic bundle | HRRR analysis | Cosgrove elevation adjustment |
-| Wind U/V | HRRR analysis wherever archived | HRRR analysis | NLDAS-2 fallback; rotate vectors correctly |
+| Wind U/V | NLDAS-2 baseline plus validated HRRR vector anomalies; NLDAS-2 until validated | HRRR analysis | Rotate vectors correctly; evaluate terrain-flow benefit |
 
 This table is the version-one policy. The three-water-year overlap evaluation may justify
 bias-corrected HRRR or a conditional hierarchy for additional variables. Such a change requires
@@ -367,10 +399,13 @@ correction alters hourly longwave flux.
 
 ### Rationale and source policy
 
-HRRR is the initial preferred source wherever its modern archive is available. Its native
-approximately 3-km terrain and boundary-layer analysis contain more meaningful near-surface
-wind structure than the much coarser NARR information underlying NLDAS-2. NLDAS-2 remains the
-fallback outside HRRR availability and supplies a consistent long historical record.
+HRRR's native approximately 3-km terrain and boundary-layer analysis contain more meaningful
+near-surface wind structure than the much coarser NARR information underlying NLDAS-2, making
+wind one of the strongest candidates for an HRRR refinement. Nevertheless, stable retrospective
+production retains NLDAS-2 as its baseline. HRRR vector anomalies receive nonzero weight only
+in strata where withheld station and hydrologic validation demonstrates improvement. HRRR is
+the direct provisional source during the NLDAS-2 latency window; NLDAS-2 remains the fallback
+outside HRRR availability and supplies the consistent long historical record.
 
 Version one does not apply empirical 1-km terrain-speed enhancement, valley channeling, canopy,
 or exposure corrections. A DEM alone cannot determine these effects reliably, and an
@@ -418,6 +453,65 @@ extremes.
 
 ## Output, provenance, and publication
 
+### Compression and archive layout
+
+HRRR and Stage-IV GRIB conversions are stored as NetCDF4 using shuffle and DEFLATE level 2;
+MRMS uses level 4 because its spatially sparse precipitation and quality fields gain materially
+more storage reduction for a modest write-time cost. Conversion first produces a private
+temporary NetCDF3 file, then `nccopy` creates a
+compressed file. Publication is atomic and requires matching dimensions, variable types, and an
+exact checksum of all unscaled stored values. `bin/compress_forcing_netcdf.py` applies the same
+procedure in place to older files; already-compressed files are skipped, so interrupted migrations
+are resumable.
+
+Hourly files remain the acquisition and late-revision staging unit. Once the forcing workflow is
+validated, compact completed days into daily collections with one shared coordinate grid. This
+removes repeated latitude/longitude arrays and reduces metadata-server load while keeping file
+sizes, revision rewrites, and failure recovery bounded. PRISM is already daily and is not included
+in this compaction step.
+
+Raw HRRR, MRMS, and Stage-IV source artifacts may be retained for a rolling 31-day revision and
+recovery window after remote identity sidecars are implemented. Deletion must remain disabled
+until those sidecars allow the updater to distinguish a current local conversion from a revised
+remote source. NLDAS-2 and PRISM do not have redundant persistent GRIB copies in this workflow.
+
+Create daily collections with `bin/archive_forcing_daily.py`. Supported collections are `nldas2`, `hrrr`,
+`mrms_pass1`, `mrms_pass2`, `mrms_quality`, and the `archive` or `realtime` Stage-IV hourly
+stream. A day is published only when all 24 files have identical schemas, a common static grid,
+strictly increasing times, and every archived time slice exactly matches its hourly source.
+Publication uses an atomic rename and writes a JSON source manifest beside the daily file.
+“Daily” describes file granularity, not data timestep. Daily chunks therefore remain in the same
+product hierarchy as hourly data: `YYYY/MM/product.YYYYMMDD.nc`, while individual hourly files
+remain below `YYYY/MM/DD`. No additional `daily` directory is used.
+Daily MRMS chunks also use DEFLATE level 4. HRRR and Stage-IV daily chunks use level 2.
+NLDAS-2 daily chunks use level 2 and are stored directly below the year as
+`YYYY/NLDAS_FORA0125_H.AYYYYMMDD.020.nc`; their `YYYY/DDD` directories are hourly staging only
+and are removed when empty after verified archival.
+
+```bash
+python bin/archive_forcing_daily.py hrrr --start 2025-01-01 --end 2025-01-31
+python bin/archive_forcing_daily.py nldas2 --start 2025-01-01 --end 2025-01-31
+python bin/archive_forcing_daily.py mrms_pass2 --start 2026-07-01 --end 2026-07-31
+python bin/archive_forcing_daily.py stage4 --stream archive \
+  --start 2026-07-01 --end 2026-07-31
+```
+
+Use `--jobs N` to process independent days in isolated worker processes. NetCDF/HDF5 access is
+not thread-safe in this environment, so the implementation deliberately uses processes rather
+than threads. Size Slurm CPU and memory requests to the worker count; the provided batch entry
+point defaults to 32 workers and 64 GB. Reduce the worker count when source fields are larger or
+the filesystem is under heavy load.
+
+Under Slurm, large GRIB-conversion, CDO/remapping, and daily-NetCDF construction intermediates
+use `/scratch/$SLURM_JOB_USER/job_$SLURM_JOB_ID`. Validated results are copied to a `.part` file
+beside the permanent destination and atomically renamed, so readers never see partial products.
+Network downloads and the final publication copy remain on permanent storage; moving those to
+scratch would add an extra copy without accelerating the network transfer or improving atomicity.
+
+Hourly deletion is opt-in with `--delete-hourly` and is refused inside the configurable
+`--minimum-age-days` window, which defaults to 31 days. Raw GRIB deletion is a separate future
+operation and remains disabled until remote-identity sidecars are available.
+
 The primary forcing file follows the target NWM variable names, dimensions, units, coordinates,
 fill value, and compression/chunking conventions. It contains exactly the expected time steps
 for its publication interval. A sidecar provenance file or diagnostic group contains at least:
@@ -449,9 +543,10 @@ Revisions create versioned artifacts or manifests; they are never overwritten wi
 ### Stable retrospective
 
 - Use final eligible precipitation sources and stable PRISM precipitation.
-- Use NLDAS-2 for temperature, pressure, humidity, and radiation under the version-one policy,
-  except documented gaps.
-- Use HRRR wind where the accepted HRRR archive is available and NLDAS-2 otherwise.
+- Use NLDAS-2 as the large-scale baseline for temperature, pressure, humidity, radiation, and
+  wind under the version-one policy, except documented gaps.
+- Add calibrated HRRR mesoscale anomalies only for variable/region/season/regime strata that
+  improve independent withheld validation; otherwise the anomaly weight is zero.
 - Apply stable PRISM Tmin/Tmax.
 - Publish only after complete-interval and cross-variable validation passes.
 
@@ -477,6 +572,110 @@ Metrics include bias, MAE, RMSE, correlation, diurnal amplitude/phase, distribut
 source-transition jumps, and relevant conservation or physical-consistency errors. A finer grid
 is adopted as the preferred source only when independent evaluation demonstrates material
 benefit without unacceptable discontinuities.
+
+HRRR calibration is version-aware. The primary homogeneous archive begins with the first full
+UTC day under HRRRv4, 2020-12-03; the 2020-12-02 transition day is excluded from homogeneous
+training. Major HRRR versions must be recorded as separate strata and must not be pooled as one
+stationary record. Backfilling older versions can support rare-event sensitivity work, but is
+not needed to extend the core retrospective forcing because NLDAS-2 already supplies the long
+baseline. The HRRRv4 backfill therefore has first priority.
+
+The principal comparison is (A) elevation-downscaled NLDAS-2, (B) bias-corrected HRRR, and
+(C) NLDAS-2 plus HRRR mesoscale anomalies. Evaluation uses calibration/withheld splits and
+independent stations and radiation networks, stratified by region, season, elevation, terrain,
+and event type. Hydrologic and snow-state verification is required in addition to meteorological
+scores before a refinement becomes operational.
+
+The daily PRISM AN archive begins 1981-01-01. Historical backfill therefore acquires `ppt`,
+`tmin`, `tmax`, and derived `tmean` from that date onward at 4-km resolution. NLDAS-2 years
+1979-1980 remain unconstrained by daily PRISM; monthly PRISM products extending to 1895 are not
+substituted for missing daily information. Stable historical grids are downloaded once, while
+the normal updater continues checking the rolling six-month mutable window.
+
+### Implemented experimental hybrid
+
+The target-grid hybrid machinery is implemented but disabled by default. Both sources first
+pass independently through their native-grid normalization, terrain adjustment, vector
+rotation, and direct NWM-grid remapping. A NaN-aware 33-cell box smoother then estimates the
+coarse HRRR component on the 1-km grid, and the residual supplies the candidate mesoscale
+anomaly. The initial 33-km window is configurable and must be calibrated; it is not a claim that
+all NLDAS variables have one exact effective resolution.
+
+The implemented anomaly spaces are:
+
+| Field | Anomaly space and reconstruction |
+|---|---|
+| Temperature | additive kelvin anomaly |
+| Pressure | additive log-pressure anomaly, then exponentiation |
+| Humidity | additive bounded relative-humidity anomaly, then recompute specific humidity |
+| Longwave | additive log anomaly of the Cosgrove longwave factor, then reconstruct from final T/P/RH |
+| Shortwave | additive clear-sky-index anomaly using target solar geometry; preserve night zero |
+| Wind | additive earth-relative U and V anomalies |
+
+Every weight is constrained to `[0, 1]`, and variable-specific anomaly caps set QC bits when
+invoked. Output provenance records the baseline and HRRR components, all weights, and smoothing
+window. A hybrid hour requires both sources; it fails explicitly rather than silently dropping
+an enabled refinement. With all weights at their default zero, the normal NLDAS-first workflow
+is unchanged and does not incur the second HRRR remapping.
+
+Real-overlap testing found rare HRRR cells with diagnosed RH between 110% and 116% when the
+common over-liquid-water convention is applied at all temperatures (3 of about 1.9 million
+finite source cells exceeded 110% in the initial test hour). HRRR therefore uses a provisional
+20% supersaturation tolerance: accepted excursions are clipped to saturation and flagged.
+Larger isolated HRRR outliers are masked and the hybrid retains NLDAS-2 locally rather than
+rejecting the national hour. NLDAS-2 retains the strict 10% whole-input threshold. This
+source-specific policy is subject to calibration review.
+
+For development-only experiments, `bin/produce_forcing_hour.py` accepts separate thermodynamic,
+radiation, and wind weights. For example:
+
+```bash
+python bin/produce_forcing_hour.py YYYYMMDDHH ... \
+  --hybrid-temperature-weight 0.25 \
+  --hybrid-pressure-weight 0.25 \
+  --hybrid-humidity-weight 0.25 \
+  --hybrid-longwave-weight 0.25 \
+  --hybrid-shortwave-weight 0.25 \
+  --hybrid-wind-weight 0.25 \
+  --hybrid-window-cells 33
+```
+
+These values are diagnostic, not production recommendations. PRISM temperature reconciliation
+must operate on the complete 24-hour hybrid sequence so daily extrema and thermodynamic
+reconstruction remain correctly ordered. The single-hour command therefore rejects simultaneous
+hybrid weights and a precomputed final-temperature constraint.
+
+The implemented daily two-pass driver uses the half-open PRISM day
+`[D-1 day 12:00 UTC, D 12:00 UTC)`. It first produces all 24 unconstrained hybrid hours. It then
+remaps PRISM Tmin/Tmax to the NWM grid, applies the affine correction to the complete hybrid
+temperature curve, and revises each hour. Relative humidity is diagnosed from the preliminary
+`T2D/Q2D/PSFC`; final `Q2D` is recomputed at corrected temperature while preserving RH, and
+`LWDOWN` is reconstructed while preserving the hour's Cosgrove longwave factor. Pressure is not
+changed by PRISM because the daily surface-temperature constraint does not imply a change in
+atmospheric column mass. Precipitation is composited afterward, and the 24 complete hourly files
+are also written as one checksum-verified daily LDASIN collection.
+
+`slurm/produce_hybrid_prism_hour.py` supplies the parallel preliminary-hour array and
+`bin/produce_prism_constrained_day.py` performs the dependent constraint, reconstruction,
+precipitation, and daily publication stage.
+
+The first complete full-CONUS test used PRISM day 2023-01-22 and experimental 0.25 HRRR
+weights. It published 24 complete hourly files plus a 24-record daily file. About 7.36 million
+cells received an unconstrained affine Tmin/Tmax match; about 135 thousand valid-PRISM cells
+invoked the configured temperature-range scale cap, so their extrema intentionally do not match
+PRISM exactly. Cells without a valid PRISM constraint retained the hybrid baseline and were
+flagged. This confirms the guardrails operate as designed; the 0.25 weights and scale bounds
+remain experimental rather than calibrated production values.
+
+A January 2026 scaling test separated precipitation production from PRISM temperature
+revision. Reusing complete hourly LDASIN files reduced a temperature-only PRISM revision from
+82 minutes to 11 minutes while preserving all precipitation fields exactly. Daily batched
+precipitation processing then normalized 24 hours per available product and applied each static
+CDO operator once per product, rather than once per product per hour. For PRISM day 2026-01-20,
+the four precipitation candidates plus MRMS quality required five remap calls instead of 120,
+completed in 8 minutes 28 seconds, and reproduced all 24 hourly `RAINRATE`, source ID,
+confidence, QC, and mask fields exactly. Production integration should retain an hourly fallback
+for days whose candidate availability changes within the 24-hour window.
 
 ## Implementation phases
 
@@ -532,6 +731,9 @@ implemented and tested:
   configured solar horizon.
 - Exact-time whole-hour source selection that prefers structurally valid NLDAS-2 and falls back
   to HRRR without mixing thermodynamic, radiation, or wind products within an hour.
+- Experimental NLDAS-2-plus-HRRR target-grid hybrid transformations for all non-precipitation
+  fields. Zero weights reproduce the NLDAS-2 baseline; nonzero weights and the smoothing scale
+  remain uncalibrated and are not enabled in routine production.
 - Runtime rejection of stale bilinear weights using source and NWM-grid fingerprints, plus
   terrain coverage/range validation and SHA-256 provenance for source and target elevations.
 - Elevation-aware PRISM Tmin/Tmax preparation and guarded 24-hour affine reconciliation. A real

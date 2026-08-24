@@ -20,9 +20,13 @@ def main() -> int:
     index = int(os.environ["SLURM_ARRAY_TASK_ID"])
     valid = start + timedelta(hours=index)
     python = os.environ.get("HYDRO_OPS_PYTHON", sys.executable)
+    scratch = (
+        f"/scratch/{os.environ['SLURM_JOB_USER']}/job_{os.environ['SLURM_JOB_ID']}"
+        "/forcing-production"
+    )
     command = [
         python, "bin/produce_forcing_range.py", "--start", valid.strftime("%Y%m%d%H"),
-        "--end", valid.strftime("%Y%m%d%H"),
+        "--end", valid.strftime("%Y%m%d%H"), "--work-directory", scratch,
     ]
     return subprocess.run(command, check=False).returncode
 

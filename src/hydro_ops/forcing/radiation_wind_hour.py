@@ -218,6 +218,7 @@ def process_radiation_wind_hour(
     weights_path: Path,
     output_path: Path,
     *,
+    valid_time: datetime | None = None,
     cdo: str = "cdo",
     work_directory: Path | None = None,
     shortwave_negative_tolerance: float = 0.1,
@@ -243,7 +244,7 @@ def process_radiation_wind_hour(
     scratch_parent = output_path.parent if work_directory is None else work_directory
     scratch_parent.mkdir(parents=True, exist_ok=True)
     with (
-        open_normalized_forcing(source_path, product) as source,
+        open_normalized_forcing(source_path, product, valid_time=valid_time) as source,
         tempfile.TemporaryDirectory(
             prefix="hydro_ops_radiation_wind_", dir=scratch_parent
         ) as temporary,

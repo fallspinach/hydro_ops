@@ -55,6 +55,7 @@ def _write_reference_file(
     source: xr.Dataset,
     source_elevation: np.ndarray,
     relative_humidity_tolerance: float,
+    reject_material_rh_excursions: bool,
 ) -> None:
     state = prepare_reference_state(
         _field(source, "air_temperature"),
@@ -63,6 +64,7 @@ def _write_reference_file(
         _field(source, "downward_longwave"),
         source_elevation,
         relative_humidity_tolerance=relative_humidity_tolerance,
+        reject_material_rh_excursions=reject_material_rh_excursions,
     )
     source_field = source["air_temperature"].squeeze(drop=True)
     dimensions = source_field.dims
@@ -252,11 +254,13 @@ def process_thermodynamic_hour(
     weights_path: Path,
     output_path: Path,
     *,
+    valid_time: datetime | None = None,
     final_temperature_path: Path | None = None,
     final_temperature_variable: str = "T2D",
     cdo: str = "cdo",
     work_directory: Path | None = None,
     relative_humidity_tolerance: float = 0.10,
+    reject_material_rh_excursions: bool = True,
     validate_weights: bool = True,
     force: bool = False,
 ) -> Path:
@@ -278,7 +282,7 @@ def process_thermodynamic_hour(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     scratch_parent = output_path.parent if work_directory is None else work_directory
     scratch_parent.mkdir(parents=True, exist_ok=True)
-    with open_normalized_forcing(source_path, product) as source:
+    with open_normalized_forcing(source_path, product, valid_time=valid_time) as source:
         with xr.open_dataset(source_elevation_path, mask_and_scale=True) as terrain:
             source_elevation = _field(terrain, source_elevation_variable)
         source_shape = _field(source, "air_temperature").shape
@@ -307,7 +311,11 @@ def process_thermodynamic_hour(
             reference_path = work / "reference.nc"
             remapped_path = work / "remapped.nc"
             _write_reference_file(
-                reference_path, source, source_elevation, relative_humidity_tolerance
+                reference_path,
+                source,
+                source_elevation,
+                relative_humidity_tolerance,
+                reject_material_rh_excursions,
             )
             command = build_remap_command(
                 executable, target_grid_path, weights_path, reference_path, remapped_path

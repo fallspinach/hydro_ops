@@ -20,6 +20,7 @@ from urllib3.util.retry import Retry
 
 from hydro_ops.config import Settings
 from hydro_ops.download.http import apply_remote_mtime, local_matches_remote
+from hydro_ops.forcing.daily_archive import verified_daily_archive
 
 LOG = logging.getLogger(__name__)
 NETCDF_MAGICS = (b"CDF\x01", b"CDF\x02", b"\x89HDF\r\n\x1a\n")
@@ -160,6 +161,13 @@ class Nldas2Downloader:
                 self.settings.nldas_data_dir / year / doy,
             )
             return 0, 0
+        daily = (
+            self.settings.nldas_data_dir / year /
+            f"NLDAS_FORA0125_H.A{stamp}.020.nc"
+        )
+        if is_netcdf(daily) and verified_daily_archive(daily, day):
+            LOG.info("SKIP verified daily archive %s", daily)
+            return 24, 0
         granules = self.discover(day)
         downloaded = 0
         with concurrent.futures.ThreadPoolExecutor(

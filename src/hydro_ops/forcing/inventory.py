@@ -143,8 +143,8 @@ def inspect_forcing_file(path: Path, product: str) -> FileInventory:
                 )
             if "time" not in dataset[name].dimensions:
                 issues.append(f"variable {name} has no time dimension")
-        if "time" not in dataset.dimensions or dataset.dimensions["time"].size != 1:
-            issues.append("expected exactly one time value")
+        if "time" not in dataset.dimensions or dataset.dimensions["time"].size < 1:
+            issues.append("expected at least one time value")
         for name in GRID_VARIABLES[product]:
             if name not in dataset.variables:
                 issues.append(f"missing grid variable {name}")

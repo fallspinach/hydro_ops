@@ -27,7 +27,7 @@ VARIABLES = {
     ),
 }
 THERMODYNAMIC_VARIABLES = {"T2D", "Q2D", "PSFC", "LWDOWN"}
-SOURCE_IDS = {"nldas2": 1, "hrrr": 2}
+SOURCE_IDS = {"nldas2": 1, "hrrr": 2, "nldas2_hrrr_hybrid": 3}
 
 
 def assemble_seven_field_hour(
@@ -61,6 +61,20 @@ def assemble_seven_field_hour(
             raise ValueError("Component products differ; whole-hour source consistency required")
         if thermo_product not in SOURCE_IDS:
             raise ValueError(f"Unknown forcing source {thermo_product!r}")
+        hybrid_provenance = {}
+        if thermo_product == "nldas2_hrrr_hybrid":
+            for attribute in (
+                "hybrid_weights",
+                "hybrid_smoothing_window_cells",
+                "baseline_component",
+                "hrrr_component",
+            ):
+                if attribute in thermo.ncattrs():
+                    hybrid_provenance[f"thermodynamic_{attribute}"] = thermo.getncattr(attribute)
+                if attribute in radiation_wind.ncattrs():
+                    hybrid_provenance[f"radiation_wind_{attribute}"] = radiation_wind.getncattr(
+                        attribute
+                    )
         ny, nx = len(grid.dimensions["y"]), len(grid.dimensions["x"])
         expected_shape = (1, ny, nx)
         for name in VARIABLES:
@@ -86,6 +100,7 @@ def assemble_seven_field_hour(
                         "target_grid": str(target_grid_path),
                         "precipitation_status": "not_present; must be added before model ingestion",
                         "history": f"{datetime.now(UTC).isoformat()} assembled by hydro_ops",
+                        **hybrid_provenance,
                     }
                 )
                 time = output.createVariable("time", "f8", ("time",))
@@ -142,8 +157,8 @@ def assemble_seven_field_hour(
                     zlib=True, complevel=2, shuffle=True, chunksizes=chunks,
                 )
                 source_id.setncatts(
-                    {"flag_values": np.array([0, 1, 2], dtype=np.uint8),
-                     "flag_meanings": "missing nldas2 hrrr"}
+                    {"flag_values": np.array([0, 1, 2, 3], dtype=np.uint8),
+                     "flag_meanings": "missing nldas2 hrrr nldas2_hrrr_hybrid"}
                 )
                 qc = output.createVariable(
                     "forcing_qc_flags", "u4", ("time", "y", "x"),

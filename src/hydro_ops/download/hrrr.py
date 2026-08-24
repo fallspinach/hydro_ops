@@ -6,7 +6,6 @@ import concurrent.futures
 import logging
 import os
 import shutil
-import subprocess
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -16,8 +15,10 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from hydro_ops.config import Settings
+from hydro_ops.download.netcdf_compression import convert_grib_with_wgrib2
 from hydro_ops.download.stage4 import is_grib2
 from hydro_ops.download.stage4_convert import is_netcdf
+from hydro_ops.work import temporary_work_root
 
 LOG = logging.getLogger(__name__)
 
@@ -197,11 +198,11 @@ class HrrrDownloader:
         partial.unlink(missing_ok=True)
         LOG.info("CONVERT %s -> %s", source, destination)
         try:
-            subprocess.run(
-                [executable, str(source), "-netcdf", str(partial)],
-                check=True,
-                capture_output=True,
-                text=True,
+            convert_grib_with_wgrib2(
+                executable,
+                source,
+                partial,
+                work_directory=temporary_work_root(self.settings, "hrrr-conversion"),
             )
             if not is_netcdf(partial):
                 raise RuntimeError(f"wgrib2 did not create valid NetCDF: {source}")

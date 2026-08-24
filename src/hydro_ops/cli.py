@@ -69,6 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     hrrr.add_argument("--dry-run", action="store_true")
     mrms = sources.add_parser("mrms", help="MRMS CONUS hourly precipitation forcing")
     add_dates(mrms)
+    mrms.add_argument("--allow-missing", action="store_true")
     mrms.add_argument("--dry-run", action="store_true")
     submit = actions.add_parser("submit", help="submit a download through SLURM")
     sources = submit.add_subparsers(dest="source", required=True)
@@ -88,6 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     hrrr.add_argument("--dry-run", action="store_true", help="print sbatch command")
     mrms = sources.add_parser("mrms", help="submit MRMS forcing download")
     add_dates(mrms)
+    mrms.add_argument("--allow-missing", action="store_true")
     mrms.add_argument("--dry-run", action="store_true", help="print sbatch command")
     convert = actions.add_parser("convert", help="convert downloaded data")
     sources = convert.add_subparsers(dest="source", required=True)
@@ -265,7 +267,7 @@ def download_mrms(args: argparse.Namespace) -> int:
     if args.date or args.start:
         start, end = date_range(args, 0)
         latest = None
-        allow_missing = False
+        allow_missing = args.allow_missing
     else:
         now = datetime.now(UTC)
         latest = (now - timedelta(minutes=20)).replace(minute=0, second=0, microsecond=0)
@@ -303,6 +305,8 @@ def submit_mrms(args: argparse.Namespace) -> int:
         value = getattr(args, option)
         if value:
             command.extend((f"--{option}", value.isoformat()))
+    if args.allow_missing:
+        command.append("--allow-missing")
     if args.dry_run:
         print(" ".join(command))
         return 0

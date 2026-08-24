@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import IntFlag
 from pathlib import Path
 
@@ -51,7 +52,9 @@ class CompositePrecipitation:
     qc_flags: NDArray[np.uint16]
 
 
-def open_precipitation_candidate(path: Path, product: str) -> xr.Dataset:
+def open_precipitation_candidate(
+    path: Path, product: str, *, valid_time: datetime | None = None
+) -> xr.Dataset:
     """Open one native source as hour-ending accumulated depth or MRMS quality."""
     if product not in {*PRECIPITATION_VARIABLES, "mrms_quality"}:
         raise ValueError(f"Unknown precipitation product {product!r}")
@@ -65,6 +68,14 @@ def open_precipitation_candidate(path: Path, product: str) -> xr.Dataset:
         source.close()
         raise ValueError(f"{path} is missing {variable}")
     field = source[variable]
+    if valid_time is not None and field.sizes.get("time", 0) > 1:
+        requested = np.datetime64(valid_time.replace(tzinfo=None), "ns")
+        available = np.asarray(source.time.values).astype("datetime64[ns]")
+        matches = np.flatnonzero(available == requested)
+        if matches.size != 1:
+            source.close()
+            raise ValueError(f"{path} has no unique value for {valid_time.isoformat()}")
+        field = field.isel(time=[int(matches[0])])
     if field.sizes.get("time") != 1:
         source.close()
         raise ValueError(f"{path} must contain exactly one time")
@@ -74,18 +85,18 @@ def open_precipitation_candidate(path: Path, product: str) -> xr.Dataset:
     else:
         normalized = field.where(field >= 0).rename("precipitation_depth")
         normalized.attrs["units"] = "kg m-2"
-    valid_time = np.asarray(source.time.values).reshape(-1)[0].astype("datetime64[ns]")
-    start_time = valid_time - np.timedelta64(1, "h")
+    selected_valid_time = np.asarray(field.time.values).reshape(-1)[0].astype("datetime64[ns]")
+    start_time = selected_valid_time - np.timedelta64(1, "h")
     dataset = normalized.to_dataset()
     dataset = dataset.assign_coords(
-        time_bounds=(("time", "bounds"), np.array([[start_time, valid_time]]))
+        time_bounds=(("time", "bounds"), np.array([[start_time, selected_valid_time]]))
     )
     dataset.attrs.update(
         {
             "source_product": product,
             "source_file": str(path),
             "accumulation_interval": "(T-1h,T]",
-            "valid_time": np.datetime_as_string(valid_time, unit="s"),
+            "valid_time": np.datetime_as_string(selected_valid_time, unit="s"),
         }
     )
     return dataset

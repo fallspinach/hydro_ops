@@ -7,7 +7,6 @@ import gzip
 import logging
 import os
 import shutil
-import subprocess
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -18,8 +17,10 @@ from urllib3.util.retry import Retry
 
 from hydro_ops.config import Settings
 from hydro_ops.download.http import apply_remote_mtime, local_matches_remote
+from hydro_ops.download.netcdf_compression import convert_grib_with_wgrib2
 from hydro_ops.download.stage4 import is_grib2
 from hydro_ops.download.stage4_convert import is_netcdf
+from hydro_ops.work import temporary_work_root
 
 LOG = logging.getLogger(__name__)
 
@@ -131,7 +132,8 @@ class MrmsDownloader:
                 "install/update the hydro-ops environment"
             )
         item.netcdf.parent.mkdir(parents=True, exist_ok=True)
-        grib = item.netcdf.with_name(f"{item.netcdf.stem}.part.grib2")
+        work_root = temporary_work_root(self.settings, "mrms-conversion")
+        grib = work_root / f"{item.netcdf.stem}.part.grib2"
         partial = item.netcdf.with_name(f"{item.netcdf.name}.part")
         grib.unlink(missing_ok=True)
         partial.unlink(missing_ok=True)
@@ -141,11 +143,8 @@ class MrmsDownloader:
                 shutil.copyfileobj(source, destination)
             if not is_grib2(grib):
                 raise RuntimeError(f"MRMS gzip does not contain GRIB2: {item.compressed}")
-            subprocess.run(
-                [executable, str(grib), "-netcdf", str(partial)],
-                check=True,
-                capture_output=True,
-                text=True,
+            convert_grib_with_wgrib2(
+                executable, grib, partial, level=4, work_directory=work_root
             )
             if not is_netcdf(partial):
                 raise RuntimeError(f"wgrib2 did not create valid NetCDF: {item.compressed}")

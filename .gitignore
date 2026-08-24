@@ -9,6 +9,9 @@ logs/**
 work/**
 !work/.gitkeep
 
+# Reproducibly downloaded third-party model source and local builds
+external/
+
 # Credentials and local overrides
 .netrc
 config/local.env

@@ -18,6 +18,9 @@ from hydro_ops.forcing.normalize import open_normalized_forcing
 from hydro_ops.forcing.physics import (
     DEFAULT_LAPSE_RATE,
     adjust_temperature_range,
+    cosgrove_atmospheric_emissivity,
+    relative_humidity_from_specific_humidity,
+    specific_humidity_from_relative_humidity,
     temperature_at_elevation,
 )
 from hydro_ops.forcing.static_validation import validate_terrain_bundle
@@ -178,7 +181,10 @@ def apply_daily_temperature_constraint(
     for path in baseline_paths:
         with xr.open_dataset(path, mask_and_scale=True) as dataset:
             temperatures.append(_field(dataset, baseline_variable))
-            times.append(datetime.fromisoformat(dataset.attrs["source_valid_time"]))
+            valid_time = dataset.attrs.get("source_valid_time", dataset.attrs.get("valid_time"))
+            if valid_time is None:
+                raise ValueError(f"Baseline file has no valid-time metadata: {path}")
+            times.append(datetime.fromisoformat(valid_time))
     order = np.argsort(times)
     times = [times[index] for index in order]
     temperatures = [temperatures[index] for index in order]
@@ -190,8 +196,11 @@ def apply_daily_temperature_constraint(
         prism_maximum = _field(constraints, "prism_tmax")
     baseline = np.stack(temperatures)
     valid_constraint = np.isfinite(prism_minimum) & np.isfinite(prism_maximum) & (prism_minimum <= prism_maximum)
-    safe_minimum = np.where(valid_constraint, prism_minimum, np.nanmin(baseline, axis=0))
-    safe_maximum = np.where(valid_constraint, prism_maximum, np.nanmax(baseline, axis=0))
+    masked_baseline = np.ma.masked_invalid(baseline)
+    baseline_minimum = masked_baseline.min(axis=0).filled(np.nan)
+    baseline_maximum = masked_baseline.max(axis=0).filled(np.nan)
+    safe_minimum = np.where(valid_constraint, prism_minimum, baseline_minimum)
+    safe_maximum = np.where(valid_constraint, prism_maximum, baseline_maximum)
     adjustment = adjust_temperature_range(
         baseline, safe_minimum, safe_maximum, axis=0,
         minimum_baseline_range=minimum_baseline_range, scale_bounds=scale_bounds,
@@ -226,6 +235,70 @@ def apply_daily_temperature_constraint(
             partial,
             encoding={name: {"zlib": True, "complevel": 2} for name in dataset.data_vars},
         )
+        partial.replace(output_path)
+    except Exception:
+        partial.unlink(missing_ok=True)
+        raise
+    return output_path
+
+
+def apply_constrained_temperature_hour(
+    baseline_path: Path,
+    corrected_day_path: Path,
+    output_path: Path,
+    valid_time: datetime,
+    *,
+    force: bool = False,
+) -> Path:
+    """Apply one corrected temperature and reconstruct Q2D/LWDOWN consistently."""
+    if output_path.exists() and not force:
+        raise FileExistsError(f"Output exists; use --force to replace it: {output_path}")
+    with xr.open_dataset(corrected_day_path, mask_and_scale=True) as corrected:
+        requested = np.datetime64(valid_time.replace(tzinfo=None), "ns")
+        available = np.asarray(corrected["time"].values).astype("datetime64[ns]")
+        matches = np.flatnonzero(available == requested)
+        if matches.size != 1:
+            raise ValueError(f"Corrected day has no unique value for {valid_time.isoformat()}")
+        final_temperature = _field(corrected.isel(time=int(matches[0])), "T2D")
+        constraint = corrected.attrs.get("prism_constraint", "unknown")
+    with Dataset(baseline_path) as baseline:
+        if baseline.getncattr("valid_time") != valid_time.replace(tzinfo=None).isoformat():
+            raise ValueError("Baseline file valid time differs from requested constrained hour")
+        temperature = np.ma.asarray(baseline["T2D"][0]).filled(np.nan)
+        pressure = np.ma.asarray(baseline["PSFC"][0]).filled(np.nan)
+        humidity = np.ma.asarray(baseline["Q2D"][0]).filled(np.nan)
+        longwave = np.ma.asarray(baseline["LWDOWN"][0]).filled(np.nan)
+    relative_humidity = relative_humidity_from_specific_humidity(
+        humidity, temperature, pressure, phase="water"
+    )
+    final_humidity = specific_humidity_from_relative_humidity(
+        relative_humidity, final_temperature, pressure, phase="water"
+    )
+    old_emission = cosgrove_atmospheric_emissivity(
+        temperature, humidity, pressure
+    ) * np.power(temperature, 4)
+    longwave_factor = np.divide(
+        longwave,
+        old_emission,
+        out=np.full(longwave.shape, np.nan, dtype=np.float64),
+        where=np.isfinite(old_emission) & (old_emission > 0),
+    )
+    new_emission = cosgrove_atmospheric_emissivity(
+        final_temperature, final_humidity, pressure
+    ) * np.power(final_temperature, 4)
+    final_longwave = longwave_factor * new_emission
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    partial = output_path.with_name(f"{output_path.name}.part")
+    partial.unlink(missing_ok=True)
+    shutil.copyfile(baseline_path, partial)
+    try:
+        with Dataset(partial, "a") as output:
+            output["T2D"][0] = np.ma.masked_invalid(final_temperature)
+            output["Q2D"][0] = np.ma.masked_invalid(final_humidity)
+            output["LWDOWN"][0] = np.ma.masked_invalid(final_longwave)
+            output.setncattr("temperature_constraint_applied", "yes")
+            output.setncattr("prism_temperature_constraint", str(constraint))
+            output.setncattr("pre_constraint_component", str(baseline_path))
         partial.replace(output_path)
     except Exception:
         partial.unlink(missing_ok=True)

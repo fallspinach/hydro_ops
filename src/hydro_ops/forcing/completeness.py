@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+from hydro_ops.forcing.daily_archive import verified_daily_archive
+
 
 @dataclass(frozen=True)
 class DayCompleteness:
@@ -35,6 +37,9 @@ def _hourly_report(product: str, day: date, found: set[int]) -> DayCompleteness:
 
 
 def nldas2_day(root: Path, day: date) -> DayCompleteness:
+    daily = root / day.strftime("%Y") / f"NLDAS_FORA0125_H.A{day:%Y%m%d}.020.nc"
+    if verified_daily_archive(daily, day):
+        return DayCompleteness("nldas2", day, 24, 24, ())
     directory = root / day.strftime("%Y/%j")
     prefix = f"NLDAS_FORA0125_H.A{day:%Y%m%d}."
     found: set[int] = set()

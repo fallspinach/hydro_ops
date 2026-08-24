@@ -6,12 +6,12 @@ import logging
 import os
 import re
 import shutil
-import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
 
 from hydro_ops.config import Settings
+from hydro_ops.download.netcdf_compression import convert_grib_with_wgrib2
 from hydro_ops.work import temporary_work_root
 
 LOG = logging.getLogger(__name__)
@@ -72,11 +72,11 @@ class Stage4Converter:
         partial.unlink(missing_ok=True)
         LOG.info("CONVERT %s -> %s", source, destination)
         try:
-            subprocess.run(
-                [self.wgrib2, str(source), "-netcdf", str(partial)],
-                check=True,
-                capture_output=True,
-                text=True,
+            convert_grib_with_wgrib2(
+                self.wgrib2,
+                source,
+                partial,
+                work_directory=temporary_work_root(self.settings, "stage4-conversion"),
             )
             if not is_netcdf(partial):
                 raise RuntimeError(f"wgrib2 did not create valid NetCDF: {source}")

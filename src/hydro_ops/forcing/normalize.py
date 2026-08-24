@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import xarray as xr
 
 from hydro_ops.forcing.inventory import inspect_forcing_file
@@ -59,12 +61,24 @@ def _normalize_longitude(dataset: xr.Dataset, name: str) -> xr.Dataset:
     return dataset.assign({name: converted})
 
 
-def open_normalized_forcing(path: Path, product: str) -> xr.Dataset:
+def open_normalized_forcing(
+    path: Path, product: str, *, valid_time: datetime | None = None
+) -> xr.Dataset:
     """Open one validated source file with canonical names, units, and metadata."""
     inventory = inspect_forcing_file(path, product)
     if not inventory.valid:
         raise ValueError(f"Invalid {product} forcing file {path}: {'; '.join(inventory.issues)}")
     source = xr.open_dataset(path, mask_and_scale=True, decode_times=True)
+    selected_time: str | None = inventory.valid_time
+    if valid_time is not None and source.sizes.get("time", 0) > 1:
+        requested = np.datetime64(valid_time.replace(tzinfo=None), "ns")
+        available = np.asarray(source["time"].values).astype("datetime64[ns]")
+        matches = np.flatnonzero(available == requested)
+        if matches.size != 1:
+            source.close()
+            raise ValueError(f"{path} has no unique value for {valid_time.isoformat()}")
+        source = source.isel(time=[int(matches[0])])
+        selected_time = valid_time.replace(tzinfo=None).isoformat()
     if product in SOURCE_VARIABLES:
         mapping = SOURCE_VARIABLES[product]
         dataset = source[list(mapping)].rename(mapping)
@@ -100,7 +114,7 @@ def open_normalized_forcing(path: Path, product: str) -> xr.Dataset:
             "source_product": product,
             "source_file": str(path),
             "source_grid_fingerprint": inventory.grid_fingerprint,
-            "source_valid_time": inventory.valid_time or "unknown",
+            "source_valid_time": selected_time or "unknown",
         }
     )
     return dataset

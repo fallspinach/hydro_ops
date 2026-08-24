@@ -62,17 +62,22 @@ def _validate_and_clip_rh(
     qc_flags: NDArray[np.uint16],
     *,
     tolerance: float,
+    reject_material_excursions: bool = True,
 ) -> NDArray[np.float64]:
     finite = np.isfinite(relative_humidity)
-    if np.any(relative_humidity[finite] < -tolerance):
+    material_low = finite & (relative_humidity < -tolerance)
+    material_high = finite & (relative_humidity > 1.0 + tolerance)
+    if reject_material_excursions and np.any(material_low):
         raise ValueError("Relative humidity is materially below zero")
-    if np.any(relative_humidity[finite] > 1.0 + tolerance):
+    if reject_material_excursions and np.any(material_high):
         raise ValueError("Relative humidity exceeds the configured supersaturation tolerance")
+    material = material_low | material_high
+    qc_flags[material] |= np.uint16(ThermodynamicQC.INVALID_INPUT)
     low = finite & (relative_humidity < 0.0)
     high = finite & (relative_humidity > 1.0)
     qc_flags[low] |= np.uint16(ThermodynamicQC.RH_CLIPPED_LOW)
     qc_flags[high] |= np.uint16(ThermodynamicQC.RH_CLIPPED_HIGH)
-    return np.clip(relative_humidity, 0.0, 1.0)
+    return np.where(material, np.nan, np.clip(relative_humidity, 0.0, 1.0))
 
 
 def prepare_reference_state(
@@ -86,6 +91,7 @@ def prepare_reference_state(
     lapse_rate: float = DEFAULT_LAPSE_RATE,
     relative_humidity_tolerance: float = 0.05,
     saturation_phase: str = "water",
+    reject_material_rh_excursions: bool = True,
 ) -> ReferenceState:
     """Normalize a source thermodynamic bundle to one elevation before remapping."""
     temperature = _array(temperature)
@@ -113,8 +119,12 @@ def prepare_reference_state(
         specific_humidity, temperature, pressure, phase=saturation_phase
     )
     relative_humidity = _validate_and_clip_rh(
-        relative_humidity, qc_flags, tolerance=relative_humidity_tolerance
+        relative_humidity,
+        qc_flags,
+        tolerance=relative_humidity_tolerance,
+        reject_material_excursions=reject_material_rh_excursions,
     )
+    invalid |= ~np.isfinite(relative_humidity)
     reference_temperature = temperature_at_elevation(
         temperature,
         source_elevation,
