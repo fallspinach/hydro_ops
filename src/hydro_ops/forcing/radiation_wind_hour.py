@@ -32,8 +32,11 @@ class RadiationWindQC(IntFlag):
     SHORTWAVE_HIGH = 8
 
 
-def _field(dataset: xr.Dataset, name: str) -> np.ndarray:
-    values = np.asarray(dataset[name].squeeze(drop=True).values, dtype=np.float64)
+def _field(dataset: xr.Dataset, name: str, time_index: int | None = None) -> np.ndarray:
+    field = dataset[name]
+    if time_index is not None and "time" in field.dims:
+        field = field.isel(time=time_index)
+    values = np.asarray(field.squeeze(drop=True).values, dtype=np.float64)
     if values.ndim != 2:
         raise ValueError(f"{name!r} must reduce to one two-dimensional hourly field")
     return values
@@ -105,12 +108,15 @@ def _write_output(
     weights_path: Path,
     solar_elevation_tolerance_degrees: float,
     maximum_shortwave: float,
+    remapped_time_index: int | None = None,
 ) -> None:
     with xr.open_dataset(remapped_path, mask_and_scale=True) as remapped:
-        shortwave = _field(remapped, "shortwave")
-        eastward = _field(remapped, "eastward_wind")
-        northward = _field(remapped, "northward_wind")
-        negative_fraction = _field(remapped, "source_shortwave_negative")
+        shortwave = _field(remapped, "shortwave", remapped_time_index)
+        eastward = _field(remapped, "eastward_wind", remapped_time_index)
+        northward = _field(remapped, "northward_wind", remapped_time_index)
+        negative_fraction = _field(
+            remapped, "source_shortwave_negative", remapped_time_index
+        )
     valid_time = _valid_time(source)
     with Dataset(target_grid_path) as grid:
         active = np.asarray(grid["active_domain"][:], dtype=bool)

@@ -228,6 +228,25 @@ def test_operational_discovery_finds_consolidated_hrrr_day(tmp_path: Path) -> No
     assert quality is None
 
 
+def test_operational_discovery_finds_consolidated_precipitation_days(tmp_path: Path) -> None:
+    layout = OperationalLayout.project_defaults(tmp_path)
+    valid = datetime(2026, 7, 24, 10, tzinfo=UTC)
+    paths = {
+        "mrms_pass2": layout.mrms_root / "pass2/2026/07/mrms_pass2.20260724.nc",
+        "mrms_pass1": layout.mrms_root / "pass1/2026/07/mrms_pass1.20260724.nc",
+        "stage4_archive": (
+            layout.stage4_root / "archive/2026/07/stage4_archive_01h.20260724.nc"
+        ),
+    }
+    quality_path = layout.mrms_root / "quality/2026/07/mrms_quality.20260724.nc"
+    for path in (*paths.values(), quality_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    candidates, quality = discover_precipitation_candidates(valid, layout)
+    assert candidates == paths
+    assert quality == quality_path
+
+
 def test_validate_weight_manifest_rejects_mismatch(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "source.nc"
     target = tmp_path / "target.nc"

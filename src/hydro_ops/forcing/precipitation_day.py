@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from itertools import pairwise
 from pathlib import Path
@@ -80,11 +81,14 @@ def process_precipitation_day(
     cdo: str = "cdo",
     work_directory: Path | None = None,
     validate_weights: bool = True,
+    remap_workers: int = 1,
     force: bool = False,
 ) -> list[Path]:
     """Apply each static remapping operator once to a contiguous multi-hour batch."""
     if not valid_times or len(valid_times) != len(candidate_hours):
         raise ValueError("Valid times and candidate-hour mappings must be nonempty and equal")
+    if remap_workers <= 0:
+        raise ValueError("remap_workers must be positive")
     if len(quality_hours) != len(valid_times):
         raise ValueError("Quality-hour paths must align with valid times")
     for earlier, later in pairwise(valid_times):
@@ -117,6 +121,17 @@ def process_precipitation_day(
         temp = Path(temp)
         remapped_paths: dict[str, Path] = {}
         variables: dict[str, str] = {}
+        commands: list[tuple[str, list[str], Path]] = []
+
+        def run_remap(item: tuple[str, list[str], Path]) -> None:
+            product, command, native = item
+            try:
+                subprocess.run(command, check=True, capture_output=True, text=True)
+            except subprocess.CalledProcessError as error:
+                details = (error.stderr or error.stdout or "no CDO diagnostic").strip()
+                raise RuntimeError(f"CDO {product} batch remapping failed: {details}") from error
+            native.unlink()
+
         for product in items:
             paths = (
                 [path for path in quality_hours if path is not None]
@@ -139,14 +154,17 @@ def process_precipitation_day(
             command = build_remap_command(
                 executable, remap_grid_path, weights, native, remapped
             )
-            try:
-                subprocess.run(command, check=True, capture_output=True, text=True)
-            except subprocess.CalledProcessError as error:
-                details = (error.stderr or error.stdout or "no CDO diagnostic").strip()
-                raise RuntimeError(f"CDO {product} batch remapping failed: {details}") from error
-            native.unlink()
+            item = (product, command, native)
+            if remap_workers == 1:
+                run_remap(item)
+            else:
+                commands.append(item)
             remapped_paths[product] = remapped
             variables[product] = variable
+
+        if commands:
+            with ThreadPoolExecutor(max_workers=min(remap_workers, len(commands))) as executor:
+                list(executor.map(run_remap, commands))
 
         datasets = {
             product: xr.open_dataset(path, mask_and_scale=True)

@@ -16,6 +16,7 @@ from hydro_ops.work import temporary_work_root
 
 LOG = logging.getLogger(__name__)
 CONUS_GRIB2 = re.compile(r"^st4_conus\.[0-9]{10}\.(?:01h|06h|24h)\.grb2$")
+CONUS_HOURLY_GRIB2 = re.compile(r"^st4_conus\.[0-9]{10}\.01h\.grb2$")
 NETCDF_MAGICS = (b"CDF\x01", b"CDF\x02", b"\x89HDF\r\n\x1a\n")
 
 
@@ -98,7 +99,11 @@ class Stage4Converter:
             temporary_path = Path(temporary)
             for member in bundle.getmembers():
                 name = Path(member.name).name
-                if member.name != name or not member.isfile() or not CONUS_GRIB2.fullmatch(name):
+                if (
+                    member.name != name
+                    or not member.isfile()
+                    or not CONUS_HOURLY_GRIB2.fullmatch(name)
+                ):
                     continue
                 selected += 1
                 source = temporary_path / name

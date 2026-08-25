@@ -10,6 +10,8 @@ import sys
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+from netCDF4 import Dataset
+
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -82,12 +84,21 @@ def inspect(daily: Path, cutoff: date) -> dict:
             "raw": raw,
             "bytes": sum(path.stat().st_size for path in [*hourly, *raw] if path.exists()),
         }
-    for path, item in zip(hourly, record["source_files"], strict=True):
-        if not path.is_file():
-            raise FileNotFoundError(f"Manifest source is missing: {path}")
-        if path.stat().st_size != item["bytes"] or path.stat().st_mtime != item["mtime"]:
-            raise ValueError(f"Manifest source changed after aggregation: {path}")
+    present = [path.is_file() for path in hourly]
+    if any(present) and not all(present):
+        raise ValueError(f"Only some manifest sources remain for {daily}")
+    if all(present):
+        for path, item in zip(hourly, record["source_files"], strict=True):
+            if path.stat().st_size != item["bytes"] or path.stat().st_mtime != item["mtime"]:
+                raise ValueError(f"Manifest source changed after aggregation: {path}")
+    else:
+        if len(hourly) != 24 or not daily.is_file() or daily.stat().st_size == 0:
+            raise ValueError(f"Daily archive cannot protect removed hourly sources: {daily}")
+        with Dataset(daily) as dataset:
+            if "time" not in dataset.dimensions or len(dataset.dimensions["time"]) != 24:
+                raise ValueError(f"Daily archive does not contain 24 hourly records: {daily}")
     raw = raw_sources(hourly, daily, day)
+    remaining_hourly = [path for path in hourly if path.is_file()]
     return {
         "day": day,
         "eligible": day <= cutoff,
@@ -95,9 +106,9 @@ def inspect(daily: Path, cutoff: date) -> dict:
         "daily": daily,
         "manifest": manifest_path,
         "record": record,
-        "hourly": hourly,
+        "hourly": remaining_hourly,
         "raw": raw,
-        "bytes": sum(path.stat().st_size for path in [*hourly, *raw]),
+        "bytes": sum(path.stat().st_size for path in [*remaining_hourly, *raw]),
     }
 
 

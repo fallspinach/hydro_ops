@@ -51,6 +51,7 @@ class Stage4Downloader:
 
     def __init__(self, settings: Settings):
         self.settings = settings
+        self._archive_months: dict[str, dict[str, str]] = {}
 
     @property
     def timeout(self) -> tuple[int, int]:
@@ -81,11 +82,36 @@ class Stage4Downloader:
         return [Stage4File(urljoin(remote_dir, name), local_dir / name, "grib2") for name in names]
 
     def archive_file(self, day: date) -> Stage4File:
+        """Return the canonical modern archive location without remote discovery."""
         stamp = day.strftime("%Y%m%d")
         name = f"ST4.{stamp}.tar"
         url = f"{self.settings.stage4_archive_base_url}/{day:%Y%m}/{name}"
         destination = self.settings.stage4_data_dir / "archive" / day.strftime("%Y/%m") / name
         return Stage4File(url, destination, "tar")
+
+    def discover_archive(self, day: date) -> Stage4File:
+        """Discover historical archives, whose remote names may omit ``.tar``."""
+        month = day.strftime("%Y%m")
+        if month not in self._archive_months:
+            remote_dir = f"{self.settings.stage4_archive_base_url}/{month}/"
+            with self._session() as session:
+                response = session.get(remote_dir, timeout=self.timeout)
+                response.raise_for_status()
+            pattern = re.compile(r'href=["\'](ST4\.(\d{8})(?:\.tar)?)["\']')
+            self._archive_months[month] = {
+                stamp: name for name, stamp in pattern.findall(response.text)
+            }
+        stamp = day.strftime("%Y%m%d")
+        try:
+            remote_name = self._archive_months[month][stamp]
+        except KeyError as error:
+            raise FileNotFoundError(f"No Stage-IV stable archive published for {day}") from error
+        local_name = f"ST4.{stamp}.tar"
+        return Stage4File(
+            f"{self.settings.stage4_archive_base_url}/{month}/{remote_name}",
+            self.settings.stage4_data_dir / "archive" / day.strftime("%Y/%m") / local_name,
+            "tar",
+        )
 
     def download_one(self, item: Stage4File, *, refresh: bool = False) -> str:
         valid = is_grib2 if item.kind == "grib2" else is_tar
@@ -132,11 +158,11 @@ class Stage4Downloader:
             items = self.discover_realtime(day)
             refresh = True
         elif stream == "archive":
-            items = [self.archive_file(day)]
-            refresh = False
             if dry_run:
-                LOG.info("Would download Stage-IV archive %s", items[0].url)
+                LOG.info("Would discover and download Stage-IV archive for %s", day)
                 return 0, 0
+            items = [self.discover_archive(day)]
+            refresh = False
         else:
             raise ValueError(f"Unknown Stage-IV stream: {stream}")
         downloaded = 0

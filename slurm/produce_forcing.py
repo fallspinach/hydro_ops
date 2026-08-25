@@ -2,8 +2,7 @@
 #SBATCH --job-name=forcing-production
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=64G
+#SBATCH --cpus-per-task=16
 #SBATCH --time=04:00:00
 """SLURM array entry point: one complete forcing hour per task."""
 

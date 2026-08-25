@@ -470,10 +470,11 @@ removes repeated latitude/longitude arrays and reduces metadata-server load whil
 sizes, revision rewrites, and failure recovery bounded. PRISM is already daily and is not included
 in this compaction step.
 
-Raw HRRR, MRMS, and Stage-IV source artifacts may be retained for a rolling 31-day revision and
-recovery window after remote identity sidecars are implemented. Deletion must remain disabled
-until those sidecars allow the updater to distinguish a current local conversion from a revised
-remote source. NLDAS-2 and PRISM do not have redundant persistent GRIB copies in this workflow.
+Raw HRRR, MRMS, and Stage-IV source artifacts are retained for a rolling 31-day revision and
+recovery window. Older artifacts may be removed only when a verified daily archive records all
+24 source files, contains 24 hourly records, and no partially deleted staging set is present.
+The cleanup manifest records the daily-file checksum and completed removals so interrupted runs
+are resumable. NLDAS-2 and PRISM do not have redundant persistent GRIB copies in this workflow.
 
 Create daily collections with `bin/archive_forcing_daily.py`. Supported collections are `nldas2`, `hrrr`,
 `mrms_pass1`, `mrms_pass2`, `mrms_quality`, and the `archive` or `realtime` Stage-IV hourly
@@ -509,8 +510,9 @@ Network downloads and the final publication copy remain on permanent storage; mo
 scratch would add an extra copy without accelerating the network transfer or improving atomicity.
 
 Hourly deletion is opt-in with `--delete-hourly` and is refused inside the configurable
-`--minimum-age-days` window, which defaults to 31 days. Raw GRIB deletion is a separate future
-operation and remains disabled until remote-identity sidecars are available.
+`--minimum-age-days` window, which defaults to 31 days. `bin/cleanup_archived_forcing.py` removes
+older hourly and raw artifacts only after the verified daily-archive checks above; its default is
+a non-destructive report and deletion additionally requires `--apply`.
 
 The primary forcing file follows the target NWM variable names, dimensions, units, coordinates,
 fill value, and compression/chunking conventions. It contains exactly the expected time steps

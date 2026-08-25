@@ -72,15 +72,36 @@ def discover_precipitation_candidates(
     valid_time = valid_time.astimezone(UTC)
     stamp = valid_time.strftime("%Y%m%d-%H0000")
     directory = valid_time.strftime("%Y/%m/%d")
+    day = valid_time.strftime("%Y%m%d")
+
+    def existing(*paths: Path) -> Path:
+        return next((path for path in paths if path.is_file()), paths[0])
+
     candidates = {
-        "mrms_pass2": layout.mrms_root / "pass2" / directory
-        / f"MRMS_MultiSensor_QPE_01H_Pass2_00.00_{stamp}.grib2.nc",
-        "mrms_pass1": layout.mrms_root / "pass1" / directory
-        / f"MRMS_MultiSensor_QPE_01H_Pass1_00.00_{stamp}.grib2.nc",
-        "stage4_archive": layout.stage4_root / "archive" / directory
-        / f"st4_conus.{valid_time:%Y%m%d%H}.01h.grb2.nc",
-        "stage4_realtime": layout.stage4_root / "realtime" / directory
-        / f"st4_conus.{valid_time:%Y%m%d%H}.01h.grb2.nc",
+        "mrms_pass2": existing(
+            layout.mrms_root / "pass2" / directory
+            / f"MRMS_MultiSensor_QPE_01H_Pass2_00.00_{stamp}.grib2.nc",
+            layout.mrms_root / "pass2" / valid_time.strftime("%Y/%m")
+            / f"mrms_pass2.{day}.nc",
+        ),
+        "mrms_pass1": existing(
+            layout.mrms_root / "pass1" / directory
+            / f"MRMS_MultiSensor_QPE_01H_Pass1_00.00_{stamp}.grib2.nc",
+            layout.mrms_root / "pass1" / valid_time.strftime("%Y/%m")
+            / f"mrms_pass1.{day}.nc",
+        ),
+        "stage4_archive": existing(
+            layout.stage4_root / "archive" / directory
+            / f"st4_conus.{valid_time:%Y%m%d%H}.01h.grb2.nc",
+            layout.stage4_root / "archive" / valid_time.strftime("%Y/%m")
+            / f"stage4_archive_01h.{day}.nc",
+        ),
+        "stage4_realtime": existing(
+            layout.stage4_root / "realtime" / directory
+            / f"st4_conus.{valid_time:%Y%m%d%H}.01h.grb2.nc",
+            layout.stage4_root / "realtime" / valid_time.strftime("%Y/%m")
+            / f"stage4_realtime_01h.{day}.nc",
+        ),
         "nldas2": next(
             (
                 path for path in source_paths("nldas2", layout.nldas2_root, valid_time)
@@ -96,8 +117,11 @@ def discover_precipitation_candidates(
             source_path("hrrr", layout.hrrr_root, valid_time),
         ),
     }
-    quality = layout.mrms_root / "quality" / directory / (
-        f"MRMS_RadarAccumulationQualityIndex_01H_00.00_{stamp}.grib2.nc"
+    quality = existing(
+        layout.mrms_root / "quality" / directory
+        / f"MRMS_RadarAccumulationQualityIndex_01H_00.00_{stamp}.grib2.nc",
+        layout.mrms_root / "quality" / valid_time.strftime("%Y/%m")
+        / f"mrms_quality.{day}.nc",
     )
     return {name: path for name, path in candidates.items() if path.is_file()}, (
         quality if quality.is_file() else None

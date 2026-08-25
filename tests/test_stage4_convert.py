@@ -1,7 +1,11 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from hydro_ops.download.stage4_convert import CONUS_GRIB2, Stage4Converter
+from hydro_ops.download.stage4_convert import (
+    CONUS_GRIB2,
+    CONUS_HOURLY_GRIB2,
+    Stage4Converter,
+)
 
 
 def test_conus_selection_excludes_other_domains_and_gifs():
@@ -9,6 +13,8 @@ def test_conus_selection_excludes_other_domains_and_gifs():
     assert CONUS_GRIB2.fullmatch("st4_conus.2026081212.24h.grb2")
     assert not CONUS_GRIB2.fullmatch("st4_ak.2026081200.06h.grb2")
     assert not CONUS_GRIB2.fullmatch("st4_conus.2026081201.01h.gif")
+    assert CONUS_HOURLY_GRIB2.fullmatch("st4_conus.2026081201.01h.grb2")
+    assert not CONUS_HOURLY_GRIB2.fullmatch("st4_conus.2026081212.24h.grb2")
 
 
 def test_netcdf_destination_keeps_each_source_product_separate(tmp_path, monkeypatch):

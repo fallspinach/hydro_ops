@@ -349,6 +349,25 @@ submission without changing external state using:
 python bin/submit_forcing_production.py --force --dry-run
 ```
 
+For retrospective production, use daily batching instead. It loads each static remapping
+operator once for 24 source timesteps while still publishing 24 independent hourly LDASIN
+files. One UTC day is assigned to each resumable array task; the default concurrency is 16 and
+each task stages intermediates on node-local scratch:
+
+```bash
+python bin/submit_forcing_days.py --start 2025-10-01 --end 2026-08-24 --dry-run
+```
+
+The hourly array remains the fallback for partial days or days on which source availability
+changes within the day.
+
+Within each daily task, precipitation operators are applied sequentially because concurrent
+CDO remaps were slightly slower on node-local scratch in benchmarking. The 24 final hours are
+assembled with four process workers. The SLURM entry point reserves 12 CPUs (approximately
+24 GB under the cluster allocation policy) to accommodate their measured aggregate memory.
+Override these cautiously with `--precipitation-remap-workers` and `--assembly-workers`;
+increasing workers also increases node-local and permanent-storage I/O.
+
 Calibration and validation metrics are deliberately separate from production settings:
 
 ```bash

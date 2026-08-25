@@ -59,6 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage4 = sources.add_parser("stage4", help="NOAA Stage-IV precipitation")
     add_dates(stage4)
     stage4.add_argument("--stream", choices=("realtime", "archive", "both"), default="both")
+    stage4.add_argument("--allow-missing", action="store_true")
     stage4.add_argument("--dry-run", action="store_true")
     prism = sources.add_parser("prism", help="PRISM AN 4-km daily precipitation")
     add_dates(prism)
@@ -79,6 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage4 = sources.add_parser("stage4", help="submit Stage-IV download")
     add_dates(stage4)
     stage4.add_argument("--stream", choices=("realtime", "archive", "both"), default="both")
+    stage4.add_argument("--allow-missing", action="store_true")
     stage4.add_argument("--dry-run", action="store_true", help="print sbatch command")
     prism = sources.add_parser("prism", help="submit PRISM precipitation download")
     add_dates(prism)
@@ -149,7 +151,16 @@ def download_stage4(args: argparse.Namespace) -> int:
                 days=settings.stage4_archive_lag_days
             )
         for day in iter_dates(start, end):
-            downloader.download_day(day, stream, dry_run=args.dry_run)
+            try:
+                downloader.download_day(day, stream, dry_run=args.dry_run)
+            except (FileNotFoundError, RuntimeError) as error:
+                unsupported_archive = "No CONUS Stage-IV GRIB2 members found" in str(error)
+                if not args.allow_missing or (
+                    not isinstance(error, FileNotFoundError) and not unsupported_archive
+                ):
+                    raise
+                reason = "unpublished" if isinstance(error, FileNotFoundError) else "legacy GRIB1"
+                LOG.warning("MISS Stage-IV %s %s (%s)", stream, day, reason)
     return 0
 
 
@@ -171,6 +182,8 @@ def submit_stage4(args: argparse.Namespace) -> int:
         command.append(f"--account={settings.slurm_account}")
     command.append(str(settings.project_root / "slurm" / "download_stage4.py"))
     command.extend(("--stream", args.stream))
+    if args.allow_missing:
+        command.append("--allow-missing")
     for option in ("date", "start", "end"):
         value = getattr(args, option)
         if value:
