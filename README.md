@@ -485,6 +485,9 @@ and stability across seasons and water years.
 The complete evaluation protocol and promotion checklist are documented in
 `docs/precipitation_calibration_validation.md`.
 
+The pre-production scenario matrix and promotion gates for the independently retained NRT and
+stable retrospective streams are documented in `docs/forcing_stream_validation_plan.md`.
+
 The complete eight-variable production design is documented in
 `docs/forcing_production_workflow.md`. It defines common source-selection and revision rules,
 direct remapping, cross-variable coupling, elevation adjustments, quality control, provenance,
