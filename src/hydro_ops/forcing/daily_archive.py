@@ -28,8 +28,10 @@ def _chunks(variable, dimensions: dict[str, int]) -> tuple[int, ...] | None:
 
 def _digest(values) -> str:
     array = np.ma.asarray(values)
-    digest = hashlib.sha256(np.ascontiguousarray(array.data).tobytes())
-    digest.update(np.ascontiguousarray(np.ma.getmaskarray(array)).tobytes())
+    mask = np.ma.getmaskarray(array)
+    canonical = np.where(mask, 0, array.data)
+    digest = hashlib.sha256(np.ascontiguousarray(canonical).tobytes())
+    digest.update(np.ascontiguousarray(mask).tobytes())
     return digest.hexdigest()
 
 
@@ -71,10 +73,23 @@ def create_daily_archive(
     expected_hours: int = 24,
     compression_level: int = 2,
     work_directory: Path | None = None,
+    time_variable_overrides: dict[str, np.ndarray] | None = None,
+    global_attributes: dict[str, Any] | None = None,
+    verification: str = "full",
+    fully_verified_overrides: set[str] | None = None,
 ) -> Path:
     """Combine ordered hourly NetCDF files and verify every stored value."""
     paths = list(paths)
     dimensions, variable_names = _validate_inputs(paths, expected_hours)
+    overrides = {} if time_variable_overrides is None else time_variable_overrides
+    verify_overrides = set(overrides) if fully_verified_overrides is None else fully_verified_overrides
+    if not verify_overrides <= set(overrides):
+        raise ValueError("fully_verified_overrides must be a subset of override variables")
+    if verification not in {"full", "targeted"}:
+        raise ValueError("verification must be 'full' or 'targeted'")
+    unknown = set(overrides) - set(variable_names)
+    if unknown:
+        raise ValueError(f"Override variables are absent from hourly inputs: {sorted(unknown)}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     publishing = destination.with_name(f"{destination.name}.part")
     publishing.unlink(missing_ok=True)
@@ -96,6 +111,7 @@ def create_daily_archive(
                         "history": (
                             f"{datetime.now(UTC).isoformat()} daily archive created by hydro_ops"
                         ),
+                        **({} if global_attributes is None else global_attributes),
                     }
                 )
                 for name in variable_names:
@@ -124,7 +140,10 @@ def create_daily_archive(
                         for name in variable_names:
                             variable = source[name]
                             if "time" not in variable.dimensions:
-                                if _digest(variable[...]) != _digest(output[name][...]):
+                                verify_static = verification == "full" or index == expected_hours - 1
+                                if verify_static and _digest(variable[...]) != _digest(
+                                    output[name][...]
+                                ):
                                     raise ValueError(f"Static variable {name} differs: {path}")
                                 continue
                             axis = variable.dimensions.index("time")
@@ -132,7 +151,22 @@ def create_daily_archive(
                             source_slice[axis] = 0
                             target_slice = [slice(None)] * variable.ndim
                             target_slice[axis] = index
-                            output[name][tuple(target_slice)] = variable[tuple(source_slice)]
+                            if name in overrides:
+                                override = np.asanyarray(overrides[name])
+                                expected_shape = list(variable.shape)
+                                expected_shape[axis] = expected_hours
+                                if list(override.shape) != expected_shape:
+                                    raise ValueError(
+                                        f"Override {name} has shape {override.shape}; "
+                                        f"expected {tuple(expected_shape)}"
+                                    )
+                                override_slice = [slice(None)] * override.ndim
+                                override_slice[axis] = index
+                                output[name][tuple(target_slice)] = np.ma.masked_invalid(
+                                    override[tuple(override_slice)]
+                                )
+                            else:
+                                output[name][tuple(target_slice)] = variable[tuple(source_slice)]
                 time = output.variables.get("time")
                 if time is not None:
                     for attribute in ("begin_date", "begin_time", "end_date", "end_time"):
@@ -156,14 +190,28 @@ def create_daily_archive(
                             variable = source[name]
                             if "time" not in variable.dimensions:
                                 continue
+                            if (
+                                verification == "targeted"
+                                and name not in verify_overrides
+                                and name != "time"
+                                and index not in {0, expected_hours // 2, expected_hours - 1}
+                            ):
+                                continue
                             axis = variable.dimensions.index("time")
                             source_slice = [slice(None)] * variable.ndim
                             source_slice[axis] = 0
                             target_slice = [slice(None)] * variable.ndim
                             target_slice[axis] = index
-                            if _digest(variable[tuple(source_slice)]) != _digest(
-                                output[name][tuple(target_slice)]
-                            ):
+                            expected = (
+                                np.ma.masked_invalid(
+                                    np.asanyarray(overrides[name])[tuple(target_slice)].astype(
+                                        output[name].dtype
+                                    )
+                                )
+                                if name in overrides
+                                else variable[tuple(source_slice)]
+                            )
+                            if _digest(expected) != _digest(output[name][tuple(target_slice)]):
                                 raise RuntimeError(
                                     f"Daily archive verification failed: {path}:{name}"
                                 )
@@ -188,6 +236,9 @@ def create_daily_archive(
             for path in paths
         ],
         "verified": True,
+        "overridden_time_variables": sorted(overrides),
+        "verification": verification,
+        "fully_verified_overrides": sorted(verify_overrides),
     }
     manifest_path = destination.with_suffix(destination.suffix + ".manifest.json")
     manifest_partial = manifest_path.with_suffix(manifest_path.suffix + ".part")

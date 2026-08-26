@@ -132,15 +132,18 @@ def reconcile_prism_day(
     operator: ConservativeOperator,
     *,
     tolerance: float = 1.0e-3,
-    max_iterations: int = 100,
+    max_iterations: int = 20,
     ratio_bounds: tuple[float, float] = (0.1, 10.0),
+    cumulative_ratio_bounds: tuple[float, float] = (0.0, 10.0),
+    maximum_daily_depth: float = 500.0,
+    damping: float = 1.0,
+    allow_synthetic_timing: bool = False,
     dry_tolerance: float = 1.0e-8,
 ) -> ReconciliationResult:
     """Reconcile 24 NWM hours to PRISM using bounded multiplicative projections.
 
-    Missing PRISM cells remain unconstrained. When the baseline is dry but PRISM is wet,
-    a conservative backprojection seeds the daily field and the domain wet-hour profile is
-    used; those cells are explicitly marked as synthetic timing.
+    Missing PRISM cells remain unconstrained. Physically bounded or baseline-dry constraints
+    are flagged and excluded from the active iterative set instead of destabilizing all cells.
     """
     hourly = np.asarray(hourly_depth, dtype=np.float64)
     original_shape = hourly.shape
@@ -170,9 +173,9 @@ def reconcile_prism_day(
         ~np.isfinite(initial_target) | (initial_target <= dry_tolerance)
     )
     if np.any(wet_dry):
-        target_qc[wet_dry] |= np.uint16(
-            ReconciliationQC.BASE_DRY_TARGET_WET | ReconciliationQC.SYNTHETIC_TIMING
-        )
+        target_qc[wet_dry] |= np.uint16(ReconciliationQC.BASE_DRY_TARGET_WET)
+    if allow_synthetic_timing and np.any(wet_dry):
+        target_qc[wet_dry] |= np.uint16(ReconciliationQC.SYNTHETIC_TIMING)
         seed_target = np.where(wet_dry, prism, np.nan)
         seed = operator.backproject_ratio(seed_target, unmapped_value=0.0)
         corrected = np.where((corrected <= dry_tolerance) & (seed > 0), seed, corrected)
@@ -180,27 +183,61 @@ def reconcile_prism_day(
     lower, upper = ratio_bounds
     if not (0 < lower <= 1 <= upper):
         raise ValueError("ratio_bounds must bracket one and be positive")
+    cumulative_lower, cumulative_upper = cumulative_ratio_bounds
+    if not (0 <= cumulative_lower <= 1 <= cumulative_upper):
+        raise ValueError("cumulative_ratio_bounds must bracket one and be nonnegative")
+    if maximum_daily_depth <= 0:
+        raise ValueError("maximum_daily_depth must be positive")
+    if not 0 < damping <= 1:
+        raise ValueError("damping must be in (0, 1]")
+    bounding_base = np.where(np.isfinite(base), np.maximum(base, corrected), 0.0)
+    source_minimum = np.where(
+        np.isfinite(base), np.minimum(bounding_base * cumulative_lower, maximum_daily_depth), 0.0
+    )
+    source_maximum = np.where(
+        np.isfinite(base), np.minimum(bounding_base * cumulative_upper, maximum_daily_depth), 0.0
+    )
+    maximum_target = operator.apply(source_maximum)
+    infeasible_high = (
+        constrained
+        & (prism > dry_tolerance)
+        & (~np.isfinite(maximum_target) | (prism > maximum_target * (1 + tolerance)))
+    )
+    target_qc[infeasible_high] |= np.uint16(ReconciliationQC.RATIO_CAPPED)
+    eligible = constrained & ~infeasible_high
+    if not allow_synthetic_timing:
+        eligible &= ~wet_dry
     converged = False
     residual = np.full(operator.target_size, np.nan)
     iterations = 0
     for iterations in range(1, max_iterations + 1):
         estimate = operator.apply(corrected)
+        residual[constrained] = estimate[constrained] - prism[constrained]
+        relative_error = np.full(operator.target_size, np.inf)
+        relative_error[eligible] = np.abs(residual[eligible]) / np.maximum(prism[eligible], 1.0)
+        active = eligible & (relative_error > tolerance)
+        if not np.any(active):
+            converged = True
+            break
         ratio = np.ones(operator.target_size)
-        wet = constrained & (prism > dry_tolerance) & (estimate > dry_tolerance)
+        wet = active & (prism > dry_tolerance) & (estimate > dry_tolerance)
         ratio[wet] = prism[wet] / estimate[wet]
-        ratio[constrained & (prism <= dry_tolerance)] = 0.0
+        ratio[active & (prism <= dry_tolerance)] = 0.0
         capped = wet & ((ratio < lower) | (ratio > upper))
         target_qc[capped] |= np.uint16(ReconciliationQC.RATIO_CAPPED)
         ratio[wet] = np.clip(ratio[wet], lower, upper)
-        corrected *= operator.backproject_ratio(np.where(constrained, ratio, 1.0))
-        estimate = operator.apply(corrected)
-        residual[constrained] = estimate[constrained] - prism[constrained]
-        scale = np.maximum(prism[constrained], 1.0)
-        if not constrained.any() or np.nanmax(np.abs(residual[constrained]) / scale) <= tolerance:
-            converged = True
-            break
+        positive = ratio > 0
+        ratio[positive] = np.exp(np.log(ratio[positive]) * damping)
+        corrected *= operator.backproject_ratio(ratio)
+        corrected = np.clip(corrected, source_minimum, source_maximum)
+    estimate = operator.apply(corrected)
+    residual[constrained] = estimate[constrained] - prism[constrained]
+    unmet = eligible & (
+        np.abs(residual) / np.maximum(prism, 1.0) > tolerance
+    )
+    converged = not np.any(unmet)
     if not converged:
-        target_qc[constrained] |= np.uint16(ReconciliationQC.NOT_CONVERGED)
+        target_qc[unmet] |= np.uint16(ReconciliationQC.NOT_CONVERGED)
 
     fractions = np.divide(
         np.nan_to_num(flat, nan=0.0),

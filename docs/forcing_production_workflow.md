@@ -679,6 +679,30 @@ completed in 8 minutes 28 seconds, and reproduced all 24 hourly `RAINRATE`, sour
 confidence, QC, and mask fields exactly. Production integration should retain an hourly fallback
 for days whose candidate availability changes within the 24-hour window.
 
+The operational constraint driver now combines both corrections in one scratch-backed task and
+publishes the final daily LDASIN collection directly. A full-CONUS test for PRISM day 2026-07-15
+completed in 8 minutes 30 seconds with 12 allocated CPUs, including PRISM Tmin/Tmax preparation,
+temperature/humidity/longwave reconstruction, bounded precipitation reconciliation, diagnostics,
+and atomic daily publication. Its sample hours matched the independently produced temperature
+and precipitation reference results. The driver accepts either persistent hourly LDASIN files or
+daily baseline collections; for the latter it locates records by their actual NetCDF time values,
+extracts them only to node-local scratch, and removes them at task completion.
+
+A rolling scheduler classifies PRISM days as early, provisional, or stable, checks that all PRISM
+inputs and the complete 24-hour baseline exist, and rebuilds outputs when they are absent, have a
+different revision class, or predate an input. It submits eligible days as a concurrency-bounded
+SLURM array and is represented in the version-controlled cron schedule.
+
+The complete archive-only operational path was subsequently tested for 2026-07-15. Two verified
+calendar-day baseline collections were produced in parallel in 5 minutes each, then exposed to
+the scheduler in an isolated root containing no hourly LDASIN files. The scheduler selected
+exactly the one complete PRISM day and submitted job 4439541_0 with the expected provisional
+revision. The full-CONUS task completed in 16 minutes 16 seconds on 12 allocated CPUs with 20.3 GB
+peak memory. CDO found no data-field differences from the verified hourly-input result, and a
+second scheduler scan reported zero eligible updates. The approximately eight-minute increment
+over hourly-input processing is attributable to extracting 24 compressed archive records to
+scratch.
+
 ## Implementation phases
 
 1. Complete and inventory the common NLDAS-2, HRRR, and PRISM archive; acquire static native
@@ -700,7 +724,7 @@ for days whose candidate availability changes within the 24-hour window.
 
 ## Current implementation status
 
-The design above is the production target. As of 2026-08-22, the following foundations are
+The design above is the production target. As of 2026-08-25, the following foundations are
 implemented and tested:
 
 - Extraction of the NWM target grid and SCRIP description from the sample LDASIN file.
@@ -759,6 +783,10 @@ implemented and tested:
 - Deterministic whole-storm/day calibration-withheld splitting, categorical precipitation
   scores, and regional Stage-IV override sweeps. Rule selection uses calibration samples only;
   the selected rule is subsequently scored on withheld samples.
+- Direct daily publication of the combined PRISM temperature and precipitation corrections,
+  including daily-baseline input support that avoids retaining persistent hourly LDASIN files.
+- Revision-aware rolling PRISM scheduling with completeness, staleness, revision-transition,
+  active-job, and bounded-concurrency guards plus a version-controlled cron entry.
 
 Generated static and remapping artifacts live below `data/static` and are intentionally ignored
 by Git; the scripts, tests, and documentation required to recreate them are tracked.
@@ -766,8 +794,6 @@ by Git; the scripts, tests, and documentation required to recreate them are trac
 The following production components remain incomplete and must not be inferred from the
 implemented primitives:
 
-- Rolling multi-day scheduling and revision-aware replacement around the implemented PRISM
-  constraint and hourly production commands.
 - Generation and full-grid validation of the reverse NWM-to-PRISM conservative operator,
   followed by an archive-scale PRISM reconciliation run.
 - Assembly of genuinely independent gauge and basin samples, execution of the implemented

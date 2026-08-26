@@ -304,3 +304,63 @@ def apply_constrained_temperature_hour(
         partial.unlink(missing_ok=True)
         raise
     return output_path
+
+
+def build_constrained_temperature_overrides(
+    baseline_paths: list[Path], corrected_day_path: Path
+) -> dict[str, np.ndarray]:
+    """Build daily T2D/Q2D/LWDOWN overrides without publishing intermediate hours."""
+    if len(baseline_paths) != 24:
+        raise ValueError("A complete PRISM day requires exactly 24 hourly baseline files")
+    shape: tuple[int, int] | None = None
+    overrides: dict[str, np.ndarray] = {}
+    with xr.open_dataset(corrected_day_path, mask_and_scale=True) as corrected:
+        if corrected.sizes.get("time") != 24:
+            raise ValueError("Corrected PRISM temperature day must contain 24 hours")
+        corrected_times = np.asarray(corrected["time"].values).astype("datetime64[ns]")
+        for index, baseline_path in enumerate(baseline_paths):
+            with Dataset(baseline_path) as baseline:
+                valid_time = datetime.fromisoformat(baseline.getncattr("valid_time"))
+                requested = np.datetime64(valid_time.replace(tzinfo=None), "ns")
+                matches = np.flatnonzero(corrected_times == requested)
+                if matches.size != 1:
+                    raise ValueError(
+                        f"Corrected day has no unique value for {valid_time.isoformat()}"
+                    )
+                final_temperature = _field(
+                    corrected.isel(time=int(matches[0])), "T2D"
+                )
+                temperature = np.ma.asarray(baseline["T2D"][0]).filled(np.nan)
+                pressure = np.ma.asarray(baseline["PSFC"][0]).filled(np.nan)
+                humidity = np.ma.asarray(baseline["Q2D"][0]).filled(np.nan)
+                longwave = np.ma.asarray(baseline["LWDOWN"][0]).filled(np.nan)
+            if shape is None:
+                shape = final_temperature.shape
+                overrides = {
+                    name: np.empty((24, *shape), dtype=np.float32)
+                    for name in ("T2D", "Q2D", "LWDOWN")
+                }
+            elif final_temperature.shape != shape:
+                raise ValueError("Hourly NWM grids differ")
+            relative_humidity = relative_humidity_from_specific_humidity(
+                humidity, temperature, pressure, phase="water"
+            )
+            final_humidity = specific_humidity_from_relative_humidity(
+                relative_humidity, final_temperature, pressure, phase="water"
+            )
+            old_emission = cosgrove_atmospheric_emissivity(
+                temperature, humidity, pressure
+            ) * np.power(temperature, 4)
+            longwave_factor = np.divide(
+                longwave,
+                old_emission,
+                out=np.full(longwave.shape, np.nan, dtype=np.float64),
+                where=np.isfinite(old_emission) & (old_emission > 0),
+            )
+            new_emission = cosgrove_atmospheric_emissivity(
+                final_temperature, final_humidity, pressure
+            ) * np.power(final_temperature, 4)
+            overrides["T2D"][index] = final_temperature
+            overrides["Q2D"][index] = final_humidity
+            overrides["LWDOWN"][index] = longwave_factor * new_emission
+    return overrides

@@ -409,6 +409,48 @@ The solver preserves native hourly
 fractions, applies bounded multiplicative projections until reaggregation meets tolerance,
 and records missing constraints, dry/wet synthesis, ratio caps, residuals, and convergence.
 
+Run the complete temperature and precipitation constraint and publish only the final 24-record
+daily LDASIN collection with:
+
+```bash
+python bin/produce_prism_constrained_daily.py \
+  --day 2026-07-15 \
+  --complete-root outputs/forcing/nwm \
+  --output-root outputs/forcing/nwm_prism \
+  --revision provisional
+```
+
+The input root may contain either individual hourly LDASIN files or daily LDASIN collections.
+When only daily collections remain, exact hourly records are extracted to node-local job scratch
+and removed after publication; persistent hourly copies are therefore not required. The command
+atomically publishes the constrained daily collection, its manifest, and precipitation
+diagnostics.
+
+Create a verified calendar-day baseline collection before removing its hourly inputs with:
+
+```bash
+python bin/archive_nwm_forcing_day.py \
+  --day 2026-07-15 \
+  --hourly-root outputs/forcing/nwm \
+  --output-root outputs/forcing/nwm_daily
+```
+
+The revision-aware rolling scheduler revisits the configured PRISM refresh window, requires a
+complete baseline and all three daily PRISM inputs, and submits only missing, stale, or
+revision-transitioned days as a bounded SLURM array:
+
+```bash
+python bin/submit_prism_forcing_updates.py \
+  --complete-root outputs/forcing/nwm \
+  --output-root outputs/forcing/nwm_prism \
+  --dry-run
+```
+
+Current-month days are labeled `early`, older mutable days `provisional`, and days at least 183
+days old `stable`. Source modification times and the revision stored in each output are used to
+decide whether it must be rebuilt. The canonical recurring entry is in
+`cron/hydro_ops.crontab`.
+
 Regional Stage-IV calibration uses an NPZ sample table containing equally shaped arrays named
 `reference`, `quality`, `strata`, `group`, `mrms_pass2`, and `stage4_archive`. `group` must label
 a whole storm or 12Z-to-12Z day so correlated hours cannot cross the split. The command hashes

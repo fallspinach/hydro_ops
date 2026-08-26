@@ -34,6 +34,8 @@ def main() -> int:
         "--precipitation-remap-workers",
         os.environ.get("HYDRO_OPS_PRECIPITATION_REMAP_WORKERS", "1"),
     ]
+    if output_root := os.environ.get("HYDRO_OPS_OUTPUT_ROOT"):
+        command.extend(["--output-root", output_root])
     if os.environ.get("HYDRO_OPS_FORCE") == "1":
         command.append("--force")
     return subprocess.run(command, check=False).returncode

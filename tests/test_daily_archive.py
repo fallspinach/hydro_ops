@@ -5,10 +5,17 @@ import numpy as np
 from netCDF4 import Dataset
 
 from hydro_ops.forcing.daily_archive import (
+    _digest,
     create_daily_archive,
     daily_archive_is_current,
     verified_daily_archive,
 )
+
+
+def test_digest_ignores_storage_beneath_mask() -> None:
+    first = np.ma.array([1.0, np.nan], mask=[False, True])
+    second = np.ma.array([1.0, -9.99e8], mask=[False, True])
+    assert _digest(first) == _digest(second)
 
 
 def write_hour(path: Path, hour: int, *, static_offset: float = 0) -> None:
@@ -68,6 +75,32 @@ def test_daily_archive_rejects_changed_static_grid(tmp_path: Path) -> None:
         assert "Static variable latitude differs" in str(error)
     else:
         raise AssertionError("changed static grid was accepted")
+
+
+def test_daily_archive_applies_time_variable_override_directly(tmp_path: Path) -> None:
+    paths = []
+    for hour in range(3):
+        path = tmp_path / f"hour-{hour}.nc"
+        write_hour(path, hour)
+        paths.append(path)
+    corrected = np.arange(18, dtype=np.float64).reshape(3, 2, 3) + 100.123456789
+    destination = tmp_path / "daily.nc"
+    create_daily_archive(
+        paths,
+        destination,
+        date(2026, 1, 1),
+        expected_hours=3,
+        time_variable_overrides={"field": corrected},
+        global_attributes={"constraint": "test"},
+        verification="targeted",
+    )
+    with Dataset(destination) as dataset:
+        np.testing.assert_array_equal(dataset["field"][:], corrected.astype(np.float32))
+        assert dataset.getncattr("constraint") == "test"
+    manifest = destination.with_suffix(".nc.manifest.json").read_text()
+    assert '"overridden_time_variables": [' in manifest
+    assert '"field"' in manifest
+    assert '"verification": "targeted"' in manifest
 
 
 def test_daily_archive_requires_complete_day(tmp_path: Path) -> None:

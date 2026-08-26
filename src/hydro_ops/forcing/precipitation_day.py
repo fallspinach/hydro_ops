@@ -52,6 +52,45 @@ def _write_native_day(
     return variable
 
 
+def _attach_source_corners(native: Path, weights: Path) -> None:
+    """Restore curvilinear cell corners carried by the static SCRIP operator.
+
+    Xarray preserves Stage-IV cell centers while concatenating hours, but CDO cannot always
+    infer cell corners from that temporary curvilinear file.  The precomputed conservative
+    operator contains the exact source corners used to create the weights, so reusing them is
+    both deterministic and geometrically consistent with the operator.
+    """
+    with Dataset(weights) as operator:
+        dimensions = np.asarray(operator["src_grid_dims"][:], dtype=np.int64)
+        if dimensions.size != 2:
+            raise ValueError(f"Unsupported source-grid rank in {weights}")
+        x_size, y_size = (int(value) for value in dimensions)
+        corners = operator.dimensions["src_grid_corners"].size
+        latitude = np.rad2deg(
+            np.asarray(operator["src_grid_corner_lat"][:], dtype=np.float64)
+        ).reshape(y_size, x_size, corners)
+        longitude = np.rad2deg(
+            np.asarray(operator["src_grid_corner_lon"][:], dtype=np.float64)
+        ).reshape(y_size, x_size, corners)
+    with Dataset(native, "a") as output:
+        if output.dimensions["y"].size != y_size or output.dimensions["x"].size != x_size:
+            raise ValueError(f"Source-grid dimensions in {native} do not match {weights}")
+        if "nv4" not in output.dimensions:
+            output.createDimension("nv4", corners)
+        lat_bounds = output.createVariable(
+            "latitude_bounds", "f8", ("y", "x", "nv4"), zlib=True, complevel=1
+        )
+        lon_bounds = output.createVariable(
+            "longitude_bounds", "f8", ("y", "x", "nv4"), zlib=True, complevel=1
+        )
+        lat_bounds.units = "degrees_north"
+        lon_bounds.units = "degrees_east"
+        lat_bounds[:] = latitude
+        lon_bounds[:] = longitude
+        output["latitude"].bounds = "latitude_bounds"
+        output["longitude"].bounds = "longitude_bounds"
+
+
 def _target_field(dataset: xr.Dataset, variable: str, valid_time: datetime) -> np.ndarray:
     requested = np.datetime64(valid_time.replace(tzinfo=None), "ns")
     available = np.asarray(dataset["time"].values).astype("datetime64[ns]")
@@ -151,6 +190,8 @@ def process_precipitation_day(
             native = temp / f"{product}.native.nc"
             remapped = temp / f"{product}.remapped.nc"
             variable = _write_native_day(paths, product, valid_times, native)
+            if product == "stage4_realtime":
+                _attach_source_corners(native, weights)
             command = build_remap_command(
                 executable, remap_grid_path, weights, native, remapped
             )

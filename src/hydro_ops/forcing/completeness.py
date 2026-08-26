@@ -53,6 +53,9 @@ def nldas2_day(root: Path, day: date) -> DayCompleteness:
 
 
 def hrrr_day(root: Path, day: date) -> DayCompleteness:
+    daily = root / day.strftime("%Y/%m") / f"hrrr_forcing.{day:%Y%m%d}.nc"
+    if verified_daily_archive(daily, day):
+        return DayCompleteness("hrrr", day, 24, 24, ())
     directory = root / day.strftime("%Y/%m/%d")
     prefix = f"hrrr_forcing.{day:%Y%m%d}"
     found: set[int] = set()

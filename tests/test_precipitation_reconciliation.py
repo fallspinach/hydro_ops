@@ -50,7 +50,9 @@ def test_reconciliation_meets_disjoint_conservative_constraints() -> None:
 def test_dry_baseline_wet_prism_uses_flagged_synthetic_timing() -> None:
     hourly = np.zeros((24, 2, 2))
     hourly[3, 0, :] = 1
-    result = reconcile_prism_day(hourly, np.array([[2.0, 3.0]]), _two_region_operator())
+    result = reconcile_prism_day(
+        hourly, np.array([[2.0, 3.0]]), _two_region_operator(), allow_synthetic_timing=True
+    )
     assert result.converged
     assert result.target_qc_flags[0, 1] & ReconciliationQC.BASE_DRY_TARGET_WET
     assert result.target_qc_flags[0, 1] & ReconciliationQC.SYNTHETIC_TIMING
@@ -75,5 +77,30 @@ def test_wet_seed_does_not_create_rain_in_unmapped_source_cells() -> None:
         weight=np.ones(2),
     )
     hourly = np.zeros((24, 3))
-    result = reconcile_prism_day(hourly, np.array([2.0]), operator)
+    result = reconcile_prism_day(hourly, np.array([2.0]), operator, allow_synthetic_timing=True)
     assert result.daily_depth[2] == 0
+
+
+def test_dry_baseline_wet_prism_is_not_synthesized_by_default() -> None:
+    hourly = np.zeros((24, 2, 2))
+    hourly[3, 0, :] = 1
+    result = reconcile_prism_day(hourly, np.array([[2.0, 3.0]]), _two_region_operator())
+    assert result.converged
+    assert result.target_qc_flags[0, 1] & ReconciliationQC.BASE_DRY_TARGET_WET
+    assert not result.target_qc_flags[0, 1] & ReconciliationQC.SYNTHETIC_TIMING
+    np.testing.assert_array_equal(result.hourly_depth[:, 1, :], 0)
+
+
+def test_cumulative_factor_and_daily_depth_are_bounded() -> None:
+    hourly = np.zeros((24, 2, 2))
+    hourly[0] = 1
+    result = reconcile_prism_day(
+        hourly,
+        np.array([[1000.0, 1000.0]]),
+        _two_region_operator(),
+        cumulative_ratio_bounds=(0.0, 3.0),
+        maximum_daily_depth=2.0,
+    )
+    assert result.converged
+    assert np.max(result.daily_depth) <= 2.0
+    assert np.all(result.target_qc_flags & ReconciliationQC.RATIO_CAPPED)

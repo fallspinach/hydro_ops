@@ -9,3 +9,7 @@
 # Revisit the latest 72 forcing hours after download submissions have had time to start.
 # Resumability skips already complete hours; the SLURM array is capped at four concurrent tasks.
 15 1,7,13,19 * * * cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --no-capture-output --name hydro-ops python bin/submit_forcing_production.py >> logs/submit-forcing-production.log 2>&1
+
+# Apply available PRISM constraints and revisit mutable PRISM days after baseline production.
+# The scheduler skips incomplete/current days and submits only missing or stale daily outputs.
+45 2,8,14,20 * * * cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --no-capture-output --name hydro-ops python bin/submit_prism_forcing_updates.py --complete-root outputs/forcing/nwm --output-root outputs/forcing/nwm_prism >> logs/submit-prism-forcing.log 2>&1

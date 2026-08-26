@@ -9,8 +9,10 @@ import getpass
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 
 from hydro_ops.config import load_settings
+from hydro_ops.forcing.completeness import report_range
 from hydro_ops.forcing_status import forcing_coverage, format_coverage
 
 
@@ -18,6 +20,46 @@ from hydro_ops.forcing_status import forcing_coverage, format_coverage
 class Workflow:
     source: str
     job_name: str
+
+
+def _recent_repair_start(source: str, settings, end: date, lookback_days: int) -> date | None:
+    """Return the earliest incomplete recent day for cheaply inventoried products."""
+    start = end - timedelta(days=lookback_days - 1)
+    if source == "nldas2":
+        products = (("nldas2", settings.nldas_data_dir),)
+    elif source == "hrrr":
+        products = (("hrrr", settings.hrrr_data_dir),)
+    elif source == "prism":
+        products = tuple(
+            (f"prism_{variable}", settings.prism_data_dir)
+            for variable in settings.prism_variables
+        )
+    else:
+        return None
+    incomplete = [
+        report.day
+        for product, root in products
+        for report in report_range(product, root, start, end)
+        if not report.complete
+    ]
+    return min(incomplete, default=None)
+
+
+def refresh_dates(source: str, settings, today: date, lookback_days: int) -> tuple[date, date] | None:
+    """Plan one range that repairs recent holes and reaches the newest eligible day."""
+    if source == "nldas2":
+        end = today - timedelta(days=settings.nldas_lag_days)
+        normal_start = end
+    elif source == "hrrr":
+        end = today - timedelta(days=settings.hrrr_lag_days)
+        normal_start = end
+    elif source == "prism":
+        end = today - timedelta(days=settings.prism_lag_days)
+        normal_start = end - timedelta(days=settings.prism_refresh_days)
+    else:
+        return None
+    repair_start = _recent_repair_start(source, settings, end, lookback_days)
+    return min(normal_start, repair_start) if repair_start else normal_start, end
 
 
 WORKFLOWS = (
@@ -44,11 +86,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--status-only", action="store_true", help="report without submitting")
     parser.add_argument("--dry-run", action="store_true", help="print submissions without sbatch")
     parser.add_argument("--force", action="store_true", help="submit even if the job name is active")
+    parser.add_argument(
+        "--repair-lookback-days",
+        type=int,
+        default=14,
+        help="inventory this many recent eligible days and repair holes (default: 14)",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.repair_lookback_days < 1:
+        raise SystemExit("--repair-lookback-days must be positive")
     settings = load_settings()
     settings.work_root.mkdir(parents=True, exist_ok=True)
     lock_path = settings.work_root / "update_forcing.lock"
@@ -76,6 +126,15 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"SKIP   {workflow.source:<8} active job {workflow.job_name}")
                 continue
             command = [sys.executable, "-m", "hydro_ops.cli", "submit", workflow.source]
+            planned = refresh_dates(
+                workflow.source,
+                settings,
+                datetime.now(UTC).date(),
+                args.repair_lookback_days,
+            )
+            if planned is not None:
+                start, end = planned
+                command.extend(("--start", start.isoformat(), "--end", end.isoformat()))
             if args.dry_run:
                 print(f"DRYRUN {workflow.source:<8} {' '.join(command)}")
                 continue
