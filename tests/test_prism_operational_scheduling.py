@@ -26,6 +26,31 @@ def test_revision_for_day_tracks_prism_lifecycle() -> None:
     assert scheduler.revision_for_day(date(2026, 2, 23), today) == "stable"
 
 
+def test_streams_retain_mutable_and_stable_revisions_separately() -> None:
+    scheduler = _load_script("submit_prism_forcing_updates")
+    today = date(2026, 8, 25)
+
+    assert scheduler.revision_for_stream(date(2026, 8, 1), today, "nrt") == "early"
+    assert scheduler.revision_for_stream(date(2026, 7, 31), today, "nrt") == "provisional"
+    assert scheduler.revision_for_stream(date(2026, 2, 23), today, "nrt") is None
+    assert scheduler.revision_for_stream(date(2026, 7, 31), today, "retro") is None
+    assert scheduler.revision_for_stream(date(2026, 2, 23), today, "retro") == "stable"
+
+
+def test_scan_windows_target_recent_and_newly_stable_days() -> None:
+    scheduler = _load_script("submit_prism_forcing_updates")
+    today = date(2026, 8, 25)
+
+    assert scheduler.scan_window(today, "nrt", 10, 1) == (
+        date(2026, 8, 15),
+        date(2026, 8, 24),
+    )
+    assert scheduler.scan_window(today, "retro", 45, 1) == (
+        date(2026, 1, 10),
+        date(2026, 2, 23),
+    )
+
+
 def test_daily_record_lookup_uses_actual_time_coordinate(tmp_path: Path) -> None:
     driver = _load_script("produce_prism_constrained_daily")
     archive = tmp_path / "2026/07/20260715.LDASIN_DOMAIN1.nc"

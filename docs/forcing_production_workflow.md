@@ -216,7 +216,8 @@ summary:
   `gamma = -0.0065 K m-1`, interpolate, and restore to NWM elevation.
 - Use PRISM Tmin/Tmax to correct the daily midpoint and range without forcing the arithmetic
   hourly mean to PRISM `tmean`.
-- Treat early/provisional PRISM as mutable and regenerate when stable data arrive.
+- Treat early/provisional PRISM as mutable within the retained NRT stream. Publish stable data
+  independently to the retrospective stream rather than replacing NRT output.
 
 The final PRISM-adjusted `T2D`, rather than the preliminary baseline, drives the final humidity
 and longwave calculations.
@@ -690,8 +691,29 @@ extracts them only to node-local scratch, and removes them at task completion.
 
 A rolling scheduler classifies PRISM days as early, provisional, or stable, checks that all PRISM
 inputs and the complete 24-hour baseline exist, and rebuilds outputs when they are absent, have a
-different revision class, or predate an input. It submits eligible days as a concurrency-bounded
-SLURM array and is represented in the version-controlled cron schedule.
+different revision class, or predate an input. Early and provisional output is retained in the
+`nrt` stream; stable output is published independently in `retro`. Separate concurrency-bounded
+SLURM arrays and version-controlled cron entries prevent stable publication from replacing the
+near-real-time record.
+
+Operational scheduling separates prompt updates from deeper revision repair:
+
+- Run a 10-day NRT scan every six hours. This covers Stage-IV regeneration during its first day
+  and at approximately 1, 3, 5, and 7 days, plus the usual 3-4-day NLDAS-2 latency and PRISM's
+  first and five-day runs.
+- Run a 200-day NRT scan once daily. This covers PRISM's full rolling six-month mutable period,
+  with a buffer for delayed downloads and missed schedules.
+- Run a 45-day retrospective scan monthly on the 18th, after PRISM's usual mid-month modeling
+  cycle. The scheduler offsets this window to end 183 days behind the current date, so it targets
+  newly stable days rather than recent NRT dates. Stable outputs that are already current are
+  skipped.
+- Periodically audit the complete retrospective inventory separately. This is a completeness
+  check, not a reason to regenerate unchanged stable forcing.
+
+PRISM daily grids are produced about one day and five days after the target day, then approximately
+monthly through the final six-month run. They are daily products, but their later provisional and
+stable updates follow this monthly modeling cycle. These rules are encoded in the scheduler and
+the canonical cron file rather than relying on operator memory.
 
 The complete archive-only operational path was subsequently tested for 2026-07-15. Two verified
 calendar-day baseline collections were produced in parallel in 5 minutes each, then exposed to

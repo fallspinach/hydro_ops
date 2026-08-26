@@ -15,13 +15,34 @@ from netCDF4 import Dataset, num2date
 
 from hydro_ops.config import load_settings
 
+PRISM_STABLE_AGE_DAYS = 183
+
 
 def revision_for_day(day: date, today: date) -> str:
     if day.year == today.year and day.month == today.month:
         return "early"
-    if (today - day).days >= 183:
+    if (today - day).days >= PRISM_STABLE_AGE_DAYS:
         return "stable"
     return "provisional"
+
+
+def revision_for_stream(day: date, today: date, stream: str) -> str | None:
+    """Return the eligible PRISM revision for an independently retained stream."""
+    revision = revision_for_day(day, today)
+    if stream == "nrt":
+        return revision if revision in {"early", "provisional"} else None
+    if stream == "retro":
+        return revision if revision == "stable" else None
+    raise ValueError(f"Unknown forcing stream: {stream}")
+
+
+def scan_window(
+    today: date, stream: str, lookback_days: int, prism_lag_days: int
+) -> tuple[date, date]:
+    """Return the inclusive stream-specific scheduler window."""
+    end_age = prism_lag_days if stream == "nrt" else PRISM_STABLE_AGE_DAYS
+    end = today - timedelta(days=end_age)
+    return end - timedelta(days=lookback_days - 1), end
 
 
 def prism_inputs(settings, day: date) -> tuple[Path, Path, Path]:
@@ -122,6 +143,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--complete-root", required=True, type=Path)
     parser.add_argument("--output-root", required=True, type=Path)
+    parser.add_argument("--stream", required=True, choices=("nrt", "retro"))
     parser.add_argument("--lookback-days", type=int)
     parser.add_argument("--max-concurrent", type=int, default=4)
     parser.add_argument("--force", action="store_true")
@@ -132,17 +154,20 @@ def main() -> int:
     if lookback < 1 or args.max_concurrent < 1:
         parser.error("lookback and concurrency must be positive")
     today = datetime.now(UTC).date()
-    end = today - timedelta(days=settings.prism_lag_days)
-    start = end - timedelta(days=lookback - 1)
+    start, end = scan_window(today, args.stream, lookback, settings.prism_lag_days)
     days = [start + timedelta(days=index) for index in range(lookback)]
-    tasks = [
-        (day, revision_for_day(day, today))
+    candidates = [
+        (day, revision)
         for day in days
-        if needs_update(
-            settings, args.complete_root, args.output_root, day, revision_for_day(day, today)
-        )
+        if (revision := revision_for_stream(day, today, args.stream)) is not None
+    ]
+    tasks = [
+        (day, revision)
+        for day, revision in candidates
+        if needs_update(settings, args.complete_root, args.output_root, day, revision)
     ]
     summary = {
+        "stream": args.stream,
         "start": start.isoformat(),
         "end": end.isoformat(),
         "eligible_updates": len(tasks),
@@ -155,23 +180,27 @@ def main() -> int:
         active = subprocess.run(
             [
                 "squeue", "--noheader", "--user", getpass.getuser(),
-                "--name", "prism-constrained-day",
+                "--name", f"prism-{args.stream}-day",
             ],
             check=True,
             capture_output=True,
             text=True,
         )
         if active.stdout.strip():
-            print("SKIP active prism-constrained-day job")
+            print(f"SKIP active prism-{args.stream}-day job")
             return 0
     settings.work_root.mkdir(parents=True, exist_ok=True)
     settings.log_root.mkdir(parents=True, exist_ok=True)
-    task_file = settings.work_root / f"prism-forcing-tasks-{datetime.now(UTC):%Y%m%dT%H%M%S}.txt"
+    task_file = (
+        settings.work_root
+        / f"prism-{args.stream}-tasks-{datetime.now(UTC):%Y%m%dT%H%M%S}.txt"
+    )
     if not args.dry_run:
         task_file.write_text("".join(f"{day.isoformat()} {revision}\n" for day, revision in tasks))
     command = [
         "sbatch",
         f"--partition={settings.slurm_partition}",
+        f"--job-name=prism-{args.stream}-day",
         f"--array=0-{len(tasks) - 1}%{args.max_concurrent}",
         (
             "--export=ALL,"
@@ -181,7 +210,7 @@ def main() -> int:
             f"HYDRO_OPS_OUTPUT_ROOT={args.output_root.resolve()},"
             f"HYDRO_OPS_PRISM_TASK_FILE={task_file.resolve()}"
         ),
-        f"--output={settings.log_root}/prism-forcing-%A_%a.out",
+        f"--output={settings.log_root}/prism-{args.stream}-%A_%a.out",
         "slurm/produce_prism_constrained_daily.py",
     ]
     if settings.slurm_account:

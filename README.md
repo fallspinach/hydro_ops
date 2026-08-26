@@ -441,15 +441,30 @@ revision-transitioned days as a bounded SLURM array:
 
 ```bash
 python bin/submit_prism_forcing_updates.py \
+  --stream nrt \
   --complete-root outputs/forcing/nwm \
-  --output-root outputs/forcing/nwm_prism \
+  --output-root outputs/forcing/nwm_prism/nrt \
   --dry-run
 ```
 
 Current-month days are labeled `early`, older mutable days `provisional`, and days at least 183
-days old `stable`. Source modification times and the revision stored in each output are used to
-decide whether it must be rebuilt. The canonical recurring entry is in
-`cron/hydro_ops.crontab`.
+days old `stable`. The `nrt` stream retains early/provisional forcing below
+`outputs/forcing/nwm_prism/nrt`; the `retro` stream independently publishes stable forcing below
+`outputs/forcing/nwm_prism/retro`. Stable publication therefore never replaces the retained NRT
+record. Source modification times and the revision stored in each output are used to decide
+whether it must be rebuilt. The canonical recurring entries are in `cron/hydro_ops.crontab`.
+
+The operational cadence has three passes:
+
+| Pass | Schedule (local time) | Scan window |
+|---|---:|---:|
+| Fast NRT | 02:45, 08:45, 14:45, 20:45 daily | Latest 10 eligible days |
+| NRT reconciliation | 04:30 daily | Latest 200 eligible days |
+| Stable retrospective | 05:30 on the 18th monthly | 45 days ending at the six-month boundary |
+
+The retrospective window is deliberately offset: it scans newly stable dates approximately six
+months behind the current date, not the latest 45 calendar days. Existing current outputs are
+skipped, so the windows provide recovery coverage without rebuilding every file on every scan.
 
 Regional Stage-IV calibration uses an NPZ sample table containing equally shaped arrays named
 `reference`, `quality`, `strata`, `group`, `mrms_pass2`, and `stage4_archive`. `group` must label
