@@ -92,6 +92,20 @@ def test_material_supersaturation_is_rejected() -> None:
         finalize_target_state(290.0, 95_000.0, 1.06, 1e-8, 0.0)
 
 
+def test_material_supersaturation_can_be_clipped_and_marked_invalid() -> None:
+    reference = prepare_reference_state(
+        290.0,
+        95_000.0,
+        0.020,
+        320.0,
+        0.0,
+        reject_material_rh_excursions=False,
+    )
+    assert reference.relative_humidity == pytest.approx(1.0)
+    assert reference.qc_flags & ThermodynamicQC.RH_CLIPPED_HIGH
+    assert reference.qc_flags & ThermodynamicQC.INVALID_INPUT
+
+
 def test_nan_input_propagates_and_sets_qc() -> None:
     reference = prepare_reference_state(
         np.array([290.0, np.nan]),

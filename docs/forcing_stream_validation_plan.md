@@ -26,6 +26,13 @@ outputs/forcing/validation/scenarios/<scenario>/
 Record the Git commit, configuration, source inventory, remapping-weight fingerprints, SLURM job
 IDs, wall time, peak memory, and output checksums for every run.
 
+The first Gate A NRT run exposed an operational edge case on 2026-08-15: 40 reconciliation
+iterations left 0.005251 of constrained PRISM cells unconverged, narrowly exceeding the unchanged
+0.005 acceptance limit. A controlled 80-iteration retry reduced this fraction to 0.003451 and
+passed in 8 minutes 1 second versus 8 minutes for the first attempt. The combined production
+driver therefore uses 80 iterations by default; the scientific tolerance and correction bounds
+remain unchanged.
+
 ## Phase 1: natural-boundary matrix
 
 Produce one PRISM day for each row. A PRISM day is the 24-hour interval from 12 UTC on the prior
@@ -133,3 +140,6 @@ Every published daily file must satisfy all of the following:
 Large-scale production begins only after Gate D. Independent hydrologic validation and calibration
 remain a later scientific promotion gate and should be evaluated before calling a forcing version
 final for model skill, even though they do not block operational file generation testing.
+
+Execution evidence and current gate status are recorded in
+[`forcing_stream_validation_results.md`](forcing_stream_validation_results.md).

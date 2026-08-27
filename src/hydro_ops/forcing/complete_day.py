@@ -49,7 +49,8 @@ class _AssemblyTask:
     selected: SelectedSource
     remapped: Path
     precipitation: Path
-    final_output: Path
+    staged_output: Path
+    published_output: Path
     temporary: Path
     target_grid: Path
     target_elevation: Path
@@ -100,18 +101,18 @@ def _assemble_hour(task: _AssemblyTask) -> dict:
         fallback_used=task.selected.fallback_used,
         force=True,
     )
-    add_precipitation_to_ldasin(seven, task.precipitation, task.final_output, force=True)
+    add_precipitation_to_ldasin(seven, task.precipitation, task.staged_output, force=True)
     summary = {
         "valid_time": task.selected.valid_time.isoformat(),
         "status": "produced",
-        "output": str(task.final_output),
+        "output": str(task.published_output),
         "forcing_source": product,
         "forcing_fallback": task.selected.fallback_used,
         "precipitation_candidates": list(task.products),
         "remap_mode": "daily_batch",
         "assembly_seconds": round(time.perf_counter() - started, 3),
     }
-    manifest = task.final_output.with_suffix(f"{task.final_output.suffix}.manifest.json")
+    manifest = task.staged_output.with_suffix(f"{task.staged_output.suffix}.manifest.json")
     manifest.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     return summary
 
@@ -157,7 +158,7 @@ def _write_native_batch(
         longwave,
         source_elevation,
         relative_humidity_tolerance=0.20 if product == "hrrr" else 0.10,
-        reject_material_rh_excursions=product != "hrrr",
+        reject_material_rh_excursions=False,
     )
     shortwave = np.asarray(source["downward_shortwave"].values, dtype=np.float64)
     finite_shortwave = np.isfinite(shortwave)
@@ -270,9 +271,7 @@ def produce_complete_day(
     ]
     candidate_hours = [item[0] for item in candidates_and_quality]
     quality_hours = [item[1] for item in candidates_and_quality]
-    products = set(candidate_hours[0])
-    if any(set(item) != products for item in candidate_hours):
-        raise ValueError("Daily batching requires a stable precipitation candidate set")
+    products = set().union(*(set(item) for item in candidate_hours))
     precipitation_weights = {
         name: (
             layout.mrms_conservative
@@ -291,6 +290,7 @@ def produce_complete_day(
     work_directory.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f"complete_day_{day:%Y%m%d}_", dir=work_directory) as temporary:
         temporary = Path(temporary)
+        tasks: list[_AssemblyTask] = []
         source, source_elevation = _load_source_day(
             selections, source_elevation_path, elevation_variable
         )
@@ -333,7 +333,9 @@ def produce_complete_day(
                 layout.target_grid,
                 layout.remap_grid,
                 temporary / "precipitation",
-                quality_weights=layout.mrms_quality_bilinear if all(quality_hours) else None,
+                quality_weights=(
+                    layout.mrms_quality_bilinear if any(quality_hours) else None
+                ),
                 mrms_quality_threshold=mrms_quality_threshold,
                 remap_workers=precipitation_remap_workers,
                 work_directory=temporary,
@@ -350,28 +352,42 @@ def produce_complete_day(
                 ),
                 flush=True,
             )
-            product_names = tuple(sorted(products))
             tasks = [
                 _AssemblyTask(
                     index=index,
                     selected=selected,
                     remapped=remapped,
                     precipitation=precipitation[index],
-                    final_output=final_output,
+                    staged_output=final_output.with_name(
+                        f".{final_output.name}.daypart-{temporary.name}"
+                    ),
+                    published_output=final_output,
                     temporary=temporary,
                     target_grid=layout.target_grid,
                     target_elevation=layout.target_elevation,
                     weights=bilinear_weights,
                     static_validation=static_validation,
-                    products=product_names,
+                    products=tuple(sorted(candidate_hours[index])),
                 )
                 for index, (selected, final_output) in enumerate(
                     zip(selections, outputs, strict=True)
                 )
             ]
+            for task in tasks:
+                task.staged_output.parent.mkdir(parents=True, exist_ok=True)
             stage_started = time.perf_counter()
             with ProcessPoolExecutor(max_workers=min(assembly_workers, 24)) as executor:
                 summaries = list(executor.map(_assemble_hour, tasks))
+            for task in tasks:
+                task.published_output.parent.mkdir(parents=True, exist_ok=True)
+                staged_manifest = task.staged_output.with_suffix(
+                    f"{task.staged_output.suffix}.manifest.json"
+                )
+                published_manifest = task.published_output.with_suffix(
+                    f"{task.published_output.suffix}.manifest.json"
+                )
+                task.staged_output.replace(task.published_output)
+                staged_manifest.replace(published_manifest)
             print(
                 json.dumps(
                     {
@@ -387,3 +403,8 @@ def produce_complete_day(
             return summaries
         finally:
             source.close()
+            for task in tasks:
+                task.staged_output.unlink(missing_ok=True)
+                task.staged_output.with_suffix(
+                    f"{task.staged_output.suffix}.manifest.json"
+                ).unlink(missing_ok=True)

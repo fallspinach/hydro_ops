@@ -77,7 +77,8 @@ def _validate_and_clip_rh(
     high = finite & (relative_humidity > 1.0)
     qc_flags[low] |= np.uint16(ThermodynamicQC.RH_CLIPPED_LOW)
     qc_flags[high] |= np.uint16(ThermodynamicQC.RH_CLIPPED_HIGH)
-    return np.where(material, np.nan, np.clip(relative_humidity, 0.0, 1.0))
+    clipped = np.clip(relative_humidity, 0.0, 1.0)
+    return np.where(material, np.nan, clipped) if reject_material_excursions else clipped
 
 
 def prepare_reference_state(

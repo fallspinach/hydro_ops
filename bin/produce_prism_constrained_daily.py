@@ -117,7 +117,7 @@ def main() -> int:
     parser.add_argument(
         "--revision", choices=("early", "provisional", "stable"), required=True
     )
-    parser.add_argument("--max-iterations", type=int, default=40)
+    parser.add_argument("--max-iterations", type=int, default=80)
     parser.add_argument("--maximum-unconverged-fraction", type=float, default=0.005)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()

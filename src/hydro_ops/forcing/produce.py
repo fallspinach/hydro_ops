@@ -65,7 +65,7 @@ def produce_seven_field_hour(
             relative_humidity_tolerance=(
                 hrrr_relative_humidity_tolerance if selected.product == "hrrr" else 0.10
             ),
-            reject_material_rh_excursions=selected.product != "hrrr",
+            reject_material_rh_excursions=False,
             work_directory=temporary,
         )
         process_radiation_wind_hour(

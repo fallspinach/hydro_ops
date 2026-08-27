@@ -38,7 +38,7 @@ def main() -> int:
         "--revision",
         revision,
         "--max-iterations",
-        os.environ.get("HYDRO_OPS_PRISM_MAX_ITERATIONS", "40"),
+        os.environ.get("HYDRO_OPS_PRISM_MAX_ITERATIONS", "80"),
         "--work-directory",
         str(scratch),
     ]

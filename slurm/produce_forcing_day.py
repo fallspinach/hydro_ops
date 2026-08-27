@@ -12,11 +12,16 @@ import os
 import subprocess
 import sys
 from datetime import date, timedelta
+from pathlib import Path
 
 
 def main() -> int:
-    start = date.fromisoformat(os.environ["HYDRO_OPS_START_DAY"])
-    day = start + timedelta(days=int(os.environ["SLURM_ARRAY_TASK_ID"]))
+    index = int(os.environ["SLURM_ARRAY_TASK_ID"])
+    if task_file := os.environ.get("HYDRO_OPS_FORCING_DAY_TASK_FILE"):
+        day = date.fromisoformat(Path(task_file).read_text().splitlines()[index])
+    else:
+        start = date.fromisoformat(os.environ["HYDRO_OPS_START_DAY"])
+        day = start + timedelta(days=index)
     python = os.environ.get("HYDRO_OPS_PYTHON", sys.executable)
     scratch = (
         f"/scratch/{os.environ['SLURM_JOB_USER']}/job_{os.environ['SLURM_JOB_ID']}"
@@ -29,6 +34,8 @@ def main() -> int:
         day.isoformat(),
         "--work-directory",
         scratch,
+        "--project-root",
+        os.environ.get("HYDRO_OPS_LAYOUT_ROOT", "."),
         "--assembly-workers",
         os.environ.get("HYDRO_OPS_ASSEMBLY_WORKERS", "4"),
         "--precipitation-remap-workers",

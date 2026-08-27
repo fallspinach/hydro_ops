@@ -77,18 +77,54 @@ def _attach_source_corners(native: Path, weights: Path) -> None:
             raise ValueError(f"Source-grid dimensions in {native} do not match {weights}")
         if "nv4" not in output.dimensions:
             output.createDimension("nv4", corners)
-        lat_bounds = output.createVariable(
-            "latitude_bounds", "f8", ("y", "x", "nv4"), zlib=True, complevel=1
-        )
-        lon_bounds = output.createVariable(
-            "longitude_bounds", "f8", ("y", "x", "nv4"), zlib=True, complevel=1
-        )
+        lat_bounds = output.variables.get("latitude_bounds")
+        if lat_bounds is None:
+            lat_bounds = output.createVariable(
+                "latitude_bounds", "f8", ("y", "x", "nv4"), zlib=True, complevel=1
+            )
+        lon_bounds = output.variables.get("longitude_bounds")
+        if lon_bounds is None:
+            lon_bounds = output.createVariable(
+                "longitude_bounds", "f8", ("y", "x", "nv4"), zlib=True, complevel=1
+            )
         lat_bounds.units = "degrees_north"
         lon_bounds.units = "degrees_east"
         lat_bounds[:] = latitude
         lon_bounds[:] = longitude
         output["latitude"].bounds = "latitude_bounds"
         output["longitude"].bounds = "longitude_bounds"
+
+
+def _write_source_scrip(weights: Path, destination: Path) -> None:
+    """Extract the immutable source grid from a CDO/SCRIP remapping operator."""
+    names = (
+        "grid_dims",
+        "grid_center_lat",
+        "grid_center_lon",
+        "grid_corner_lat",
+        "grid_corner_lon",
+        "grid_imask",
+    )
+    with Dataset(weights) as source, Dataset(destination, "w") as output:
+        output.createDimension("grid_size", source.dimensions["src_grid_size"].size)
+        output.createDimension("grid_corners", source.dimensions["src_grid_corners"].size)
+        output.createDimension("grid_rank", source.dimensions["src_grid_rank"].size)
+        dimensions = {
+            "grid_dims": ("grid_rank",),
+            "grid_center_lat": ("grid_size",),
+            "grid_center_lon": ("grid_size",),
+            "grid_corner_lat": ("grid_size", "grid_corners"),
+            "grid_corner_lon": ("grid_size", "grid_corners"),
+            "grid_imask": ("grid_size",),
+        }
+        for name in names:
+            original = source[f"src_{name}"]
+            variable = output.createVariable(name, original.dtype, dimensions[name])
+            for attribute in original.ncattrs():
+                variable.setncattr(attribute, original.getncattr(attribute))
+            variable[:] = original[:]
+        output.title = "Source grid extracted from precomputed remapping weights"
+        output.conventions = "SCRIP"
 
 
 def _target_field(dataset: xr.Dataset, variable: str, valid_time: datetime) -> np.ndarray:
@@ -133,14 +169,12 @@ def process_precipitation_day(
     for earlier, later in pairwise(valid_times):
         if (later - earlier).total_seconds() != 3600:
             raise ValueError("Batch valid times must be chronological and contiguous")
-    products = set(candidate_hours[0])
-    if not products or any(set(hour) != products for hour in candidate_hours):
-        raise ValueError("Every batch hour must have the same precipitation candidates")
+    products = set().union(*(set(hour) for hour in candidate_hours))
+    if not products or any(not hour for hour in candidate_hours):
+        raise ValueError("Every batch hour must have at least one precipitation candidate")
     if products != set(weight_paths):
         raise ValueError("Every batch candidate requires exactly one weight matrix")
-    has_quality = all(path is not None for path in quality_hours)
-    if any(path is not None for path in quality_hours) != has_quality:
-        raise ValueError("MRMS quality must be present for every batch hour or none")
+    has_quality = any(path is not None for path in quality_hours)
     if has_quality and quality_weights is None:
         raise ValueError("MRMS quality requires bilinear quality weights")
     executable = shutil.which(cdo)
@@ -172,11 +206,20 @@ def process_precipitation_day(
             native.unlink()
 
         for product in items:
-            paths = (
-                [path for path in quality_hours if path is not None]
-                if product == "mrms_quality"
-                else [hour[product] for hour in candidate_hours]
-            )
+            if product == "mrms_quality":
+                available = [
+                    (valid, path)
+                    for valid, path in zip(valid_times, quality_hours, strict=True)
+                    if path is not None
+                ]
+            else:
+                available = [
+                    (valid, hour[product])
+                    for valid, hour in zip(valid_times, candidate_hours, strict=True)
+                    if product in hour
+                ]
+            product_times = [valid for valid, _ in available]
+            paths = [path for _, path in available]
             weights = quality_weights if product == "mrms_quality" else weight_paths[product]
             assert weights is not None
             if validate_weights:
@@ -189,12 +232,17 @@ def process_precipitation_day(
                 )
             native = temp / f"{product}.native.nc"
             remapped = temp / f"{product}.remapped.nc"
-            variable = _write_native_day(paths, product, valid_times, native)
-            if product == "stage4_realtime":
+            variable = _write_native_day(paths, product, product_times, native)
+            if product.startswith("stage4_"):
                 _attach_source_corners(native, weights)
             command = build_remap_command(
                 executable, remap_grid_path, weights, native, remapped
             )
+            if product.startswith("stage4_"):
+                source_grid = temp / "stage4.source_scrip.nc"
+                if not source_grid.exists():
+                    _write_source_scrip(weights, source_grid)
+                command.insert(-2, f"-setgrid,{source_grid}")
             item = (product, command, native)
             if remap_workers == 1:
                 run_remap(item)
@@ -215,11 +263,11 @@ def process_precipitation_day(
             for index, valid_time in enumerate(valid_times):
                 remapped_values = {
                     product: _target_field(datasets[product], variables[product], valid_time)
-                    for product in products
+                    for product in candidate_hours[index]
                 }
                 quality = (
                     _target_field(datasets["mrms_quality"], "quality", valid_time)
-                    if has_quality
+                    if quality_hours[index] is not None
                     else None
                 )
                 composite = composite_precipitation(
