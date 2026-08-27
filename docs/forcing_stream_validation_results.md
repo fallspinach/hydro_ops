@@ -73,12 +73,11 @@ variable schemas, physical ranges, paired wind masks, source provenance, manifes
 remnants.
 
 A 12-day sample spanning seasons, year boundaries, and every repaired failure class passed 12 of
-12 full-grid scans. Full scan job `4444940` was then submitted for all 395 days. As of the
-documentation checkpoint on 2026-08-27, 285 contiguous days through 2021-09-12 had completed and
-all 285 were accepted with zero reported issues. The validator had read 2.65 TB and checked more
+12 full-grid scans. Full scan job `4444940` then accepted all 395 days with zero reported issues.
+At an intermediate 285-day checkpoint the validator had already read 2.65 TB and checked more
 than 73 billion finite values per forcing field. Observed extrema remained inside the configured
 physical guards: temperature 225.76-325.63 K, specific humidity 0.0000033-0.02832, pressure
 57,663-104,789 Pa, wind components -20.11 to 27.81 m/s, shortwave 0-1,368.06 W m-2, longwave
 81.28-522.66 W m-2, and precipitation rate 0-0.17681 kg m-2 s-1. Mean validation time was 1.67
-minutes per day. The scan was still active, so this is strong partial evidence rather than its
-final acceptance ledger; update this paragraph when the remaining 110 reports finish.
+minutes per day. After acceptance, job `4445482` began converting the baseline to canonical
+suffix-free daily collections and removing verified hourly inputs at four-way concurrency.

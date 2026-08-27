@@ -24,6 +24,10 @@ from hydro_ops.forcing.prism_temperature import build_constrained_temperature_ov
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("hours", nargs=24, type=Path, help="chronological hour-ending LDASIN files")
+    parser.add_argument(
+        "--hour-indices", nargs=24, type=int, metavar="INDEX",
+        help="time-record index for each input (default: record zero)",
+    )
     parser.add_argument("--prism", required=True, type=Path)
     parser.add_argument("--prism-variable", default="ppt")
     parser.add_argument(
@@ -52,17 +56,21 @@ def main() -> int:
     parser.add_argument("--maximum-unconverged-fraction", type=float, default=0.005)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
+    hour_indices = [0] * len(args.hours) if args.hour_indices is None else args.hour_indices
     if not 0 <= args.maximum_unconverged_fraction <= 1:
         parser.error("--maximum-unconverged-fraction must be between zero and one")
 
     fields = []
     grid_shape = None
-    for path in args.hours:
+    for path, source_index in zip(args.hours, hour_indices, strict=True):
         with Dataset(path) as data:
-            if "RAINRATE" not in data.variables or data["RAINRATE"].shape[0] != 1:
-                parser.error(f"invalid hourly RAINRATE: {path}")
+            if (
+                "RAINRATE" not in data.variables
+                or not 0 <= source_index < data["RAINRATE"].shape[0]
+            ):
+                parser.error(f"invalid RAINRATE record {source_index}: {path}")
             field = (
-                np.ma.asarray(data["RAINRATE"][0], dtype=np.float64).filled(np.nan)
+                np.ma.asarray(data["RAINRATE"][source_index], dtype=np.float64).filled(np.nan)
                 * 3600.0
             )
             grid_shape = field.shape if grid_shape is None else grid_shape
@@ -102,7 +110,7 @@ def main() -> int:
         if args.temperature_corrected_day is not None:
             overrides.update(
                 build_constrained_temperature_overrides(
-                    args.hours, args.temperature_corrected_day
+                    args.hours, args.temperature_corrected_day, hour_indices
                 )
             )
         create_daily_archive(
@@ -130,6 +138,7 @@ def main() -> int:
             },
             verification="targeted",
             fully_verified_overrides={"RAINRATE"},
+            source_time_indices=hour_indices,
         )
     else:
         if args.temperature_corrected_day is not None:

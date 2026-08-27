@@ -103,6 +103,31 @@ def test_daily_archive_applies_time_variable_override_directly(tmp_path: Path) -
     assert '"verification": "targeted"' in manifest
 
 
+def test_daily_archive_reads_selected_records_directly(tmp_path: Path) -> None:
+    source = tmp_path / "source-daily.nc"
+    with Dataset(source, "w") as dataset:
+        dataset.createDimension("time", 4)
+        dataset.createDimension("y", 2)
+        dataset.createDimension("x", 3)
+        time = dataset.createVariable("time", "f8", ("time",))
+        time.units = "hours since 2026-01-01 00:00:00"
+        time[:] = np.arange(4)
+        dataset.createVariable("latitude", "f4", ("y",))[:] = np.arange(2)
+        field = dataset.createVariable("field", "f4", ("time", "y", "x"))
+        field[:] = np.arange(4)[:, None, None] + np.arange(6).reshape(1, 2, 3)
+    destination = tmp_path / "selected.nc"
+    create_daily_archive(
+        [source, source, source],
+        destination,
+        date(2026, 1, 1),
+        expected_hours=3,
+        source_time_indices=[1, 2, 3],
+    )
+    with Dataset(destination) as dataset:
+        np.testing.assert_array_equal(dataset["time"][:], [1, 2, 3])
+        np.testing.assert_array_equal(dataset["field"][:, 0, 0], [1, 2, 3])
+
+
 def test_daily_archive_requires_complete_day(tmp_path: Path) -> None:
     try:
         create_daily_archive([], tmp_path / "daily.nc", date(2026, 1, 1))

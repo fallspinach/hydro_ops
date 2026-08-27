@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -26,6 +27,11 @@ def main() -> int:
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument("--work-directory", type=Path)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--delete-hourly",
+        action="store_true",
+        help="remove hourly files and manifests only after verified daily publication",
+    )
     args = parser.parse_args()
 
     start = datetime.combine(args.day, datetime.min.time(), tzinfo=UTC)
@@ -36,7 +42,7 @@ def main() -> int:
     destination = (
         args.output_root
         / args.day.strftime("%Y/%m")
-        / f"{args.day:%Y%m%d}.LDASIN_DOMAIN1.nc"
+        / f"{args.day:%Y%m%d}.LDASIN_DOMAIN1"
     )
     if destination.exists() and not args.force:
         raise FileExistsError(f"Output exists; use --force to replace it: {destination}")
@@ -50,6 +56,28 @@ def main() -> int:
         work_directory=work,
         verification="targeted",
     )
+    if args.delete_hourly:
+        manifest_path = destination.with_suffix(destination.suffix + ".manifest.json")
+        record = json.loads(manifest_path.read_text())
+        record["cleanup_state"] = "in_progress"
+        partial = manifest_path.with_suffix(manifest_path.suffix + ".part")
+        partial.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+        partial.replace(manifest_path)
+        for path in paths:
+            path.unlink()
+            path.with_suffix(f"{path.suffix}.manifest.json").unlink(missing_ok=True)
+        for directory in sorted({path.parent for path in paths}, reverse=True):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+        record.update(
+            cleanup_state="complete",
+            cleanup_time=datetime.now(UTC).isoformat(),
+            hourly_sources_removed=True,
+        )
+        partial.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+        partial.replace(manifest_path)
     print(destination, flush=True)
     return 0
 

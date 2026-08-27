@@ -43,8 +43,11 @@ def daily_candidates(root: Path, valid_time: datetime) -> list[Path]:
         candidates.update(
             {
                 root / label.strftime("%Y/%m") / f"{stamp}.LDASIN_DOMAIN1.nc",
+                root / label.strftime("%Y/%m") / f"{stamp}.LDASIN_DOMAIN1",
                 root / label.strftime("%Y") / f"{stamp}.LDASIN_DOMAIN1.nc",
+                root / label.strftime("%Y") / f"{stamp}.LDASIN_DOMAIN1",
                 root / label.strftime("%Y/%m/%d") / f"{stamp}.LDASIN_DOMAIN1.nc",
+                root / label.strftime("%Y/%m/%d") / f"{stamp}.LDASIN_DOMAIN1",
             }
         )
     return sorted(path for path in candidates if path.is_file())
@@ -75,25 +78,35 @@ def find_daily_record(root: Path, valid_time: datetime) -> tuple[Path, int] | No
     return None
 
 
-def materialize_forcing_hours(
-    root: Path, valid_times: list[datetime], destination: Path
-) -> list[Path]:
-    """Use hourly files when present, otherwise extract exact records from daily archives."""
+def resolve_forcing_hours(
+    root: Path,
+    valid_times: list[datetime],
+    destination: Path,
+    *,
+    archive_access: str,
+) -> tuple[list[Path], list[int]]:
+    """Resolve hourly inputs to files and explicit NetCDF time-record indices."""
     ncks = shutil.which("ncks")
     resolved: list[Path] = []
+    indices: list[int] = []
     for valid_time in valid_times:
         hourly = forcing_path(root, valid_time)
         if hourly.is_file():
             resolved.append(hourly)
+            indices.append(0)
             continue
         record = find_daily_record(root, valid_time)
         if record is None:
             raise FileNotFoundError(
                 f"No hourly file or daily-archive record for {valid_time.isoformat()} below {root}"
             )
+        archive, index = record
+        if archive_access == "direct":
+            resolved.append(archive)
+            indices.append(index)
+            continue
         if ncks is None:
             raise RuntimeError("ncks is required to extract forcing records from daily archives")
-        archive, index = record
         destination.mkdir(parents=True, exist_ok=True)
         extracted = destination / valid_time.strftime("%Y%m%d%H.LDASIN_DOMAIN1")
         subprocess.run(
@@ -105,7 +118,8 @@ def materialize_forcing_hours(
         with Dataset(extracted, "a") as data:
             data.setncattr("valid_time", valid_time.replace(tzinfo=None).isoformat())
         resolved.append(extracted)
-    return resolved
+        indices.append(0)
+    return resolved, indices
 
 
 def main() -> int:
@@ -120,6 +134,12 @@ def main() -> int:
     parser.add_argument("--max-iterations", type=int, default=80)
     parser.add_argument("--maximum-unconverged-fraction", type=float, default=0.005)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--archive-access",
+        choices=("direct", "extract"),
+        default="direct",
+        help="read daily archive records directly or materialize them with ncks",
+    )
     args = parser.parse_args()
 
     settings = load_settings()
@@ -138,15 +158,18 @@ def main() -> int:
     work_root = args.work_directory or temporary_work_root(settings, f"prism-final-{stamp}")
     work_root.mkdir(parents=True, exist_ok=True)
     output_directory = args.output_root / args.day.strftime("%Y/%m")
-    daily = output_directory / f"{stamp}.LDASIN_DOMAIN1.nc"
+    daily = output_directory / f"{stamp}.LDASIN_DOMAIN1"
     diagnostics = output_directory / f"{stamp}.prism_precipitation_diagnostics.nc"
     if daily.exists() and not args.force:
         raise FileExistsError(f"Output exists; use --force to replace it: {daily}")
 
     with tempfile.TemporaryDirectory(prefix=f"prism_complete_{stamp}_", dir=work_root) as temp:
         temp = Path(temp)
-        hours = materialize_forcing_hours(
-            args.complete_root, valid_times, temp / "extracted_hours"
+        hours, hour_indices = resolve_forcing_hours(
+            args.complete_root,
+            valid_times,
+            temp / "extracted_hours",
+            archive_access=args.archive_access,
         )
         constraint = temp / f"prism_temperature_constraint.{stamp}.nc"
         corrected = temp / f"hybrid_temperature_prism_corrected.{stamp}.nc"
@@ -167,11 +190,14 @@ def main() -> int:
             corrected,
             baseline_variable="T2D",
             force=True,
+            source_time_indices=hour_indices,
         )
         command = [
             sys.executable,
             str(settings.project_root / "bin/reconcile_prism_precipitation_day.py"),
             *(str(path) for path in hours),
+            "--hour-indices",
+            *(str(index) for index in hour_indices),
             "--prism",
             str(precipitation),
             "--weights",

@@ -14,6 +14,8 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
+from hydro_ops.forcing.daily_archive import verified_daily_archive
+
 
 def main() -> int:
     index = int(os.environ["SLURM_ARRAY_TASK_ID"])
@@ -23,6 +25,16 @@ def main() -> int:
         start = date.fromisoformat(os.environ["HYDRO_OPS_START_DAY"])
         day = start + timedelta(days=index)
     python = os.environ.get("HYDRO_OPS_PYTHON", sys.executable)
+    output_root = os.environ.get("HYDRO_OPS_OUTPUT_ROOT")
+    if output_root and os.environ.get("HYDRO_OPS_ARCHIVE_DAILY") == "1":
+        daily = Path(output_root) / day.strftime("%Y/%m") / f"{day:%Y%m%d}.LDASIN_DOMAIN1"
+        legacy_daily = daily.with_suffix(f"{daily.suffix}.nc")
+        if os.environ.get("HYDRO_OPS_FORCE") != "1" and (
+            verified_daily_archive(daily, day)
+            or verified_daily_archive(legacy_daily, day)
+        ):
+            print(f"SKIP verified daily archive {daily}", flush=True)
+            return 0
     scratch = (
         f"/scratch/{os.environ['SLURM_JOB_USER']}/job_{os.environ['SLURM_JOB_ID']}"
         f"/forcing-day-{day:%Y%m%d}"
@@ -41,11 +53,30 @@ def main() -> int:
         "--precipitation-remap-workers",
         os.environ.get("HYDRO_OPS_PRECIPITATION_REMAP_WORKERS", "1"),
     ]
-    if output_root := os.environ.get("HYDRO_OPS_OUTPUT_ROOT"):
+    if output_root:
         command.extend(["--output-root", output_root])
     if os.environ.get("HYDRO_OPS_FORCE") == "1":
         command.append("--force")
-    return subprocess.run(command, check=False).returncode
+    produced = subprocess.run(command, check=False)
+    if produced.returncode != 0 or os.environ.get("HYDRO_OPS_ARCHIVE_DAILY") != "1":
+        return produced.returncode
+    assert output_root is not None
+    archive = [
+        python,
+        "bin/archive_nwm_forcing_day.py",
+        "--day",
+        day.isoformat(),
+        "--hourly-root",
+        output_root,
+        "--output-root",
+        output_root,
+        "--work-directory",
+        scratch,
+        "--delete-hourly",
+    ]
+    if os.environ.get("HYDRO_OPS_FORCE") == "1":
+        archive.append("--force")
+    return subprocess.run(archive, check=False).returncode
 
 
 if __name__ == "__main__":

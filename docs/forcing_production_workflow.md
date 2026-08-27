@@ -465,11 +465,16 @@ exact checksum of all unscaled stored values. `bin/compress_forcing_netcdf.py` a
 procedure in place to older files; already-compressed files are skipped, so interrupted migrations
 are resumable.
 
-Hourly files remain the acquisition and late-revision staging unit. Once the forcing workflow is
-validated, compact completed days into daily collections with one shared coordinate grid. This
-removes repeated latitude/longitude arrays and reduces metadata-server load while keeping file
-sizes, revision rewrites, and failure recovery bounded. PRISM is already daily and is not included
-in this compaction step.
+Hourly source files remain the acquisition and late-revision staging unit. Final NWM baseline
+forcing production, however, retains only daily collections with one shared coordinate grid.
+Each daily task first stages its 24 hourly LDASIN records, atomically publishes and verifies
+`YYYY/MM/YYYYMMDD.LDASIN_DOMAIN1`, records cleanup state in the daily manifest, and then removes
+the hourly files and manifests. The shorter timestamp distinguishes daily collections from hourly
+NWM names; neither uses a `.nc` suffix. Readers continue accepting legacy `.nc` daily files.
+This removes repeated latitude/longitude arrays and reduces metadata-server load while keeping
+revision rewrites and failure recovery bounded. `bin/submit_forcing_days.py` enables daily-only
+publication by default; `--keep-hourly` is a diagnostic escape hatch. PRISM is already daily and
+is not included in source-product compaction.
 
 Raw HRRR, MRMS, and Stage-IV source artifacts are retained for a rolling 31-day revision and
 recovery window. Older artifacts may be removed only when a verified daily archive records all
@@ -509,6 +514,19 @@ use `/scratch/$SLURM_JOB_USER/job_$SLURM_JOB_ID`. Validated results are copied t
 beside the permanent destination and atomically renamed, so readers never see partial products.
 Network downloads and the final publication copy remain on permanent storage; moving those to
 scratch would add an extra copy without accelerating the network transfer or improving atomicity.
+
+A full-CONUS NWM smoke benchmark (`4445454`) aggregated 9.35 GB of hourly inputs in 4 minutes 32
+seconds on a 16-CPU allocation. The verified daily collection occupied about 1.1 GB of allocated
+storage and hourly cleanup completed successfully, an approximately 87% disk reduction. Against
+the measured 11.66-minute daily production average, aggregation raises expected wall time to about
+16 minutes per day, or roughly 39%. This cost is accepted because it substantially reduces both
+capacity use and metadata load; remeasure under high concurrency because the shared filesystem is
+the scaling limit. A later PRISM-constrained pass currently spends about eight additional minutes
+extracting 24 records from compressed daily baselines to scratch (16:16 archive-input versus 8:30
+hourly-input in the controlled test). Thus a baseline-plus-one-constraint pass is approximately
+32 minutes rather than 20 minutes per day, about 60% slower end to end. Direct time-slice reads
+from the daily NetCDF collection are the next optimization target; daily-only retention does not
+preclude that improvement.
 
 Hourly deletion is opt-in with `--delete-hourly` and is refused inside the configurable
 `--minimum-age-days` window, which defaults to 31 days. `bin/cleanup_archived_forcing.py` removes
@@ -719,11 +737,18 @@ The complete archive-only operational path was subsequently tested for 2026-07-1
 calendar-day baseline collections were produced in parallel in 5 minutes each, then exposed to
 the scheduler in an isolated root containing no hourly LDASIN files. The scheduler selected
 exactly the one complete PRISM day and submitted job 4439541_0 with the expected provisional
-revision. The full-CONUS task completed in 16 minutes 16 seconds on 12 allocated CPUs with 20.3 GB
-peak memory. CDO found no data-field differences from the verified hourly-input result, and a
-second scheduler scan reported zero eligible updates. The approximately eight-minute increment
-over hourly-input processing is attributable to extracting 24 compressed archive records to
-scratch.
+revision. The initial implementation extracted 24 compressed records to scratch and completed in
+16 minutes 16 seconds on 12 allocated CPUs with 20.3 GB peak memory.
+
+Job 4445630 repeated that full-CONUS case by passing each daily archive and its NetCDF time-record
+index directly through temperature adjustment, precipitation reconciliation, and final daily
+publication. It completed in 10 minutes 57 seconds on 12 CPUs with about 3.4 GB peak memory: 5
+minutes 19 seconds (32.7%) faster than extraction and only 2 minutes 27 seconds slower than the
+8-minute-30-second hourly-input reference. Dimensions, variables, and time coordinates matched;
+all eight forcing fields matched exactly over three separated 256-by-256 windows for all 24
+hours; and every complete PRISM diagnostic field matched exactly. Synthetic tests additionally
+verify exact arbitrary-record selection and publication. Direct indexed access is therefore the
+default; `--archive-access extract` remains available as a diagnostic fallback.
 
 ## Implementation phases
 

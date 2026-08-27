@@ -156,7 +156,7 @@ def main() -> int:
         hourly = list(executor.map(_finish_hour, tasks))
     daily = (
         args.output_root / args.day.strftime("%Y/%m") /
-        f"{stamp}.LDASIN_DOMAIN1.nc"
+        f"{stamp}.LDASIN_DOMAIN1"
     )
     create_daily_archive(
         hourly,

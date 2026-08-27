@@ -432,8 +432,14 @@ Create a verified calendar-day baseline collection before removing its hourly in
 python bin/archive_nwm_forcing_day.py \
   --day 2026-07-15 \
   --hourly-root outputs/forcing/nwm \
-  --output-root outputs/forcing/nwm_daily
+  --output-root outputs/forcing/nwm \
+  --delete-hourly
 ```
+
+Daily-batched production submitted with `bin/submit_forcing_days.py` performs this aggregation and
+verified hourly cleanup by default. Use `--keep-hourly` only for debugging. The canonical daily
+name is `YYYY/MM/YYYYMMDD.LDASIN_DOMAIN1` without a `.nc` suffix, matching NWM forcing naming;
+readers retain compatibility with older `.nc` daily collections.
 
 The revision-aware rolling scheduler revisits the configured PRISM refresh window, requires a
 complete baseline and all three daily PRISM inputs, and submits only missing, stale, or

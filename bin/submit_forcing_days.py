@@ -11,9 +11,14 @@ from pathlib import Path
 
 from hydro_ops.config import load_settings
 from hydro_ops.forcing.complete_day import utc_hours
+from hydro_ops.forcing.daily_archive import verified_daily_archive
 
 
 def complete_day(root: Path, day: date) -> bool:
+    daily = root / day.strftime("%Y/%m") / f"{day:%Y%m%d}.LDASIN_DOMAIN1"
+    legacy_daily = daily.with_suffix(f"{daily.suffix}.nc")
+    if verified_daily_archive(daily, day) or verified_daily_archive(legacy_daily, day):
+        return True
     for valid in utc_hours(day):
         output = root / valid.strftime("%Y/%m/%d/%Y%m%d%H.LDASIN_DOMAIN1")
         manifest = output.with_suffix(f"{output.suffix}.manifest.json")
@@ -38,6 +43,11 @@ def main() -> int:
         help="project-shaped root containing the data view used for source discovery",
     )
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--keep-hourly",
+        action="store_true",
+        help="retain hourly outputs instead of publishing only a verified daily collection",
+    )
     parser.add_argument(
         "--only-days",
         nargs="+",
@@ -88,6 +98,8 @@ def main() -> int:
         f"HYDRO_OPS_LAYOUT_ROOT={args.layout_root.resolve()}",
         f"HYDRO_OPS_FORCING_DAY_TASK_FILE={task_file.resolve()}",
     ]
+    if not args.keep_hourly:
+        exports.append("HYDRO_OPS_ARCHIVE_DAILY=1")
     if args.force:
         exports.append("HYDRO_OPS_FORCE=1")
     command = [

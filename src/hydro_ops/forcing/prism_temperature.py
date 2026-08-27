@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 import xarray as xr
-from netCDF4 import Dataset
+from netCDF4 import Dataset, num2date
 
 from hydro_ops.forcing.inventory import inspect_forcing_file
 from hydro_ops.forcing.normalize import open_normalized_forcing
@@ -170,6 +170,7 @@ def apply_daily_temperature_constraint(
     minimum_baseline_range: float = 0.5,
     scale_bounds: tuple[float, float] = (0.25, 4.0),
     force: bool = False,
+    source_time_indices: list[int] | None = None,
 ) -> Path:
     """Apply one PRISM 12Z-to-12Z affine constraint to 24 complete hourly fields."""
     if len(baseline_paths) != 24:
@@ -178,13 +179,27 @@ def apply_daily_temperature_constraint(
         raise FileExistsError(f"Output exists; use --force to replace it: {output_path}")
     temperatures: list[np.ndarray] = []
     times: list[datetime] = []
-    for path in baseline_paths:
+    indices = (
+        [0] * len(baseline_paths)
+        if source_time_indices is None
+        else list(source_time_indices)
+    )
+    if len(indices) != len(baseline_paths):
+        raise ValueError("source_time_indices must match baseline_paths")
+    for path, source_index in zip(baseline_paths, indices, strict=True):
         with xr.open_dataset(path, mask_and_scale=True) as dataset:
-            temperatures.append(_field(dataset, baseline_variable))
-            valid_time = dataset.attrs.get("source_valid_time", dataset.attrs.get("valid_time"))
-            if valid_time is None:
-                raise ValueError(f"Baseline file has no valid-time metadata: {path}")
-            times.append(datetime.fromisoformat(valid_time))
+            selected = dataset.isel(time=source_index)
+            temperatures.append(_field(selected, baseline_variable))
+            if "time" in dataset:
+                value = np.asarray(dataset["time"].values).reshape(-1)[source_index]
+                times.append(datetime.fromisoformat(np.datetime_as_string(value, unit="s")))
+            else:
+                valid_time = dataset.attrs.get(
+                    "source_valid_time", dataset.attrs.get("valid_time")
+                )
+                if valid_time is None:
+                    raise ValueError(f"Baseline file has no valid-time metadata: {path}")
+                times.append(datetime.fromisoformat(valid_time))
     order = np.argsort(times)
     times = [times[index] for index in order]
     temperatures = [temperatures[index] for index in order]
@@ -307,20 +322,42 @@ def apply_constrained_temperature_hour(
 
 
 def build_constrained_temperature_overrides(
-    baseline_paths: list[Path], corrected_day_path: Path
+    baseline_paths: list[Path], corrected_day_path: Path,
+    source_time_indices: list[int] | None = None,
 ) -> dict[str, np.ndarray]:
     """Build daily T2D/Q2D/LWDOWN overrides without publishing intermediate hours."""
     if len(baseline_paths) != 24:
         raise ValueError("A complete PRISM day requires exactly 24 hourly baseline files")
     shape: tuple[int, int] | None = None
     overrides: dict[str, np.ndarray] = {}
+    indices = (
+        [0] * len(baseline_paths)
+        if source_time_indices is None
+        else list(source_time_indices)
+    )
+    if len(indices) != len(baseline_paths):
+        raise ValueError("source_time_indices must match baseline_paths")
     with xr.open_dataset(corrected_day_path, mask_and_scale=True) as corrected:
         if corrected.sizes.get("time") != 24:
             raise ValueError("Corrected PRISM temperature day must contain 24 hours")
         corrected_times = np.asarray(corrected["time"].values).astype("datetime64[ns]")
-        for index, baseline_path in enumerate(baseline_paths):
+        for index, (baseline_path, source_index) in enumerate(
+            zip(baseline_paths, indices, strict=True)
+        ):
             with Dataset(baseline_path) as baseline:
-                valid_time = datetime.fromisoformat(baseline.getncattr("valid_time"))
+                time_variable = baseline["time"]
+                calendar = (
+                    time_variable.getncattr("calendar")
+                    if "calendar" in time_variable.ncattrs()
+                    else "standard"
+                )
+                valid_time = num2date(
+                    time_variable[source_index],
+                    time_variable.getncattr("units"),
+                    calendar=calendar,
+                    only_use_cftime_datetimes=False,
+                    only_use_python_datetimes=True,
+                )
                 requested = np.datetime64(valid_time.replace(tzinfo=None), "ns")
                 matches = np.flatnonzero(corrected_times == requested)
                 if matches.size != 1:
@@ -330,10 +367,10 @@ def build_constrained_temperature_overrides(
                 final_temperature = _field(
                     corrected.isel(time=int(matches[0])), "T2D"
                 )
-                temperature = np.ma.asarray(baseline["T2D"][0]).filled(np.nan)
-                pressure = np.ma.asarray(baseline["PSFC"][0]).filled(np.nan)
-                humidity = np.ma.asarray(baseline["Q2D"][0]).filled(np.nan)
-                longwave = np.ma.asarray(baseline["LWDOWN"][0]).filled(np.nan)
+                temperature = np.ma.asarray(baseline["T2D"][source_index]).filled(np.nan)
+                pressure = np.ma.asarray(baseline["PSFC"][source_index]).filled(np.nan)
+                humidity = np.ma.asarray(baseline["Q2D"][source_index]).filled(np.nan)
+                longwave = np.ma.asarray(baseline["LWDOWN"][source_index]).filled(np.nan)
             if shape is None:
                 shape = final_temperature.shape
                 overrides = {

@@ -53,7 +53,7 @@ def main() -> int:
         command.extend(
             (
                 "--daily-output",
-                str(day_root / f"{stamp}.LDASIN_DOMAIN1.nc"),
+                str(day_root / f"{stamp}.LDASIN_DOMAIN1"),
                 "--day",
                 day.isoformat(),
                 "--work-directory",

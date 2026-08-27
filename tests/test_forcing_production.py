@@ -65,6 +65,33 @@ def test_daily_prism_constraint_matches_extrema(tmp_path: Path) -> None:
         assert np.all(data.temperature_range_scale == 2.0)
 
 
+def test_daily_prism_constraint_reads_daily_records_directly(tmp_path: Path) -> None:
+    start = datetime(2023, 6, 30, 12, tzinfo=UTC)
+    source = tmp_path / "baseline-daily.nc"
+    values = 285.0 + 5.0 * np.sin(2 * np.pi * np.arange(24) / 24)
+    xr.Dataset(
+        {"T2D_PRELIM": (("time", "y", "x"), np.broadcast_to(values[:, None, None], (24, 2, 2)))},
+        coords={"time": [start.replace(tzinfo=None) + timedelta(hours=hour) for hour in range(24)]},
+    ).to_netcdf(source)
+    constraint = tmp_path / "constraint.nc"
+    xr.Dataset(
+        {
+            "prism_tmin": (("y", "x"), np.full((2, 2), 275.0)),
+            "prism_tmax": (("y", "x"), np.full((2, 2), 295.0)),
+        }
+    ).to_netcdf(constraint)
+    output = tmp_path / "corrected.nc"
+    apply_daily_temperature_constraint(
+        [source] * 24,
+        constraint,
+        output,
+        source_time_indices=list(range(24)),
+    )
+    with xr.open_dataset(output) as data:
+        np.testing.assert_allclose(data.T2D.min("time"), 275.0)
+        np.testing.assert_allclose(data.T2D.max("time"), 295.0)
+
+
 def test_constrained_temperature_reconstructs_humidity_and_longwave(tmp_path: Path) -> None:
     valid = datetime(2023, 7, 1, 6, tzinfo=UTC)
     baseline = tmp_path / "baseline.nc"

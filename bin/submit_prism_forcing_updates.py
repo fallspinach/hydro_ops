@@ -56,7 +56,7 @@ def prism_inputs(settings, day: date) -> tuple[Path, Path, Path]:
 
 
 def output_path(root: Path, day: date) -> Path:
-    return root / day.strftime("%Y/%m") / f"{day:%Y%m%d}.LDASIN_DOMAIN1.nc"
+    return root / day.strftime("%Y/%m") / f"{day:%Y%m%d}.LDASIN_DOMAIN1"
 
 
 def output_revision(path: Path) -> str | None:
@@ -85,8 +85,11 @@ def baseline_sources(root: Path, day: date) -> list[Path] | None:
             stamp = label.strftime("%Y%m%d")
             daily.extend(
                 (
+                    root / label.strftime("%Y/%m") / f"{stamp}.LDASIN_DOMAIN1",
                     root / label.strftime("%Y/%m") / f"{stamp}.LDASIN_DOMAIN1.nc",
+                    root / label.strftime("%Y") / f"{stamp}.LDASIN_DOMAIN1",
                     root / label.strftime("%Y") / f"{stamp}.LDASIN_DOMAIN1.nc",
+                    root / label.strftime("%Y/%m/%d") / f"{stamp}.LDASIN_DOMAIN1",
                     root / label.strftime("%Y/%m/%d") / f"{stamp}.LDASIN_DOMAIN1.nc",
                 )
             )
@@ -131,6 +134,9 @@ def needs_update(
     if baseline is None:
         return False
     output = output_path(constrained_root, day)
+    legacy_output = output.with_suffix(f"{output.suffix}.nc")
+    if not output.is_file() and legacy_output.is_file():
+        output = legacy_output
     manifest = output.with_suffix(output.suffix + ".manifest.json")
     if not output.is_file() or not manifest.is_file() or output_revision(output) != revision:
         return True

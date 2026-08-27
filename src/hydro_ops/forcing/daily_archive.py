@@ -35,14 +35,16 @@ def _digest(values) -> str:
     return digest.hexdigest()
 
 
-def _validate_inputs(paths: list[Path], expected_hours: int) -> tuple[dict[str, int], list[str]]:
+def _validate_inputs(
+    paths: list[Path], expected_hours: int, source_time_indices: list[int]
+) -> tuple[dict[str, int], list[str]]:
     if len(paths) != expected_hours:
         raise ValueError(f"Expected {expected_hours} hourly files, found {len(paths)}")
     dimensions: dict[str, int] | None = None
     variables: list[str] | None = None
     previous_time: float | None = None
     time_units: str | None = None
-    for path in paths:
+    for path, source_index in zip(paths, source_time_indices, strict=True):
         with Dataset(path) as dataset:
             current_dimensions = {
                 name: len(value) for name, value in dataset.dimensions.items() if name != "time"
@@ -52,10 +54,12 @@ def _validate_inputs(paths: list[Path], expected_hours: int) -> tuple[dict[str, 
                 dimensions, variables = current_dimensions, current_variables
             elif dimensions != current_dimensions or variables != current_variables:
                 raise ValueError(f"Hourly NetCDF schema differs: {path}")
-            if "time" not in dataset.dimensions or len(dataset.dimensions["time"]) != 1:
-                raise ValueError(f"Expected exactly one time record: {path}")
+            if "time" not in dataset.dimensions or not (
+                0 <= source_index < len(dataset.dimensions["time"])
+            ):
+                raise ValueError(f"Invalid time record {source_index}: {path}")
             units = dataset["time"].getncattr("units")
-            value = float(dataset["time"][0])
+            value = float(dataset["time"][source_index])
             if time_units is None:
                 time_units = units
             if units != time_units or (previous_time is not None and value <= previous_time):
@@ -77,10 +81,15 @@ def create_daily_archive(
     global_attributes: dict[str, Any] | None = None,
     verification: str = "full",
     fully_verified_overrides: set[str] | None = None,
+    source_time_indices: list[int] | None = None,
 ) -> Path:
     """Combine ordered hourly NetCDF files and verify every stored value."""
     paths = list(paths)
-    dimensions, variable_names = _validate_inputs(paths, expected_hours)
+    explicit_indices = source_time_indices is not None
+    indices = [0] * len(paths) if source_time_indices is None else list(source_time_indices)
+    if len(indices) != len(paths):
+        raise ValueError("source_time_indices must match paths")
+    dimensions, variable_names = _validate_inputs(paths, expected_hours, indices)
     overrides = {} if time_variable_overrides is None else time_variable_overrides
     verify_overrides = set(overrides) if fully_verified_overrides is None else fully_verified_overrides
     if not verify_overrides <= set(overrides):
@@ -135,7 +144,9 @@ def create_daily_archive(
                     if "time" not in source.dimensions:
                         target[...] = source[...]
             with Dataset(partial, "a") as output:
-                for index, path in enumerate(paths):
+                for index, (path, source_index) in enumerate(
+                    zip(paths, indices, strict=True)
+                ):
                     with Dataset(path) as source:
                         for name in variable_names:
                             variable = source[name]
@@ -148,7 +159,7 @@ def create_daily_archive(
                                 continue
                             axis = variable.dimensions.index("time")
                             source_slice = [slice(None)] * variable.ndim
-                            source_slice[axis] = 0
+                            source_slice[axis] = source_index
                             target_slice = [slice(None)] * variable.ndim
                             target_slice[axis] = index
                             if name in overrides:
@@ -184,7 +195,9 @@ def create_daily_archive(
                     if "vmax" in extrema:
                         variable.setncattr("vmax", np.asarray(values.max()).item())
             with Dataset(partial) as output:
-                for index, path in enumerate(paths):
+                for index, (path, source_index) in enumerate(
+                    zip(paths, indices, strict=True)
+                ):
                     with Dataset(path) as source:
                         for name in variable_names:
                             variable = source[name]
@@ -199,7 +212,7 @@ def create_daily_archive(
                                 continue
                             axis = variable.dimensions.index("time")
                             source_slice = [slice(None)] * variable.ndim
-                            source_slice[axis] = 0
+                            source_slice[axis] = source_index
                             target_slice = [slice(None)] * variable.ndim
                             target_slice[axis] = index
                             expected = (
@@ -232,8 +245,13 @@ def create_daily_archive(
             "shuffle": True,
         },
         "source_files": [
-            {"path": str(path), "bytes": path.stat().st_size, "mtime": path.stat().st_mtime}
-            for path in paths
+            {
+                "path": str(path),
+                **({"time_index": index} if explicit_indices else {}),
+                "bytes": path.stat().st_size,
+                "mtime": path.stat().st_mtime,
+            }
+            for path, index in zip(paths, indices, strict=True)
         ],
         "verified": True,
         "overridden_time_variables": sorted(overrides),

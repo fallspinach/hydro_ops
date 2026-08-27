@@ -30,7 +30,9 @@ def main() -> int:
     tasks = []
     day = args.start
     while day <= args.end:
-        path = args.root / day.strftime("%Y/%m") / f"{day:%Y%m%d}.LDASIN_DOMAIN1.nc"
+        path = args.root / day.strftime("%Y/%m") / f"{day:%Y%m%d}.LDASIN_DOMAIN1"
+        if not path.is_file():
+            path = path.with_suffix(f"{path.suffix}.nc")
         if path.is_file():
             tasks.append(
                 {

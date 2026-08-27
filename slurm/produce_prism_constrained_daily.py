@@ -41,6 +41,8 @@ def main() -> int:
         os.environ.get("HYDRO_OPS_PRISM_MAX_ITERATIONS", "80"),
         "--work-directory",
         str(scratch),
+        "--archive-access",
+        os.environ.get("HYDRO_OPS_ARCHIVE_ACCESS", "direct"),
     ]
     if os.environ.get("HYDRO_OPS_FORCE") == "1":
         command.append("--force")
