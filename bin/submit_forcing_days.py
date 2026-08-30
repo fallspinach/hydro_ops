@@ -12,6 +12,7 @@ from pathlib import Path
 from hydro_ops.config import load_settings
 from hydro_ops.forcing.complete_day import utc_hours
 from hydro_ops.forcing.daily_archive import verified_daily_archive
+from hydro_ops.forcing.streams import baseline_root
 
 
 def complete_day(root: Path, day: date) -> bool:
@@ -33,9 +34,7 @@ def main() -> int:
     parser.add_argument("--end", required=True, type=date.fromisoformat)
     parser.add_argument("--max-concurrent", type=int, default=16)
     parser.add_argument("--cpus-per-task", type=int, default=12)
-    parser.add_argument(
-        "--output-root", type=Path, default=Path("outputs/forcing/nwm")
-    )
+    parser.add_argument("--output-root", type=Path)
     parser.add_argument(
         "--layout-root",
         type=Path,
@@ -60,7 +59,9 @@ def main() -> int:
         help="submit only days that do not have 24 complete validated hours",
     )
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--dependency", help="SLURM dependency expression")
     args = parser.parse_args()
+    output_root = args.output_root or baseline_root(args.layout_root.resolve())
     if args.end < args.start:
         parser.error("--end must not precede --start")
     if args.max_concurrent <= 0 or args.cpus_per_task < 12:
@@ -77,7 +78,7 @@ def main() -> int:
             parser.error("--only-days contains a date outside --start/--end")
         days = [day for day in days if day in requested]
     if args.missing_only:
-        days = [day for day in days if not complete_day(args.output_root, day)]
+        days = [day for day in days if not complete_day(output_root, day)]
     tasks = len(days)
     print(f"eligible_days={tasks}")
     if not tasks:
@@ -94,7 +95,7 @@ def main() -> int:
         "ALL",
         f"HYDRO_OPS_START_DAY={args.start.isoformat()}",
         f"HYDRO_OPS_PYTHON={sys.executable}",
-        f"HYDRO_OPS_OUTPUT_ROOT={args.output_root.resolve()}",
+        f"HYDRO_OPS_OUTPUT_ROOT={output_root.resolve()}",
         f"HYDRO_OPS_LAYOUT_ROOT={args.layout_root.resolve()}",
         f"HYDRO_OPS_FORCING_DAY_TASK_FILE={task_file.resolve()}",
     ]
@@ -113,6 +114,8 @@ def main() -> int:
     ]
     if settings.slurm_account:
         command.insert(2, f"--account={settings.slurm_account}")
+    if args.dependency:
+        command.insert(2, f"--dependency={args.dependency}")
     if args.dry_run:
         print(" ".join(command))
         return 0

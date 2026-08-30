@@ -23,17 +23,25 @@ class ReconciliationQC(IntFlag):
 
 
 def build_nwm_to_prism_weight_command(
-    executable: str, nwm_grid: Path, prism_grid: Path, output: Path
+    executable: str,
+    nwm_grid: Path,
+    prism_grid: Path,
+    output: Path,
+    *,
+    nwm_scrip: Path | None = None,
 ) -> list[str]:
     """Build the CDO command for the reverse operator required by reconciliation."""
-    return [
+    command = [
         executable,
         "-O",
         f"gencon,{prism_grid}",
-        "-selname,active_domain",
-        str(nwm_grid),
-        str(output),
     ]
+    if nwm_scrip is not None:
+        command.append(f"-setgrid,{nwm_scrip}")
+    command.extend(
+        ["-setctomiss,0", "-selname,active_domain", str(nwm_grid), str(output)]
+    )
+    return command
 
 
 @dataclass(frozen=True)
@@ -90,6 +98,13 @@ class ConservativeOperator:
             where=denominator > 0,
         )
 
+    def inactive_link_count(self, source_mask: np.ndarray) -> int:
+        """Count links originating outside an expected source-domain mask."""
+        mask = np.asarray(source_mask, dtype=bool).reshape(-1)
+        if mask.size != self.source_size:
+            raise ValueError(f"Expected {self.source_size} source-mask cells, got {mask.size}")
+        return int(np.count_nonzero(~mask[self.source_index]))
+
     def backproject_ratio(
         self, ratio: np.ndarray, *, unmapped_value: float = 1.0
     ) -> NDArray[np.float64]:
@@ -126,7 +141,7 @@ class ReconciliationResult:
     converged: bool
 
 
-def reconcile_prism_day(
+def reconcile_prism_period(
     hourly_depth: np.ndarray,
     prism_depth: np.ndarray,
     operator: ConservativeOperator,
@@ -135,21 +150,22 @@ def reconcile_prism_day(
     max_iterations: int = 20,
     ratio_bounds: tuple[float, float] = (0.1, 10.0),
     cumulative_ratio_bounds: tuple[float, float] = (0.0, 10.0),
-    maximum_daily_depth: float = 500.0,
+    maximum_period_depth: float = 500.0,
     damping: float = 1.0,
     allow_synthetic_timing: bool = False,
     dry_tolerance: float = 1.0e-8,
 ) -> ReconciliationResult:
-    """Reconcile 24 NWM hours to PRISM using bounded multiplicative projections.
+    """Reconcile an hourly NWM period to PRISM using bounded projections.
 
     Missing PRISM cells remain unconstrained. Physically bounded or baseline-dry constraints
     are flagged and excluded from the active iterative set instead of destabilizing all cells.
     """
     hourly = np.asarray(hourly_depth, dtype=np.float64)
     original_shape = hourly.shape
-    if hourly.ndim < 2 or hourly.shape[0] != 24:
-        raise ValueError("A PRISM day requires exactly 24 hourly fields")
-    flat = hourly.reshape(24, -1)
+    if hourly.ndim < 2 or hourly.shape[0] < 1:
+        raise ValueError("A PRISM period requires at least one hourly field")
+    period_hours = hourly.shape[0]
+    flat = hourly.reshape(period_hours, -1)
     if flat.shape[1] != operator.source_size:
         raise ValueError("Hourly grid and conservative operator source grid differ")
     if np.any(flat[np.isfinite(flat)] < 0):
@@ -169,8 +185,10 @@ def reconcile_prism_day(
     target_qc[constrained & (prism <= dry_tolerance)] |= np.uint16(ReconciliationQC.TARGET_DRY)
 
     initial_target = operator.apply(corrected)
-    wet_dry = constrained & (prism > dry_tolerance) & (
-        ~np.isfinite(initial_target) | (initial_target <= dry_tolerance)
+    wet_dry = (
+        constrained
+        & (prism > dry_tolerance)
+        & (~np.isfinite(initial_target) | (initial_target <= dry_tolerance))
     )
     if np.any(wet_dry):
         target_qc[wet_dry] |= np.uint16(ReconciliationQC.BASE_DRY_TARGET_WET)
@@ -186,16 +204,16 @@ def reconcile_prism_day(
     cumulative_lower, cumulative_upper = cumulative_ratio_bounds
     if not (0 <= cumulative_lower <= 1 <= cumulative_upper):
         raise ValueError("cumulative_ratio_bounds must bracket one and be nonnegative")
-    if maximum_daily_depth <= 0:
-        raise ValueError("maximum_daily_depth must be positive")
+    if maximum_period_depth <= 0:
+        raise ValueError("maximum_period_depth must be positive")
     if not 0 < damping <= 1:
         raise ValueError("damping must be in (0, 1]")
     bounding_base = np.where(np.isfinite(base), np.maximum(base, corrected), 0.0)
     source_minimum = np.where(
-        np.isfinite(base), np.minimum(bounding_base * cumulative_lower, maximum_daily_depth), 0.0
+        np.isfinite(base), np.minimum(bounding_base * cumulative_lower, maximum_period_depth), 0.0
     )
     source_maximum = np.where(
-        np.isfinite(base), np.minimum(bounding_base * cumulative_upper, maximum_daily_depth), 0.0
+        np.isfinite(base), np.minimum(bounding_base * cumulative_upper, maximum_period_depth), 0.0
     )
     maximum_target = operator.apply(source_maximum)
     infeasible_high = (
@@ -232,9 +250,7 @@ def reconcile_prism_day(
         corrected = np.clip(corrected, source_minimum, source_maximum)
     estimate = operator.apply(corrected)
     residual[constrained] = estimate[constrained] - prism[constrained]
-    unmet = eligible & (
-        np.abs(residual) / np.maximum(prism, 1.0) > tolerance
-    )
+    unmet = eligible & (np.abs(residual) / np.maximum(prism, 1.0) > tolerance)
     converged = not np.any(unmet)
     if not converged:
         target_qc[unmet] |= np.uint16(ReconciliationQC.NOT_CONVERGED)
@@ -249,7 +265,7 @@ def reconcile_prism_day(
     if wet_hour_profile.sum() > 0:
         wet_hour_profile /= wet_hour_profile.sum()
     else:
-        wet_hour_profile[:] = 1 / 24
+        wet_hour_profile[:] = 1 / period_hours
     synthetic_source = (base <= dry_tolerance) & (corrected > dry_tolerance)
     fractions[:, synthetic_source] = wet_hour_profile[:, None]
     corrected_hourly = fractions * corrected[None, :]
@@ -267,4 +283,37 @@ def reconcile_prism_day(
         target_qc.reshape(np.asarray(prism_depth).shape),
         iterations,
         converged,
+    )
+
+
+def reconcile_prism_day(
+    hourly_depth: np.ndarray,
+    prism_depth: np.ndarray,
+    operator: ConservativeOperator,
+    *,
+    tolerance: float = 1.0e-3,
+    max_iterations: int = 20,
+    ratio_bounds: tuple[float, float] = (0.1, 10.0),
+    cumulative_ratio_bounds: tuple[float, float] = (0.0, 10.0),
+    maximum_daily_depth: float = 500.0,
+    damping: float = 1.0,
+    allow_synthetic_timing: bool = False,
+    dry_tolerance: float = 1.0e-8,
+) -> ReconciliationResult:
+    """Reconcile exactly 24 NWM hours to one daily PRISM target."""
+    hourly = np.asarray(hourly_depth)
+    if hourly.ndim < 2 or hourly.shape[0] != 24:
+        raise ValueError("A PRISM day requires exactly 24 hourly fields")
+    return reconcile_prism_period(
+        hourly,
+        prism_depth,
+        operator,
+        tolerance=tolerance,
+        max_iterations=max_iterations,
+        ratio_bounds=ratio_bounds,
+        cumulative_ratio_bounds=cumulative_ratio_bounds,
+        maximum_period_depth=maximum_daily_depth,
+        damping=damping,
+        allow_synthetic_timing=allow_synthetic_timing,
+        dry_tolerance=dry_tolerance,
     )

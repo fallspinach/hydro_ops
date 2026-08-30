@@ -20,6 +20,7 @@ from hydro_ops.forcing.prism_temperature import (
     apply_daily_temperature_constraint,
     create_prism_temperature_constraints,
 )
+from hydro_ops.forcing.streams import FORCING_STREAMS, validate_stream_output_root
 from hydro_ops.work import temporary_work_root
 
 
@@ -127,10 +128,10 @@ def main() -> int:
     parser.add_argument("--day", required=True, type=date.fromisoformat)
     parser.add_argument("--complete-root", required=True, type=Path)
     parser.add_argument("--output-root", required=True, type=Path)
+    parser.add_argument("--stream", choices=FORCING_STREAMS)
+    parser.add_argument("--precipitation-weights", type=Path)
     parser.add_argument("--work-directory", type=Path)
-    parser.add_argument(
-        "--revision", choices=("early", "provisional", "stable"), required=True
-    )
+    parser.add_argument("--revision", choices=("early", "provisional", "stable"), required=True)
     parser.add_argument("--max-iterations", type=int, default=80)
     parser.add_argument("--maximum-unconverged-fraction", type=float, default=0.005)
     parser.add_argument("--force", action="store_true")
@@ -141,6 +142,8 @@ def main() -> int:
         help="read daily archive records directly or materialize them with ncks",
     )
     args = parser.parse_args()
+    if args.stream:
+        validate_stream_output_root(args.output_root, args.stream)
 
     settings = load_settings()
     layout = OperationalLayout.project_defaults()
@@ -192,6 +195,10 @@ def main() -> int:
             force=True,
             source_time_indices=hour_indices,
         )
+        precipitation_weights = args.precipitation_weights or (
+            settings.data_root
+            / "static/remapping/nwm_conus_1km/nwm_to_prism_conservative_masked.nc"
+        )
         command = [
             sys.executable,
             str(settings.project_root / "bin/reconcile_prism_precipitation_day.py"),
@@ -201,10 +208,7 @@ def main() -> int:
             "--prism",
             str(precipitation),
             "--weights",
-            str(
-                settings.data_root
-                / "static/remapping/nwm_conus_1km/nwm_to_prism_conservative.nc"
-            ),
+            str(precipitation_weights),
             "--daily-output",
             str(daily),
             "--day",
@@ -227,6 +231,11 @@ def main() -> int:
         completed = subprocess.run(command, check=False)
         if completed.returncode:
             return completed.returncode
+        if args.stream:
+            with Dataset(daily, "a") as output:
+                output.setncattr("forcing_stream", args.stream)
+            with Dataset(diagnostics, "a") as output:
+                output.setncattr("forcing_stream", args.stream)
     print(daily, flush=True)
     return 0
 

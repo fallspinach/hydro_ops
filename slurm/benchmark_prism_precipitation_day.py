@@ -37,7 +37,10 @@ def main() -> int:
             / f"prism_ppt_us_25m_{stamp}.nc"
         ),
         "--weights",
-        str(project / "data/static/remapping/nwm_conus_1km/nwm_to_prism_conservative.nc"),
+        str(
+            project
+            / "data/static/remapping/nwm_conus_1km/nwm_to_prism_conservative_masked.nc"
+        ),
         "--diagnostics",
         str(day_root / f"prism_precipitation_diagnostics.{stamp}.nc"),
         "--revision",

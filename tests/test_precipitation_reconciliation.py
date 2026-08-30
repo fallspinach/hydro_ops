@@ -24,15 +24,26 @@ def _two_region_operator() -> ConservativeOperator:
 
 def test_reverse_weight_command() -> None:
     assert build_nwm_to_prism_weight_command(
-        "/bin/cdo", Path("nwm.nc"), Path("prism.nc"), Path("weights.nc")
+        "/bin/cdo",
+        Path("nwm.nc"),
+        Path("prism.nc"),
+        Path("weights.nc"),
+        nwm_scrip=Path("nwm_scrip.nc"),
     ) == [
         "/bin/cdo",
         "-O",
         "gencon,prism.nc",
+        "-setgrid,nwm_scrip.nc",
+        "-setctomiss,0",
         "-selname,active_domain",
         "nwm.nc",
         "weights.nc",
     ]
+
+
+def test_operator_detects_links_from_inactive_source_cells() -> None:
+    operator = _two_region_operator()
+    assert operator.inactive_link_count(np.array([True, False, True, False])) == 2
 
 
 def test_reconciliation_meets_disjoint_conservative_constraints() -> None:
@@ -41,9 +52,7 @@ def test_reconciliation_meets_disjoint_conservative_constraints() -> None:
     result = reconcile_prism_day(hourly, np.array([[4.0, 1.0]]), _two_region_operator())
     assert result.converged
     np.testing.assert_allclose(result.daily_depth, [[4, 4], [1, 1]])
-    np.testing.assert_allclose(
-        _two_region_operator().apply(result.daily_depth), [4, 1], atol=1e-8
-    )
+    np.testing.assert_allclose(_two_region_operator().apply(result.daily_depth), [4, 1], atol=1e-8)
     np.testing.assert_allclose(result.hourly_depth.sum(axis=0), result.daily_depth)
 
 

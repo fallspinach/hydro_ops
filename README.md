@@ -336,7 +336,8 @@ python bin/produce_forcing_range.py --start 2026072410 --end 2026072412
 ```
 
 Each hour discovers available revisions, runs the seven-field path, composites precipitation,
-and atomically publishes a complete LDASIN plus JSON manifest below `outputs/forcing/nwm`.
+and atomically publishes a complete LDASIN plus JSON manifest below
+`outputs/forcing/nwm/baseline`.
 Existing structurally complete hours are skipped. `--continue-on-error` reports unavailable
 hours without stopping an entire range.
 
@@ -390,7 +391,7 @@ stable PRISM release for retrospective final output, and label mutable runs `ear
 ```bash
 python bin/reconcile_prism_precipitation_day.py path/to/24/hourly/files/* \
   --prism path/to/prism_ppt_day.nc \
-  --weights data/static/remapping/nwm_conus_1km/nwm_to_prism_conservative.nc \
+  --weights data/static/remapping/nwm_conus_1km/nwm_to_prism_conservative_masked.nc \
   --revision stable --output-directory outputs/forcing/nwm_prism_final/day \
   --diagnostics outputs/forcing/diagnostics/prism_day.nc
 ```
@@ -401,8 +402,9 @@ file; do not reuse `prism_conservative.nc`. Generate and fingerprint it with:
 ```bash
 python bin/generate_prism_reconciliation_weights.py \
   --nwm-grid data/static/nwm/forcing_grid/nwm_conus_1km_grid.nc \
+  --nwm-scrip data/static/remapping/nwm_conus_1km/nwm_conus_1km_scrip.nc \
   --prism-grid path/to/prism_ppt_day.nc \
-  --output data/static/remapping/nwm_conus_1km/nwm_to_prism_conservative.nc
+  --output data/static/remapping/nwm_conus_1km/nwm_to_prism_conservative_masked.nc
 ```
 
 The solver preserves native hourly
@@ -415,8 +417,9 @@ daily LDASIN collection with:
 ```bash
 python bin/produce_prism_constrained_daily.py \
   --day 2026-07-15 \
-  --complete-root outputs/forcing/nwm \
-  --output-root outputs/forcing/nwm_prism \
+  --complete-root outputs/forcing/nwm/baseline \
+  --output-root outputs/forcing/nwm/nrt \
+  --stream nrt \
   --revision provisional
 ```
 
@@ -431,8 +434,8 @@ Create a verified calendar-day baseline collection before removing its hourly in
 ```bash
 python bin/archive_nwm_forcing_day.py \
   --day 2026-07-15 \
-  --hourly-root outputs/forcing/nwm \
-  --output-root outputs/forcing/nwm \
+  --hourly-root outputs/forcing/nwm/baseline \
+  --output-root outputs/forcing/nwm/baseline \
   --delete-hourly
 ```
 
@@ -448,17 +451,24 @@ revision-transitioned days as a bounded SLURM array:
 ```bash
 python bin/submit_prism_forcing_updates.py \
   --stream nrt \
-  --complete-root outputs/forcing/nwm \
-  --output-root outputs/forcing/nwm_prism/nrt \
   --dry-run
 ```
 
+The selected stream determines the default destination; `--output-root` is only an override for
+isolated tests and must still end in the selected stream name. The worker repeats this check, so
+a crossed NRT/retro destination fails before opening an output.
+
 Current-month days are labeled `early`, older mutable days `provisional`, and days at least 183
 days old `stable`. The `nrt` stream retains early/provisional forcing below
-`outputs/forcing/nwm_prism/nrt`; the `retro` stream independently publishes stable forcing below
-`outputs/forcing/nwm_prism/retro`. Stable publication therefore never replaces the retained NRT
+`outputs/forcing/nwm/nrt`; the `retro` stream independently publishes stable forcing below
+`outputs/forcing/nwm/retro`. Stable publication therefore never replaces the retained NRT
 record. Source modification times and the revision stored in each output are used to decide
 whether it must be rebuilt. The canonical recurring entries are in `cron/hydro_ops.crontab`.
+
+The baseline tree is temporary production input. `bin/cleanup_stable_baseline.py` removes a UTC
+baseline day only after complete accepted stable retro coverage exists. It requires both adjacent
+12Z-to-12Z daily PRISM outputs, or a complete accepted monthly constraint for the 1979-1980
+method, before deletion.
 
 The operational cadence has three passes:
 

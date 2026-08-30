@@ -10,6 +10,7 @@ from pathlib import Path
 
 from hydro_ops.forcing.hybrid import HybridWeights
 from hydro_ops.forcing.operations import OperationalLayout, produce_complete_hour
+from hydro_ops.forcing.streams import baseline_root
 
 
 def main() -> int:
@@ -17,7 +18,7 @@ def main() -> int:
     parser.add_argument("--start", required=True, help="YYYYMMDDHH")
     parser.add_argument("--end", required=True, help="YYYYMMDDHH")
     parser.add_argument("--project-root", type=Path, default=Path("."))
-    parser.add_argument("--output-root", type=Path, default=Path("outputs/forcing/nwm"))
+    parser.add_argument("--output-root", type=Path)
     parser.add_argument("--work-directory", type=Path, default=Path("work/forcing_production"))
     parser.add_argument("--final-temperature", type=Path)
     parser.add_argument("--mrms-quality-threshold", type=float, default=0.5)
@@ -36,6 +37,7 @@ def main() -> int:
     if start > end:
         parser.error("--start must not be after --end")
     layout = OperationalLayout.project_defaults(args.project_root)
+    output_root = args.output_root or baseline_root(args.project_root.resolve())
     hybrid_weights = HybridWeights(
         temperature=args.hybrid_temperature_weight,
         log_pressure=args.hybrid_pressure_weight,
@@ -48,7 +50,7 @@ def main() -> int:
     failed = 0
     current = start
     while current <= end:
-        output = args.output_root / current.strftime("%Y/%m/%d/%Y%m%d%H.LDASIN_DOMAIN1")
+        output = output_root / current.strftime("%Y/%m/%d/%Y%m%d%H.LDASIN_DOMAIN1")
         try:
             summary = produce_complete_hour(
                 current, layout, output, work_directory=args.work_directory,

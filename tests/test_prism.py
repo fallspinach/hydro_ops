@@ -3,7 +3,14 @@ from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
-from hydro_ops.download.prism import PrismDownloader, PrismRelease
+import numpy as np
+import xarray as xr
+
+from hydro_ops.download.prism import (
+    PrismDownloader,
+    PrismRelease,
+    normalize_monthly_netcdf,
+)
 
 
 def settings(tmp_path: Path):
@@ -40,3 +47,19 @@ def test_paths_and_matching_release_metadata(tmp_path):
     assert downloader._metadata_matches(metadata, release)
     newer = PrismRelease(date(2026, 8, 12), date(2026, 9, 15), 3, "https://example/grid", "ppt")
     assert not downloader._metadata_matches(metadata, newer)
+
+
+def test_normalize_monthly_prism_preserves_monthly_semantics(tmp_path):
+    source = tmp_path / "raw.nc"
+    xr.Dataset(
+        {"Band1": (("lat", "lon"), np.ones((2, 3))), "crs": np.int32(0)}
+    ).to_netcdf(source)
+    destination = tmp_path / "monthly.nc"
+    normalize_monthly_netcdf(source, destination, 1979, 2, "tmax")
+    with xr.open_dataset(destination) as data:
+        assert data.attrs["temporal_resolution"] == "monthly"
+        assert data.attrs["time_coverage_end"] == "1979-03-01T00:00:00Z"
+        assert data.tmax.attrs["cell_methods"] == (
+            "time: maximum within days time: mean over days"
+        )
+        assert str(data.time.values[0]) == "1979-02-01T00:00:00.000000000"

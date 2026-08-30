@@ -14,6 +14,10 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
+configured_python = os.environ.get("HYDRO_OPS_PYTHON")
+if configured_python and Path(sys.executable).resolve() != Path(configured_python).resolve():
+    os.execv(configured_python, [configured_python, *sys.argv])
+
 from hydro_ops.forcing.daily_archive import verified_daily_archive
 
 

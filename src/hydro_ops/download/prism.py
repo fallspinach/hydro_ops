@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import shutil
@@ -29,6 +30,18 @@ VARIABLES = {
     "tmean": ("air_temperature", "daily mean air temperature", "degC", "time: mean"),
     "tmax": ("air_temperature", "daily maximum air temperature", "degC", "time: maximum"),
     "tmin": ("air_temperature", "daily minimum air temperature", "degC", "time: minimum"),
+}
+MONTHLY_CELL_METHODS = {
+    "ppt": "time: sum",
+    "tmean": "time: mean",
+    "tmax": "time: maximum within days time: mean over days",
+    "tmin": "time: minimum within days time: mean over days",
+}
+MONTHLY_LONG_NAMES = {
+    "ppt": "monthly total precipitation",
+    "tmean": "monthly mean air temperature",
+    "tmax": "monthly mean of daily maximum air temperature",
+    "tmin": "monthly mean of daily minimum air temperature",
 }
 
 
@@ -71,6 +84,149 @@ def normalize_netcdf(source: Path, destination: Path, day: date, element: str = 
             }
         }
         normalized.to_netcdf(destination, engine="netcdf4", encoding=encoding)
+
+
+def normalize_monthly_netcdf(
+    source: Path, destination: Path, year: int, month: int, element: str
+) -> None:
+    """Normalize one historical PRISM monthly grid without inventing daily values."""
+    start = date(year, month, 1)
+    end = date(year + (month == 12), month % 12 + 1, 1)
+    with xr.open_dataset(source) as raw:
+        if "Band1" not in raw:
+            raise RuntimeError(f"Expected Band1 in PRISM NetCDF: {source}")
+        standard_name, _, units, _ = VARIABLES[element]
+        description = MONTHLY_LONG_NAMES[element]
+        variable = raw["Band1"].rename(element).expand_dims(
+            time=[np.datetime64(start.isoformat())]
+        )
+        variable.attrs.update(
+            standard_name=standard_name,
+            long_name=description,
+            units=units,
+            cell_methods=MONTHLY_CELL_METHODS[element],
+            grid_mapping="crs",
+        )
+        normalized = xr.Dataset(
+            data_vars={element: variable, "crs": raw["crs"]},
+            attrs={
+                **raw.attrs,
+                "title": f"PRISM AN 4-km {description}",
+                "source": "PRISM Climate Group, Oregon State University",
+                "temporal_resolution": "monthly",
+                "time_coverage_start": f"{start.isoformat()}T00:00:00Z",
+                "time_coverage_end": f"{end.isoformat()}T00:00:00Z",
+            },
+        )
+        normalized.time.attrs.update(standard_name="time", axis="T")
+        normalized.to_netcdf(
+            destination,
+            engine="netcdf4",
+            encoding={
+                element: {
+                    "dtype": "float32",
+                    "zlib": True,
+                    "complevel": 4,
+                    "shuffle": True,
+                    "_FillValue": np.float32(-9999.0),
+                }
+            },
+        )
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def download_monthly_year(
+    settings: Settings,
+    year: int,
+    elements: tuple[str, ...],
+    *,
+    force: bool = False,
+) -> list[Path]:
+    """Download and normalize stable historical PRISM monthly grids for one year."""
+    unknown = set(elements) - set(VARIABLES)
+    if unknown:
+        raise ValueError(f"Unknown PRISM elements: {sorted(unknown)}")
+    daily_root = settings.prism_data_dir
+    monthly_root = daily_root.parent / "monthly"
+    work_root = temporary_work_root(settings, "prism-monthly")
+    work_root.mkdir(parents=True, exist_ok=True)
+    downloader = PrismDownloader(settings)
+    published: list[Path] = []
+    for element in elements:
+        for month in range(1, 13):
+            name = f"prism_{element}_us_25m_{year:04d}{month:02d}.nc"
+            destination = monthly_root / element / f"{year:04d}" / name
+            if not force and is_netcdf(destination):
+                published.append(destination)
+                continue
+            url = (
+                f"{settings.prism_base_url}/us/4km/{element}/"
+                f"{year:04d}{month:02d}?format=nc"
+            )
+            temporary = tempfile.TemporaryDirectory(dir=work_root)
+            temporary_path = Path(temporary.name)
+            archive = temporary_path / f"prism_{element}_{year:04d}{month:02d}.zip"
+            with (
+                downloader._session() as session,
+                session.get(url, stream=True, timeout=downloader.timeout) as response,
+            ):
+                response.raise_for_status()
+                with archive.open("wb") as stream:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            stream.write(chunk)
+            if not zipfile.is_zipfile(archive):
+                raise RuntimeError(f"Downloaded PRISM response is not a ZIP archive: {url}")
+            archive_sha256 = _sha256(archive)
+            with zipfile.ZipFile(archive) as bundle:
+                by_name = {Path(name).name: name for name in bundle.namelist()}
+                member = by_name.get(name)
+                if member is None:
+                    raise RuntimeError(f"Historical PRISM archive is missing {name}: {url}")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                extracted = temporary_path / name
+                with bundle.open(member) as source, extracted.open("wb") as stream:
+                    shutil.copyfileobj(source, stream)
+                normalized = temporary_path / f"normalized-{name}"
+                normalize_monthly_netcdf(extracted, normalized, year, month, element)
+                if not is_netcdf(normalized):
+                    raise RuntimeError(f"Could not normalize PRISM NetCDF: {name}")
+                partial = destination.with_name(f"{destination.name}.part")
+                shutil.copyfile(normalized, partial)
+                partial.replace(destination)
+            metadata = destination.with_suffix(".release.json")
+            metadata_partial = metadata.with_suffix(".json.part")
+            metadata_partial.write_text(
+                json.dumps(
+                    {
+                        "archive_sha256": archive_sha256,
+                        "data_month": f"{year:04d}-{month:02d}",
+                        "downloaded_at": datetime.now(UTC).isoformat(),
+                        "element": element,
+                        "format": "netcdf",
+                        "normalization_version": NORMALIZATION_VERSION,
+                        "source_url": url,
+                        "stability": "historical",
+                        "temporal_resolution": "monthly",
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            metadata_partial.replace(metadata)
+            published.append(destination)
+            temporary.cleanup()
+            if settings.prism_request_delay:
+                time.sleep(settings.prism_request_delay)
+    return published
 
 
 @dataclass(frozen=True)

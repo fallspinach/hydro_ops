@@ -21,6 +21,7 @@ if requested_python and Path(sys.executable).resolve() != Path(requested_python)
 
 from hydro_ops.forcing.hybrid import HybridWeights
 from hydro_ops.forcing.operations import OperationalLayout, produce_complete_hour
+from hydro_ops.forcing.streams import baseline_root
 
 
 def hours(start: datetime, end: datetime) -> list[datetime]:
@@ -58,7 +59,7 @@ def main() -> int:
     node_count = int(os.environ["HYDRO_OPS_NODE_COUNT"])
     workers = int(os.environ.get("HYDRO_OPS_WORKERS_PER_NODE", "16"))
     project = Path(os.environ["HYDRO_OPS_PROJECT_ROOT"]).resolve()
-    output_root = project / "outputs/forcing/nwm"
+    output_root = baseline_root(project)
     scratch_root = Path(
         f"/scratch/{os.environ['SLURM_JOB_USER']}/job_{os.environ['SLURM_JOB_ID']}"
         "/forcing-production"

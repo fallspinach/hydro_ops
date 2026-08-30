@@ -608,10 +608,80 @@ and event type. Hydrologic and snow-state verification is required in addition t
 scores before a refinement becomes operational.
 
 The daily PRISM AN archive begins 1981-01-01. Historical backfill therefore acquires `ppt`,
-`tmin`, `tmax`, and derived `tmean` from that date onward at 4-km resolution. NLDAS-2 years
-1979-1980 remain unconstrained by daily PRISM; monthly PRISM products extending to 1895 are not
-substituted for missing daily information. Stable historical grids are downloaded once, while
-the normal updater continues checking the rolling six-month mutable window.
+`tmin`, `tmax`, and derived `tmean` from that date onward at 4-km resolution. Stable historical
+grids are downloaded once, while the normal updater continues checking the rolling six-month
+mutable window.
+
+For 1979-1980, NLDAS-2 remains the hourly source and PRISM AN monthly `ppt`, `tmin`, and `tmax`
+provide lower-frequency constraints. This is a distinct, explicitly labelled forcing tier; a
+monthly grid must never be copied or interpolated into synthetic daily PRISM grids. Monthly
+precipitation constrains the sum of the hourly sequence over each calendar month while retaining
+NLDAS-2 event timing. Monthly `tmin` and `tmax` constrain, respectively, the monthly mean of the
+daily hourly minima and maxima. A spatially varying affine shift/range correction preserves each
+cell's NLDAS-2 submonthly and diurnal evolution. Ratio/scale bounds, missing-target masks, and
+correction diagnostics are required just as for the daily constraint. The resulting provenance
+must identify `prism_constraint_frequency=monthly` so it cannot be confused with the daily
+1981-present retrospective product.
+
+An overlap check using all twelve months of 1981 found that monthly PRISM precipitation agrees
+with the sum of daily PRISM to about 0.002 mm RMSE. Monthly temperature is not merely the
+arithmetic aggregation of the downloaded daily grids: monthly-versus-daily-derived RMSE ranges
+from about 0.45-0.60 degC for Tmin and 0.37-0.63 degC for Tmax. The monthly temperature grids are
+therefore treated as authoritative independent monthly targets rather than reconstructed daily
+constraints. This validation should be rerun if PRISM changes either archive version.
+
+The implemented historical-month processor is `bin/produce_prism_constrained_month.py`. It uses
+a two-pass, daily-archive workflow: the first pass accumulates monthly precipitation and the
+monthly means of each day's hourly Tmin/Tmax; the second applies one bounded precipitation
+factor and one affine temperature correction per grid cell while copying each daily archive.
+Relative humidity is preserved through the temperature adjustment by recomputing `Q2D`, and
+`LWDOWN` is reconstructed with the existing Cosgrove atmospheric-emission factor. Thus no full
+month of CONUS hourly fields is held in memory and no intermediate hourly files are published.
+The output remains one suffix-free `YYYYMMDD.LDASIN_DOMAIN1` file per calendar day, accompanied
+by one monthly diagnostic file. Every output records `prism_constraint_frequency=monthly` and
+the three source grids.
+
+Monthly publication has four fractional precipitation gates plus an hourly-extreme guard. The fractions of constrained
+PRISM cells that are numerically unconverged, materially unresolved, ratio/depth capped, or have
+a wet PRISM target over a dry baseline must not exceed 0.5%, 0.5%, 2%, and 0.5%, respectively.
+The unresolved fraction is evaluated from `abs(residual) / max(PRISM, 1 mm)` using the solver
+tolerance. A cell excluded from numerical iteration because a correction is physically
+infeasible therefore cannot disappear from the publication decision. Corrected precipitation
+must also remain at or below 300 mm in every grid cell and hour. All observed values and limits
+are stored in the monthly diagnostics and final daily global attributes.
+
+An initial January 2021 diagnostic based on the modern combined precipitation baseline failed
+the gates. Only
+0.2365% of constrained cells carried the numerical `NOT_CONVERGED` flag, but 7.4470% remained
+materially unresolved, 7.8108% encountered the 10x correction bound, and 1.0099% had a wet target
+over a dry baseline. Uncapped feasible cells reproduced PRISM well (0.036 mm RMSE), while capped
+cells delivered a median of only 3.5% of their target. A provenance audit showed that these cells
+were dominated by MRMS-selected near-zero precipitation. That modern combined-source result is
+therefore retained as a rejected test, but it is not representative of the NLDAS-2-only
+1979-1980 baseline.
+
+The production-representative control remapped NLDAS-2 alone for January 2021. With a 10x bound,
+0.5178% remained unresolved, narrowly exceeding the 0.5% gate. A 100x bound passed every gate:
+0.0006% was numerically unconverged, 0.2280% unresolved, 0.5218% capped, and 0.2122% had a wet
+target over a dry baseline. Although the allowed ceiling is 100x, 99.9% of finite correction
+factors were below 13.9x. The smallest tested passing bound, 100x, is therefore used together
+with the independent 300 mm/hour publication guard. The NWM-to-PRISM conservative weights also
+exclude inactive NWM cells at generation time; the accepted operator contains no links from
+inactive source cells.
+
+NLDAS-2 begins at 13 UTC on 1979-01-01. January 1979 cannot form a complete calendar-month
+constraint and is intentionally excluded; unconstrained daily baseline production begins on
+1979-01-02, and monthly constrained production covers 1979-02 through 1980-12.
+
+For example, after unconstrained daily forcing exists below `outputs/forcing/nwm/baseline`, run:
+
+```bash
+python bin/produce_prism_constrained_month.py \
+  --year 1979 --month 2 \
+  --complete-root outputs/forcing/nwm/baseline \
+  --output-root outputs/forcing/nwm/retro \
+  --maximum-ratio 100
+```
 
 ### Implemented experimental hybrid
 
@@ -713,6 +783,29 @@ different revision class, or predate an input. Early and provisional output is r
 `nrt` stream; stable output is published independently in `retro`. Separate concurrency-bounded
 SLURM arrays and version-controlled cron entries prevent stable publication from replacing the
 near-real-time record.
+
+The canonical on-disk hierarchy is:
+
+```text
+outputs/forcing/nwm/baseline/        unconstrained reusable baseline
+outputs/forcing/nwm/nrt/             retained early/provisional operational record
+outputs/forcing/nwm/retro/           stable daily or historical-month retrospective record
+```
+
+Both published streams use `YYYY/MM/YYYYMMDD.LDASIN_DOMAIN1` below their root. Stream schedulers
+derive these roots from `--stream`; an explicit override must end in `/nrt` or `/retro` as
+appropriate, and both the submitter and worker reject crossed paths. Retrospective publication
+never searches the NRT tree for an output to replace. The baseline tree is source material, not
+a third published quality tier.
+
+Baseline retention is transitional. After stable retrospective output is accepted, the baseline
+archive is deleted to avoid retaining a second multi-terabyte copy. Cleanup is deliberately
+coverage-aware: for daily PRISM constraints, UTC baseline day `D` is removed only after stable,
+accepted retro files exist for PRISM days `D` and `D+1`, because the two 12Z-to-12Z windows split
+that UTC day. For the 1979-1980 monthly method, a baseline month is removed only after its monthly
+diagnostic is accepted and every calendar-day retro file is present. Missing, provisional,
+rejected, or partial retro coverage always retains the baseline. The verified cleanup command is
+`bin/cleanup_stable_baseline.py`.
 
 Operational scheduling separates prompt updates from deeper revision repair:
 

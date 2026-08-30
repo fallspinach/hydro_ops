@@ -1,0 +1,390 @@
+diff --git a/src/Routing/module_lsm_forcing.F90 b/src/Routing/module_lsm_forcing.F90
+index 0fbf9d0..854c2f6 100644
+--- a/src/Routing/module_lsm_forcing.F90
++++ b/src/Routing/module_lsm_forcing.F90
+@@ -11,6 +11,12 @@ implicit none
+     integer :: i_forcing
+ character(len=19) out_date
+
++! Keep a daily forcing collection open within each land-model process.  The
++! hourly-file path remains the default; this cache is only used when the
++! YYYYMMDDHH file is absent and a YYYYMMDD daily collection is available.
++integer, save :: daily_forcing_ncid = -1
++character(len=256), save :: daily_forcing_file = ""
++
+ interface read_hydro_forcing
+ #ifdef MPP_LAND
+    !yw module procedure read_hydro_forcing_mpp
+@@ -424,7 +430,7 @@ Contains
+   subroutine READFORC_HRLDAS(flnm,ix,jx,target_date, &
+        forcing_name_T,forcing_name_Q,forcing_name_U,forcing_name_V,forcing_name_P, &
+        forcing_name_LW,forcing_name_SW,forcing_name_PR,forcing_name_SN, forcing_name_LF,&
+-       t,q,u,v,p,lw,sw,pcp,lai,snowbl,fpar)
++       t,q,u,v,p,lw,sw,pcp,lai,snowbl,fpar,time_index)
+     implicit none
+
+     character(len=*),                   intent(in)  :: flnm
+@@ -456,32 +462,69 @@ Contains
+     character(len=256) :: units
+     integer :: ierr
+     integer :: ncid
+-
+-    ! Open the NetCDF file.
+-    ierr = nf90_open(trim(flnm), NF90_NOWRITE, ncid)
++    integer, optional, intent(in) :: time_index
++    logical :: use_daily_collection
++
++    use_daily_collection = present(time_index)
++
++    ! Hourly files are opened and closed for backward compatibility.  Daily
++    ! collections are cached until the requested filename changes.
++    if (use_daily_collection) then
++       if (trim(daily_forcing_file) /= trim(flnm)) then
++          if (daily_forcing_ncid >= 0) ierr = nf90_close(daily_forcing_ncid)
++          ierr = nf90_open(trim(flnm), NF90_NOWRITE, daily_forcing_ncid)
++          if (ierr == NF90_NOERR) daily_forcing_file = trim(flnm)
++       else
++          ierr = NF90_NOERR
++       endif
++       ncid = daily_forcing_ncid
++    else
++       ierr = nf90_open(trim(flnm), NF90_NOWRITE, ncid)
++    endif
+     if (ierr /= NF90_NOERR) then
+        write(*,'("READFORC Problem opening netcdf file: ''", A, "''")') trim(flnm)
+        call hydro_stop("In READFORC_HRLDAS() - Problem opening netcdf file")
+     endif
+
+-    call get_2d_netcdf(trim(forcing_name_T),     ncid, t,     units, ix, jx, .TRUE., ierr)
+-    call get_2d_netcdf(trim(forcing_name_Q),     ncid, q,     units, ix, jx, .TRUE., ierr)
+-    call get_2d_netcdf(trim(forcing_name_U),     ncid, u,     units, ix, jx, .TRUE., ierr)
+-    call get_2d_netcdf(trim(forcing_name_V),     ncid, v,     units, ix, jx, .TRUE., ierr)
+-    call get_2d_netcdf(trim(forcing_name_P),    ncid, p,     units, ix, jx, .TRUE., ierr)
+-    call get_2d_netcdf(trim(forcing_name_lw),  ncid, lw,    units, ix, jx, .TRUE., ierr)
+-    call get_2d_netcdf(trim(forcing_name_sw),  ncid, sw,    units, ix, jx, .TRUE., ierr)
+-    call get_2d_netcdf(trim(forcing_name_pr),ncid, pcp,   units, ix, jx, .TRUE., ierr)
+-    call get_2d_netcdf("VEGFRA",  ncid, fpar,  units, ix, jx, .FALSE., ierr)
++    if (use_daily_collection) then
++       call get_2d_netcdf_record(trim(forcing_name_T),  ncid, t,   units, ix, jx, time_index, .TRUE., ierr)
++       call get_2d_netcdf_record(trim(forcing_name_Q),  ncid, q,   units, ix, jx, time_index, .TRUE., ierr)
++       call get_2d_netcdf_record(trim(forcing_name_U),  ncid, u,   units, ix, jx, time_index, .TRUE., ierr)
++       call get_2d_netcdf_record(trim(forcing_name_V),  ncid, v,   units, ix, jx, time_index, .TRUE., ierr)
++       call get_2d_netcdf_record(trim(forcing_name_P),  ncid, p,   units, ix, jx, time_index, .TRUE., ierr)
++       call get_2d_netcdf_record(trim(forcing_name_lw), ncid, lw,  units, ix, jx, time_index, .TRUE., ierr)
++       call get_2d_netcdf_record(trim(forcing_name_sw), ncid, sw,  units, ix, jx, time_index, .TRUE., ierr)
++       call get_2d_netcdf_record(trim(forcing_name_pr), ncid, pcp, units, ix, jx, time_index, .TRUE., ierr)
++       call get_2d_netcdf_record("VEGFRA", ncid, fpar, units, ix, jx, time_index, .FALSE., ierr)
++    else
++       call get_2d_netcdf(trim(forcing_name_T),  ncid, t,   units, ix, jx, .TRUE., ierr)
++       call get_2d_netcdf(trim(forcing_name_Q),  ncid, q,   units, ix, jx, .TRUE., ierr)
++       call get_2d_netcdf(trim(forcing_name_U),  ncid, u,   units, ix, jx, .TRUE., ierr)
++       call get_2d_netcdf(trim(forcing_name_V),  ncid, v,   units, ix, jx, .TRUE., ierr)
++       call get_2d_netcdf(trim(forcing_name_P),  ncid, p,   units, ix, jx, .TRUE., ierr)
++       call get_2d_netcdf(trim(forcing_name_lw), ncid, lw,  units, ix, jx, .TRUE., ierr)
++       call get_2d_netcdf(trim(forcing_name_sw), ncid, sw,  units, ix, jx, .TRUE., ierr)
++       call get_2d_netcdf(trim(forcing_name_pr), ncid, pcp, units, ix, jx, .TRUE., ierr)
++       call get_2d_netcdf("VEGFRA", ncid, fpar, units, ix, jx, .FALSE., ierr)
++    endif
+     if (ierr == 0) then
+       if(maxval(fpar) .gt. 10 .and. maxval(fpar) .lt. 10000)  fpar = fpar * 1.E-2
+     endif
+
+-    call get_2d_netcdf("LAI",     ncid, lai,   units, ix, jx, .FALSE., ierr)
+-    call get_2d_netcdf(trim(forcing_name_SN),    ncid, snowbl,units, ix, jx, .FALSE., ierr)
++    if (use_daily_collection) then
++       call get_2d_netcdf_record("LAI", ncid, lai, units, ix, jx, time_index, .FALSE., ierr)
++       call get_2d_netcdf_record(trim(forcing_name_SN), ncid, snowbl, units, ix, jx, time_index, .FALSE., ierr)
++    else
++       call get_2d_netcdf("LAI", ncid, lai, units, ix, jx, .FALSE., ierr)
++       call get_2d_netcdf(trim(forcing_name_SN), ncid, snowbl, units, ix, jx, .FALSE., ierr)
++    endif
+     if (ierr /= NF90_NOERR) then
+        allocate(liqfrac(ix,jx))
+-       call get_2d_netcdf(trim(forcing_name_LF), ncid, liqfrac, units, ix, jx, .FALSE., ierr)
++       if (use_daily_collection) then
++          call get_2d_netcdf_record(trim(forcing_name_LF), ncid, liqfrac, units, ix, jx, time_index, .FALSE., ierr)
++       else
++          call get_2d_netcdf(trim(forcing_name_LF), ncid, liqfrac, units, ix, jx, .FALSE., ierr)
++       endif
+        if (ierr == 0) then
+           snowbl = (1.0 - liqfrac) * pcp
+        else
+@@ -490,10 +533,43 @@ Contains
+        deallocate(liqfrac)
+     end if
+
+-    ierr = nf90_close(ncid)
++    if (.not. use_daily_collection) ierr = nf90_close(ncid)
+
+   end subroutine READFORC_HRLDAS
+
++  subroutine get_2d_netcdf_record(name, ncid, array, units, idim, jdim, time_index, fatal, ierr)
++    implicit none
++    character(len=*), intent(in) :: name
++    integer, intent(in) :: ncid, idim, jdim, time_index
++    real, dimension(idim,jdim), intent(out) :: array
++    character(len=*), intent(out) :: units
++    logical, intent(in) :: fatal
++    integer, intent(out) :: ierr
++    integer :: varid
++    integer :: att_ierr
++    real :: scale_factor, add_offset
++
++    units = ""
++    ierr = nf90_inq_varid(ncid, trim(name), varid)
++    if (ierr == NF90_NOERR) ierr = nf90_get_att(ncid, varid, "units", units)
++    if (ierr /= NF90_NOERR .and. .not. fatal) then
++       ierr = nf90_inq_varid(ncid, trim(name), varid)
++    endif
++    if (ierr == NF90_NOERR) then
++       ierr = nf90_get_var(ncid, varid, array, start=(/1,1,time_index/), count=(/idim,jdim,1/))
++       if (ierr == NF90_NOERR) then
++          att_ierr = nf90_get_att(ncid, varid, "scale_factor", scale_factor)
++          if (att_ierr == NF90_NOERR) array = array * scale_factor
++          att_ierr = nf90_get_att(ncid, varid, "add_offset", add_offset)
++          if (att_ierr == NF90_NOERR) array = array + add_offset
++       endif
++    endif
++    if (ierr /= NF90_NOERR .and. fatal) then
++       write(*,'("Problem reading daily forcing variable ''", A, "'', record ", I0)') trim(name), time_index
++       call hydro_stop("In get_2d_netcdf_record()")
++    endif
++  end subroutine get_2d_netcdf_record
++
+
+
+   subroutine READFORC_DMIP(flnm,ix,jx,var)
+@@ -929,7 +1005,7 @@ Contains
+    integer  :: i,j,mmflag,ierr_flg
+    real,dimension(ix,jx):: lai,snowbl,fpar
+    character(len=4) nwxst_t
+-   logical :: fexist
++   logical :: fexist, daily_collection
+
+         inflnm = trim(indir)//"/"//&
+              olddate(1:4)//olddate(6:7)//olddate(9:10)//olddate(12:13)//&
+@@ -937,6 +1013,7 @@ Contains
+ !!!DJG... Call READFORC_(variable) Subroutine for forcing data...
+ !!!DJG HRLDAS Format Forcing with hour format filename (NOTE: precip must be in mm/s!!!)
+    if(FORC_TYP.eq.1) then
++        daily_collection = .false.
+ !!Create forcing data filename...
+         call geth_newdate(out_date,olddate,nint(dt))
+         inflnm = trim(indir)//"/"//&
+@@ -945,15 +1022,29 @@ Contains
+
+         inquire (file=trim(inflnm), exist=fexist)
+         if ( .not. fexist ) then
+-           print*, "no forcing data found", inflnm
+-           call hydro_stop("In read_hydro_forcing_seq")
++           inflnm = trim(indir)//"/"//out_date(1:4)//out_date(6:7)//out_date(9:10)//&
++                ".LDASIN_DOMAIN"//hgrid
++           inquire (file=trim(inflnm), exist=fexist)
++           if ( .not. fexist ) then
++              print*, "no hourly or daily forcing data found", inflnm
++              call hydro_stop("In read_hydro_forcing_seq")
++           endif
++           read(out_date(12:13),*) i_forcing
++           i_forcing = i_forcing + 1
++           daily_collection = .true.
+         endif
+
+-        CALL READFORC_HRLDAS(inflnm,IX,JX,OLDDATE, &
+-             forcing_name_T,forcing_name_Q,forcing_name_U,forcing_name_V,forcing_name_P, &
+-             forcing_name_LW,forcing_name_SW,forcing_name_PR,forcing_name_SN, forcing_name_LF,&
+-             T2,Q2X,U,V,   &
+-             PRES,XLONG,SHORT,PRCP1,LAI,snowbl,FPAR)
++        if (daily_collection) then
++           CALL READFORC_HRLDAS(inflnm,IX,JX,OLDDATE, &
++                forcing_name_T,forcing_name_Q,forcing_name_U,forcing_name_V,forcing_name_P, &
++                forcing_name_LW,forcing_name_SW,forcing_name_PR,forcing_name_SN, forcing_name_LF,&
++                T2,Q2X,U,V,PRES,XLONG,SHORT,PRCP1,LAI,snowbl,FPAR,i_forcing)
++        else
++           CALL READFORC_HRLDAS(inflnm,IX,JX,OLDDATE, &
++                forcing_name_T,forcing_name_Q,forcing_name_U,forcing_name_V,forcing_name_P, &
++                forcing_name_LW,forcing_name_SW,forcing_name_PR,forcing_name_SN, forcing_name_LF,&
++                T2,Q2X,U,V,PRES,XLONG,SHORT,PRCP1,LAI,snowbl,FPAR)
++        endif
+    end if
+
+
+@@ -2312,7 +2403,7 @@ character(len=256) :: inflnm, inflnm2, product
+ integer  :: i,j,mmflag,ierr_flg
+ real,dimension(ix,jx):: lai,snowbl,fpar
+ character(len=4) nwxst_t
+-logical :: fexist
++logical :: fexist, daily_collection
+
+ inflnm = trim(indir)//"/"//&
+          olddate(1:4)//olddate(6:7)//olddate(9:10)//olddate(12:13)//&
+@@ -2324,6 +2415,7 @@ inflnm = trim(indir)//"/"//&
+
+ !!! FORC_TYPE 1 ============================================================================
+ if(FORC_TYP.eq.1) then
++   daily_collection = .false.
+    !!Create forcing data filename...
+    call geth_newdate(out_date,olddate,nint(dt))
+    inflnm = trim(indir)//"/"//&
+@@ -2336,18 +2428,35 @@ if(FORC_TYP.eq.1) then
+    call mpp_land_bcast_logical(fexist)
+ #endif
+    if ( .not. fexist ) then
+-      print*, "no forcing data found", inflnm
+-      call hydro_stop("In read_hydro_forcing_mpp1() - no forcing data found")
++      inflnm = trim(indir)//"/"//out_date(1:4)//out_date(6:7)//out_date(9:10)//&
++           ".LDASIN_DOMAIN"//hgrid
++      inquire (file=trim(inflnm), exist=fexist)
++#ifdef MPP_LAND
++      call mpp_land_bcast_logical(fexist)
++#endif
++      if ( .not. fexist ) then
++         print*, "no hourly or daily forcing data found", inflnm
++         call hydro_stop("In read_hydro_forcing_mpp1() - no forcing data found")
++      endif
++      read(out_date(12:13),*) i_forcing
++      i_forcing = i_forcing + 1
++      daily_collection = .true.
+    endif
+
+ #ifdef HYDRO_D
+    print*, "read forcing data at ", OLDDATE,  trim(inflnm)
+ #endif
+-   call READFORC_HRLDAS_mpp(inflnm,IX,JX,OLDDATE, &
+-        forcing_name_T,forcing_name_Q,forcing_name_U,forcing_name_V,forcing_name_P, &
+-        forcing_name_LW,forcing_name_SW,forcing_name_PR,forcing_name_SN, forcing_name_LF,&
+-        T2,Q2X,U,V,   &
+-        PRES,XLONG,SHORT,PRCP1,LAI,snowbl,FPAR)
++   if (daily_collection) then
++      call READFORC_HRLDAS_mpp(inflnm,IX,JX,OLDDATE, &
++           forcing_name_T,forcing_name_Q,forcing_name_U,forcing_name_V,forcing_name_P, &
++           forcing_name_LW,forcing_name_SW,forcing_name_PR,forcing_name_SN, forcing_name_LF,&
++           T2,Q2X,U,V,PRES,XLONG,SHORT,PRCP1,LAI,snowbl,FPAR,i_forcing)
++   else
++      call READFORC_HRLDAS_mpp(inflnm,IX,JX,OLDDATE, &
++           forcing_name_T,forcing_name_Q,forcing_name_U,forcing_name_V,forcing_name_P, &
++           forcing_name_LW,forcing_name_SW,forcing_name_PR,forcing_name_SN, forcing_name_LF,&
++           T2,Q2X,U,V,PRES,XLONG,SHORT,PRCP1,LAI,snowbl,FPAR)
++   endif
+
+    where(PRCP1 .lt. 0) PRCP1= 0  ! set minimum to be 0
+    where(PRCP1 .gt. 0.138889) PRCP1= 0.138889 ! set maximum to be 500 mm/h
+@@ -2785,7 +2894,7 @@ end subroutine read_hydro_forcing_mpp1
+     subroutine READFORC_HRLDAS_mpp(flnm,ix,jx,target_date, &
+          forcing_name_T,forcing_name_Q,forcing_name_U,forcing_name_V,forcing_name_P, &
+          forcing_name_LW,forcing_name_SW,forcing_name_PR,forcing_name_SN, forcing_name_LF,&
+-         t,q,u,v,p,lw,sw,pcp,lai,snowbl,fpar)
++         t,q,u,v,p,lw,sw,pcp,lai,snowbl,fpar,time_index)
+     implicit none
+
+     character(len=*),                   intent(in)  :: flnm
+@@ -2817,6 +2926,8 @@ end subroutine read_hydro_forcing_mpp1
+     character(len=256) :: units
+     integer :: ierr
+     integer :: ncid
++    integer, optional, intent(in) :: time_index
++    logical :: use_daily_collection
+
+     ! Open the NetCDF file.
+ #ifdef MPP_LAND
+@@ -2828,8 +2939,20 @@ end subroutine read_hydro_forcing_mpp1
+     else
+         allocate(buf2(1,1))
+     endif
++    use_daily_collection = present(time_index)
+     if(my_id .eq. io_id) then
+-        ierr = nf90_open(trim(flnm), NF90_NOWRITE, ncid)
++       if (use_daily_collection) then
++          if (trim(daily_forcing_file) /= trim(flnm)) then
++             if (daily_forcing_ncid >= 0) ierr = nf90_close(daily_forcing_ncid)
++             ierr = nf90_open(trim(flnm), NF90_NOWRITE, daily_forcing_ncid)
++             if (ierr == NF90_NOERR) daily_forcing_file = trim(flnm)
++          else
++             ierr = NF90_NOERR
++          endif
++          ncid = daily_forcing_ncid
++       else
++          ierr = nf90_open(trim(flnm), NF90_NOWRITE, ncid)
++       endif
+     endif
+     call mpp_land_bcast_int1(ierr)
+     if (ierr /= NF90_NOERR) then
+@@ -2838,39 +2961,39 @@ end subroutine read_hydro_forcing_mpp1
+     endif
+
+
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_T), ncid,buf2, units, global_nx, global_ny, .TRUE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_T),ncid,buf2,units,global_nx,global_ny,time_index,.TRUE.,ierr)
+     call decompose_data_real (buf2,t)
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_Q), ncid,buf2, units, global_nx, global_ny, .TRUE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_Q),ncid,buf2,units,global_nx,global_ny,time_index,.TRUE.,ierr)
+     call decompose_data_real (buf2,q)
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_U), ncid,buf2, units, global_nx, global_ny, .TRUE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_U),ncid,buf2,units,global_nx,global_ny,time_index,.TRUE.,ierr)
+     call decompose_data_real (buf2,u)
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_V), ncid,buf2, units, global_nx, global_ny, .TRUE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_V),ncid,buf2,units,global_nx,global_ny,time_index,.TRUE.,ierr)
+     call decompose_data_real (buf2,v)
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_P), ncid,buf2, units, global_nx, global_ny, .TRUE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_P),ncid,buf2,units,global_nx,global_ny,time_index,.TRUE.,ierr)
+     call decompose_data_real (buf2,p)
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_LW), ncid,buf2, units, global_nx, global_ny, .TRUE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_LW),ncid,buf2,units,global_nx,global_ny,time_index,.TRUE.,ierr)
+     call decompose_data_real (buf2,lw)
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_SW), ncid,buf2, units, global_nx, global_ny, .TRUE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_SW),ncid,buf2,units,global_nx,global_ny,time_index,.TRUE.,ierr)
+     call decompose_data_real (buf2,sw)
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_PR), ncid,buf2, units, global_nx, global_ny, .TRUE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_PR),ncid,buf2,units,global_nx,global_ny,time_index,.TRUE.,ierr)
+     call decompose_data_real (buf2,pcp)
+     if(my_id .eq. io_id ) then
+-          call get_2d_netcdf("VEGFRA", ncid,buf2, units, global_nx, global_ny, .FALSE., ierr)
++          call get_forcing_record("VEGFRA",ncid,buf2,units,global_nx,global_ny,time_index,.FALSE.,ierr)
+           if (ierr == 0) then
+             if(maxval(buf2) .gt. 10 .and. maxval(buf2) .lt. 10000)  buf2 = buf2 * 1.E-2
+           endif
+     endif
+     call mpp_land_bcast_int1(ierr)
+     if(ierr == 0) call decompose_data_real (buf2,fpar)
+-    if(my_id .eq. io_id ) call get_2d_netcdf("LAI",     ncid, buf2,   units, global_nx, global_ny, .FALSE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record("LAI",ncid,buf2,units,global_nx,global_ny,time_index,.FALSE.,ierr)
+     call mpp_land_bcast_int1(ierr)
+     if(ierr == 0) call decompose_data_real (buf2,lai)
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_SN), ncid, buf2, units, global_nx, global_ny, .FALSE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_SN),ncid,buf2,units,global_nx,global_ny,time_index,.FALSE.,ierr)
+     call mpp_land_bcast_int1(ierr)
+     if (ierr == 0) then
+        call decompose_data_real (buf2,snowbl)
+     else
+-       if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_LF), ncid, buf2, units, global_nx, global_ny, .FALSE., ierr)
++       if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_LF),ncid,buf2,units,global_nx,global_ny,time_index,.FALSE.,ierr)
+        call mpp_land_bcast_int1(ierr)
+        if(ierr == 0) then
+           allocate(liqfrac(ix,jx))
+@@ -2918,9 +3041,26 @@ end subroutine read_hydro_forcing_mpp1
+
+ #endif
+
+-    ierr = nf90_close(ncid)
++    if (.not. use_daily_collection) ierr = nf90_close(ncid)
+   end subroutine READFORC_HRLDAS_mpp
+
++  subroutine get_forcing_record(name,ncid,array,units,idim,jdim,time_index,fatal,ierr)
++    implicit none
++    character(len=*), intent(in) :: name
++    integer, intent(in) :: ncid,idim,jdim
++    real, dimension(idim,jdim), intent(out) :: array
++    character(len=*), intent(out) :: units
++    integer, optional, intent(in) :: time_index
++    logical, intent(in) :: fatal
++    integer, intent(out) :: ierr
++
++    if (present(time_index)) then
++       call get_2d_netcdf_record(name,ncid,array,units,idim,jdim,time_index,fatal,ierr)
++    else
++       call get_2d_netcdf(name,ncid,array,units,idim,jdim,fatal,ierr)
++    endif
++  end subroutine get_forcing_record
++
+   subroutine READFORC_WRF_mpp(flnm,ix,jx,target_date,t,q,u,v,p,lw,sw,pcp,lai,fpar)
+
+     implicit none
