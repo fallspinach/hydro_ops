@@ -1,0 +1,550 @@
+diff --git a/src/OrchestratorLayer/config.F90 b/src/OrchestratorLayer/config.F90
+index 7b957af..7519861 100644
+--- a/src/OrchestratorLayer/config.F90
++++ b/src/OrchestratorLayer/config.F90
+@@ -109,6 +109,10 @@ module config_base
+      integer :: io_config_outputs  ! used for NCEP REALTIME OUTPUT
+      integer :: io_form_outputs ! Flag to turn specify level of internal compression
+      integer :: t0OutputFlag
++     integer :: CHRTOUT_HOURLY = 1
++     integer :: CHRTOUT_DAILY = 0
++     integer :: LDASOUT_HOURLY = 1
++     integer :: LDASOUT_DAILY = 0
+      integer :: channel_only, channelBucket_only
+      integer :: output_channelBucket_influx ! used for FORCE_TYPE 9 and 10
+ 
+@@ -299,6 +303,19 @@ contains
+       call hydro_stop('hydro.namelist ERROR: Invalid t0OutputFlag specified')
+    endif
+ 
++   if ((self%CHRTOUT_HOURLY .lt. 0) .or. (self%CHRTOUT_HOURLY .gt. 1)) then
++      call hydro_stop('hydro.namelist ERROR: Invalid CHRTOUT_HOURLY specified')
++   endif
++   if ((self%CHRTOUT_DAILY .lt. 0) .or. (self%CHRTOUT_DAILY .gt. 1)) then
++      call hydro_stop('hydro.namelist ERROR: Invalid CHRTOUT_DAILY specified')
++   endif
++   if ((self%LDASOUT_HOURLY .lt. 0) .or. (self%LDASOUT_HOURLY .gt. 1)) then
++      call hydro_stop('hydro.namelist ERROR: Invalid LDASOUT_HOURLY specified')
++   endif
++   if ((self%LDASOUT_DAILY .lt. 0) .or. (self%LDASOUT_DAILY .gt. 1)) then
++      call hydro_stop('hydro.namelist ERROR: Invalid LDASOUT_DAILY specified')
++   endif
++
+    if ((self%output_channelBucket_influx .lt. 0 ) .or. (self%output_channelBucket_influx .gt. 3) ) then
+       call hydro_stop('hydro.namelist ERROR: Invalid output_channelBucket_influx specified')
+    endif
+@@ -582,6 +599,7 @@ contains
+     logical            :: GwPreDiag, GwSpinUp
+     integer            :: split_output_count, order_to_write
+     integer :: igrid, io_config_outputs, t0OutputFlag, output_channelBucket_influx
++    integer :: CHRTOUT_HOURLY, CHRTOUT_DAILY, LDASOUT_HOURLY, LDASOUT_DAILY
+     character(len=256) :: geo_static_flnm = ""
+     character(len=1024) :: land_spatial_meta_flnm = ""
+     integer  :: DEEPGWSPIN
+@@ -637,7 +655,8 @@ contains
+          CHRTOUT_DOMAIN,CHANOBS_DOMAIN,CHRTOUT_GRID,LSMOUT_DOMAIN,&
+          RTOUT_DOMAIN, output_gw, outlake, &
+          frxst_pts_out, udmap_file, UDMP_OPT, GWBUCKPARM_file, bucket_loss, &
+-         io_config_outputs, io_form_outputs, hydrotbl_f, t0OutputFlag, output_channelBucket_influx, imperv_adj
++         io_config_outputs, io_form_outputs, hydrotbl_f, t0OutputFlag, output_channelBucket_influx, &
++         CHRTOUT_HOURLY, CHRTOUT_DAILY, LDASOUT_HOURLY, LDASOUT_DAILY, imperv_adj
+ 
+    namelist /reservoir_nlist/ &
+       reservoir_persistence_usgs, reservoir_persistence_usace, reservoir_parameter_file, reservoir_usgs_timeslice_path, &
+@@ -667,6 +686,10 @@ contains
+     CHANOBS_DOMAIN = 0
+     t0OutputFlag = 1
+     output_channelBucket_influx = 0
++    CHRTOUT_HOURLY = 1
++    CHRTOUT_DAILY = 0
++    LDASOUT_HOURLY = 1
++    LDASOUT_DAILY = 0
+     TERADJ_SOLAR = 0
+     reservoir_data_ingest = 0 ! STUB FOR USE OF REALTIME RESERVOIR DISCHARGE DATA. CURRENTLY NOT IN USE.
+     compound_channel = .FALSE.
+@@ -753,6 +776,10 @@ contains
+     nlst(did)%io_form_outputs = io_form_outputs
+     nlst(did)%t0OutputFlag = t0OutputFlag
+     nlst(did)%output_channelBucket_influx = output_channelBucket_influx
++    nlst(did)%CHRTOUT_HOURLY = CHRTOUT_HOURLY
++    nlst(did)%CHRTOUT_DAILY = CHRTOUT_DAILY
++    nlst(did)%LDASOUT_HOURLY = LDASOUT_HOURLY
++    nlst(did)%LDASOUT_DAILY = LDASOUT_DAILY
+     nlst(did)%geo_static_flnm = geo_static_flnm
+     nlst(did)%land_spatial_meta_flnm = land_spatial_meta_flnm
+     nlst(did)%out_dt = out_dt
+diff --git a/src/Routing/module_NWM_io.F90 b/src/Routing/module_NWM_io.F90
+index 43e7da4..93f2bda 100644
+--- a/src/Routing/module_NWM_io.F90
++++ b/src/Routing/module_NWM_io.F90
+@@ -13,8 +13,16 @@ use iso_fortran_env, only: int64, compiler_version
+ implicit none
+ 
+ ! Module-wide variables
+-integer, private :: ftnNoahMP ! Private NetCDF file handle since output routine
+-                              ! called multiple times for one file.
++integer, private :: ftnNoahMPHourly ! Separate handles are required because the
++integer, private :: ftnNoahMPDaily  ! hourly and daily files are built together.
++integer, save :: chrtDailyCount = 0
++real, allocatable, save :: chrtDailyFlow(:), chrtDailyNudge(:), chrtDailyVelocity(:)
++real, allocatable, save :: chrtDailySfcRunoff(:), chrtDailyBucket(:), chrtDailyBtmRunoff(:)
++type ldasDailyVariable
++   real, allocatable :: value(:,:,:)
++end type ldasDailyVariable
++type(ldasDailyVariable), save :: ldasDailyVars(116)
++integer, save :: ldasDailyCount = 0
+ contains
+ 
+ !==============================================================================
+@@ -63,6 +71,97 @@ function GetModelConfigType (io_config_outputs) result(modelConfigType)
+ end function GetModelConfigType
+ 
+ subroutine output_chrt_NWM(domainId)
++   use module_rt_data, only: rt_domain
++   use config_base, only: nlst
++   use Module_Date_utilities_rt, only: geth_newdate
++   implicit none
++   integer, intent(in) :: domainId
++   logical :: hourlyEnabled, dailyEnabled, dailyReady
++   character(len=19) :: currentDate
++   real, allocatable :: flowNow(:), nudgeNow(:), velocityNow(:)
++   real, allocatable :: sfcNow(:), bucketNow(:), btmNow(:)
++
++   hourlyEnabled = nlst(domainId)%CHRTOUT_HOURLY .eq. 1
++   dailyEnabled = nlst(domainId)%CHRTOUT_DAILY .eq. 1
++   if(.not. hourlyEnabled .and. .not. dailyEnabled) return
++
++   dailyReady = .false.
++   call geth_newdate(currentDate,nlst(domainId)%startdate,&
++        nint(nlst(domainId)%out_dt*60*(rt_domain(domainId)%out_counts-1)))
++   if(dailyEnabled .and. rt_domain(1)%out_counts .gt. 1) then
++      if(nint(nlst(domainId)%out_dt) .ne. 60) then
++         call hydro_stop('Native daily CHRTOUT currently requires out_dt=60 minutes')
++      endif
++      if(.not. allocated(chrtDailyFlow)) then
++         allocate(chrtDailyFlow(size(rt_domain(domainId)%QLINK,1)))
++         allocate(chrtDailyNudge(size(rt_domain(domainId)%QLINK,1)))
++         allocate(chrtDailyVelocity(size(rt_domain(domainId)%QLINK,1)))
++         allocate(chrtDailySfcRunoff(size(rt_domain(domainId)%QLINK,1)))
++         allocate(chrtDailyBucket(size(rt_domain(domainId)%QLINK,1)))
++         allocate(chrtDailyBtmRunoff(size(rt_domain(domainId)%QLINK,1)))
++         chrtDailyFlow = 0.0
++         chrtDailyNudge = 0.0
++         chrtDailyVelocity = 0.0
++         chrtDailySfcRunoff = 0.0
++         chrtDailyBucket = 0.0
++         chrtDailyBtmRunoff = 0.0
++      endif
++      chrtDailyCount = chrtDailyCount + 1
++      chrtDailyFlow = chrtDailyFlow + rt_domain(domainId)%QLINK(:,1)
++      chrtDailyVelocity = chrtDailyVelocity + rt_domain(domainId)%velocity
++      chrtDailySfcRunoff = chrtDailySfcRunoff + rt_domain(domainId)%qSfcLatRunoff
++      chrtDailyBucket = chrtDailyBucket + rt_domain(domainId)%qBucket
++      chrtDailyBtmRunoff = chrtDailyBtmRunoff + rt_domain(domainId)%qin_gwsubbas
++#ifdef WRF_HYDRO_NUDGING
++      chrtDailyNudge = chrtDailyNudge + rt_domain(domainId)%nudge
++#endif
++      if(currentDate(12:16) .eq. '00:00') then
++         dailyReady = chrtDailyCount .eq. 24
++      endif
++   endif
++
++   if(hourlyEnabled) call output_chrt_NWM_record(domainId, .false.)
++   if(dailyReady) then
++      allocate(flowNow(size(chrtDailyFlow)), nudgeNow(size(chrtDailyNudge)))
++      allocate(velocityNow(size(chrtDailyVelocity)), sfcNow(size(chrtDailySfcRunoff)))
++      allocate(bucketNow(size(chrtDailyBucket)), btmNow(size(chrtDailyBtmRunoff)))
++      flowNow = rt_domain(domainId)%QLINK(:,1)
++      velocityNow = rt_domain(domainId)%velocity
++      sfcNow = rt_domain(domainId)%qSfcLatRunoff
++      bucketNow = rt_domain(domainId)%qBucket
++      btmNow = rt_domain(domainId)%qin_gwsubbas
++      rt_domain(domainId)%QLINK(:,1) = chrtDailyFlow / real(chrtDailyCount)
++      rt_domain(domainId)%velocity = chrtDailyVelocity / real(chrtDailyCount)
++      rt_domain(domainId)%qSfcLatRunoff = chrtDailySfcRunoff / real(chrtDailyCount)
++      rt_domain(domainId)%qBucket = chrtDailyBucket / real(chrtDailyCount)
++      rt_domain(domainId)%qin_gwsubbas = chrtDailyBtmRunoff
++#ifdef WRF_HYDRO_NUDGING
++      nudgeNow = rt_domain(domainId)%nudge
++      rt_domain(domainId)%nudge = chrtDailyNudge / real(chrtDailyCount)
++#endif
++      call output_chrt_NWM_record(domainId, .true.)
++      rt_domain(domainId)%QLINK(:,1) = flowNow
++      rt_domain(domainId)%velocity = velocityNow
++      rt_domain(domainId)%qSfcLatRunoff = sfcNow
++      rt_domain(domainId)%qBucket = bucketNow
++      rt_domain(domainId)%qin_gwsubbas = btmNow
++#ifdef WRF_HYDRO_NUDGING
++      rt_domain(domainId)%nudge = nudgeNow
++#endif
++      deallocate(flowNow, nudgeNow, velocityNow, sfcNow, bucketNow, btmNow)
++   endif
++   if(dailyEnabled .and. currentDate(12:16) .eq. '00:00') then
++      chrtDailyCount = 0
++      chrtDailyFlow = 0.0
++      chrtDailyNudge = 0.0
++      chrtDailyVelocity = 0.0
++      chrtDailySfcRunoff = 0.0
++      chrtDailyBucket = 0.0
++      chrtDailyBtmRunoff = 0.0
++   endif
++end subroutine output_chrt_NWM
++
++subroutine output_chrt_NWM_record(domainId, dailyMode)
+    use module_rt_data, only: rt_domain
+    use config_base, only: nlst
+    use Module_Date_utilities_rt, only: geth_newdate, geth_idts
+@@ -76,6 +175,7 @@ subroutine output_chrt_NWM(domainId)
+ 
+    ! Pass in "did" value from hydro driving program.
+    integer, intent(in) :: domainId
++   logical, intent(in) :: dailyMode
+ 
+    ! Derived types.
+    type(chrtMeta) :: fileMeta
+@@ -88,6 +188,7 @@ subroutine output_chrt_NWM(domainId)
+    character(len=16) :: epochDate ! EPOCH represented as a string.
+    character(len=16) :: startDate ! Start of model simulation, represented as a string.
+    character(len=256) :: output_flnm ! CHRTOUT_DOMAIN filename
++   character(len=19) :: dailyDate
+    integer :: iret ! NetCDF return statuses
+    integer :: ftn ! NetCDF file handle
+    character(len=256) :: validTime ! Global attribute time string
+@@ -95,6 +196,8 @@ subroutine output_chrt_NWM(domainId)
+    integer :: dimId(3) ! Dimension ID values created during NetCDF created.
+    integer :: varId ! Variable ID value created as NetCDF variables are created and populated.
+    integer :: timeId ! Dimension ID for the time dimension.
++   integer :: boundsId, timeBoundsId
++   integer :: timeBounds(2)
+    integer :: refTimeId ! Dimension ID for the reference time dimension.
+    integer :: coordVarId ! Variable to hold crs
+    integer :: featureVarId, elevVarId, orderVarId ! Misc NetCDF variable id values
+@@ -551,9 +654,16 @@ subroutine output_chrt_NWM(domainId)
+    fileMeta%totalValidTime = int(nlst(1)%khour * 60 / nlst(1)%out_dt)  ! # number of valid time (#of output files)
+ 
+    ! Compose output file name.
+-   write(output_flnm, '(A12,".CHRTOUT_DOMAIN",I1)')nlst(domainId)%olddate(1:4)//&
+-         nlst(domainId)%olddate(6:7)//nlst(domainId)%olddate(9:10)//&
+-         nlst(domainId)%olddate(12:13)//nlst(domainId)%olddate(15:16), nlst(domainId)%igrid
++   if(dailyMode) then
++      call geth_newdate(dailyDate,nlst(domainId)%olddate,-60)
++      write(output_flnm, '(A8,".CHRTOUT_DOMAIN",I1,".daily")')dailyDate(1:4)//&
++            dailyDate(6:7)//dailyDate(9:10), nlst(domainId)%igrid
++      minSinceEpoch = minSinceEpoch - 720
++   else
++      write(output_flnm, '(A12,".CHRTOUT_DOMAIN",I1)')nlst(domainId)%olddate(1:4)//&
++            nlst(domainId)%olddate(6:7)//nlst(domainId)%olddate(9:10)//&
++            nlst(domainId)%olddate(12:13)//nlst(domainId)%olddate(15:16), nlst(domainId)%igrid
++   endif
+ 
+    ! Only run NetCDF library calls to output data if we are on the master
+    ! processor.
+@@ -739,6 +849,10 @@ subroutine output_chrt_NWM(domainId)
+       call nwmCheck(diagFlag,iret,'ERROR: Unable to create time dimension')
+       iret = nf90_def_dim(ftn,"reference_time",1,dimId(3))
+       call nwmCheck(diagFlag,iret,'ERROR: Unable to create reference_time dimension')
++      if(dailyMode) then
++         iret = nf90_def_dim(ftn,"bounds",2,boundsId)
++         call nwmCheck(diagFlag,iret,'ERROR: Unable to create bounds dimension')
++      endif
+ 
+       ! Create and populate reference_time and time variables.
+       iret = nf90_def_var(ftn,"time",nf90_int,dimId(2),timeId)
+@@ -753,6 +867,14 @@ subroutine output_chrt_NWM(domainId)
+       call nwmCheck(diagFlag,iret,'ERROR: Unable to place valid_min attribute into time variable')
+       iret = nf90_put_att(ftn,timeId,'valid_max',fileMeta%timeValidMax)
+       call nwmCheck(diagFlag,iret,'ERROR: Unable to place valid_max attribute into time variable')
++      if(dailyMode) then
++         iret = nf90_put_att(ftn,timeId,'bounds','time_bounds')
++         call nwmCheck(diagFlag,iret,'ERROR: Unable to place bounds attribute into time variable')
++         iret = nf90_def_var(ftn,"time_bounds",nf90_int,(/boundsId,dimId(2)/),timeBoundsId)
++         call nwmCheck(diagFlag,iret,'ERROR: Unable to create time_bounds variable')
++         iret = nf90_put_att(ftn,timeBoundsId,'units',trim(fileMeta%timeUnits))
++         call nwmCheck(diagFlag,iret,'ERROR: Unable to place units into time_bounds variable')
++      endif
+       iret = nf90_def_var(ftn,"reference_time",nf90_int,dimId(3),refTimeId)
+       call nwmCheck(diagFlag,iret,'ERROR: Unable to create reference_time variable')
+       iret = nf90_put_att(ftn,refTimeId,'long_name',trim(fileMeta%rTimeLName))
+@@ -902,6 +1024,14 @@ subroutine output_chrt_NWM(domainId)
+             call nwmCheck(diagFlag,iret,'ERROR: Unable to place units attribute into variable '//trim(fileMeta%varNames(iTmp)))
+             iret = nf90_put_att(ftn,varId,'coordinates',trim(fileMeta%coordNames(iTmp)))
+             call nwmCheck(diagFlag,iret,'ERROR: Unable to place coordinates attribute into variable '//trim(fileMeta%varNames(iTmp)))
++            if(dailyMode) then
++               if(trim(fileMeta%varNames(iTmp)) .eq. 'qBtmVertRunoff') then
++                  iret = nf90_put_att(ftn,varId,'cell_methods','time: sum')
++               else
++                  iret = nf90_put_att(ftn,varId,'cell_methods','time: mean')
++               endif
++               call nwmCheck(diagFlag,iret,'ERROR: Unable to place cell_methods attribute into variable '//trim(fileMeta%varNames(iTmp)))
++            endif
+             iret = nf90_put_att(ftn,varId,'grid_mapping','crs')
+             call nwmCheck(diagFlag,iret,'ERROR: Unable to place grid_mapping attribute into variable '//trim(fileMeta%varNames(iTmp)))
+             if((nlst(1)%io_form_outputs .eq. 1) .or. (nlst(1)%io_form_outputs .eq. 2)) then
+@@ -990,6 +1120,11 @@ subroutine output_chrt_NWM(domainId)
+       call nwmCheck(diagFlag,iret,'ERROR: Unable to locate time variable')
+       iret = nf90_put_var(ftn,varId,minSinceEpoch)
+       call nwmCheck(diagFlag,iret,'ERROR: Failure to place data into time variable')
++      if(dailyMode) then
++         timeBounds = (/minSinceEpoch - 720, minSinceEpoch + 720/)
++         iret = nf90_put_var(ftn,timeBoundsId,timeBounds)
++         call nwmCheck(diagFlag,iret,'ERROR: Failure to place data into time_bounds variable')
++      endif
+       iret = nf90_inq_varid(ftn,'reference_time',varId)
+       call nwmCheck(diagFlag,iret,'ERROR: Unable to locate reference_time variable')
+       iret = nf90_put_var(ftn,varId,minSinceEpoch1)
+@@ -1050,7 +1185,7 @@ subroutine output_chrt_NWM(domainId)
+ 
+    deallocate(g_outInd)
+ 
+-end subroutine output_chrt_NWM
++end subroutine output_chrt_NWM_record
+ 
+ !==============================================================================
+ ! Program Name: output_NoahMP_NWM
+@@ -1067,6 +1202,64 @@ end subroutine output_chrt_NWM
+ ! User controllable options: None.
+ 
+ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,ixPar,jxPar,zNum,varReal,vegTyp,varInd)
++   use config_base, only: nlst, noah_lsm
++   implicit none
++   character(len=*), intent(in) :: outDir
++   integer, intent(in) :: iGrid, output_timestep, itime, ixPar, jxPar, zNum, varInd
++   character(len=19), intent(in) :: startdate, date
++   real, intent(in) :: varReal(ixPar,zNum,jxPar)
++   integer, intent(inout) :: vegTyp(ixPar,jxPar)
++   integer :: index, lastVarInd
++   logical :: hourlyEnabled, dailyEnabled, dailyReady, selected, useLast
++
++   hourlyEnabled = nlst(1)%LDASOUT_HOURLY .eq. 1
++   dailyEnabled = nlst(1)%LDASOUT_DAILY .eq. 1
++   if(.not. hourlyEnabled .and. .not. dailyEnabled) return
++
++   if(hourlyEnabled) call output_NoahMP_NWM_record(outDir,iGrid,output_timestep,itime,&
++        startdate,date,ixPar,jxPar,zNum,varReal,vegTyp,varInd,.false.)
++   if(.not. dailyEnabled .or. itime .eq. 0) return
++   if(output_timestep .ne. 3600) call hydro_stop('Native daily LDASOUT currently requires hourly output')
++
++   selected = any(varInd .eq. (/17,59,60,63,64,65,66,67,68,92,93,95,98/))
++   useLast = varInd .eq. 67
++   lastVarInd = 98
++   if(noah_lsm%crocus_opt .ne. 0) lastVarInd = 116
++   if(varInd .eq. 1) ldasDailyCount = ldasDailyCount + 1
++   dailyReady = date(12:16) .eq. '00:00' .and. ldasDailyCount .eq. 24
++   if(selected) then
++      if(.not. allocated(ldasDailyVars(varInd)%value)) then
++         allocate(ldasDailyVars(varInd)%value(ixPar,zNum,jxPar))
++         ldasDailyVars(varInd)%value = 0.0
++      endif
++      if(useLast) then
++         ldasDailyVars(varInd)%value = varReal
++      else
++         ldasDailyVars(varInd)%value = ldasDailyVars(varInd)%value + varReal
++      endif
++   endif
++
++   if(dailyReady) then
++      if(selected .and. .not. useLast) then
++         call output_NoahMP_NWM_record(outDir,iGrid,output_timestep,itime,startdate,date,&
++              ixPar,jxPar,zNum,ldasDailyVars(varInd)%value/real(ldasDailyCount),vegTyp,varInd,.true.)
++      else if(selected) then
++         call output_NoahMP_NWM_record(outDir,iGrid,output_timestep,itime,startdate,date,&
++              ixPar,jxPar,zNum,ldasDailyVars(varInd)%value,vegTyp,varInd,.true.)
++      else
++         call output_NoahMP_NWM_record(outDir,iGrid,output_timestep,itime,startdate,date,&
++              ixPar,jxPar,zNum,varReal,vegTyp,varInd,.true.)
++      endif
++   endif
++   if(date(12:16) .eq. '00:00' .and. varInd .eq. lastVarInd) then
++      ldasDailyCount = 0
++      do index=1,size(ldasDailyVars)
++         if(allocated(ldasDailyVars(index)%value)) ldasDailyVars(index)%value = 0.0
++      enddo
++   endif
++end subroutine output_NoahMP_NWM
++
++subroutine output_NoahMP_NWM_record(outDir,iGrid,output_timestep,itime,startdate,date,ixPar,jxPar,zNum,varReal,vegTyp,varInd,dailyMode)
+    use module_rt_data, only: rt_domain
+    use config_base, only: nlst, noah_lsm
+    use Module_Date_utilities_rt, only: geth_newdate, geth_idts
+@@ -1089,6 +1282,7 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+    real, intent(in) :: varReal(ixPar,zNum,jxPar) ! Variable data to be written.
+    integer, intent(inout) :: vegTyp(ixPar,jxPar) ! Vegetation type grid used to mask out variables.
+    integer, intent(in) :: varInd ! Variable index used to extact meta-data from.
++   logical, intent(in) :: dailyMode
+ 
+    ! Derived types.
+    type(ldasMeta) :: fileMeta
+@@ -1101,14 +1295,18 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+    character(len=16) :: startDateTmp ! Start of model simulation, represented as a string.
+    character(len=256) :: validTime ! Global attribute time string
+    character(len=256) :: initTime ! Global attribute time string
++   character(len=19) :: dailyDate
+    integer :: mppFlag, diagFlag
+    character(len=1024) :: output_flnm ! Output file name
+    integer :: iret ! NetCDF return status
+-   integer :: ftn  ! NetCDF file handle
++   integer :: ftn  ! NetCDF file handle returned when a file is created
++   integer :: ftnNoahMP ! Handle for this invocation's hourly or daily stream
+    integer :: dimId(8) ! NetCDF dimension ID values
+    integer :: varId ! NetCDF variable ID value
+    integer :: timeId ! NetCDF time variable ID
+    integer :: refTimeId ! NetCDF reference_time variable ID
++   integer :: boundsId, timeBoundsId
++   integer :: timeBounds(2)
+    integer :: coordVarId ! NetCDF coordinate variable ID
+    integer :: xVarId,yVarId ! NetCDF x/y variable ID
+    integer :: ierr, myId ! MPI related values
+@@ -1151,6 +1349,12 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+       myId = 0
+    endif
+ 
++   if(dailyMode) then
++      ftnNoahMP = ftnNoahMPDaily
++   else
++      ftnNoahMP = ftnNoahMPHourly
++   endif
++
+    ! Initialize water type to 16.
+    ! NOTE THIS MAY CHANGE IN THE FUTURE!!!!!
+    waterVal = rt_domain(1)%iswater
+@@ -1360,6 +1564,13 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+       fileMeta%outFlag(116) = 0
+       fileMeta%numVars = numLdasVars_crocus_off ! 98
+    end if
++   if(dailyMode) then
++      do iTmp = 1, size(fileMeta%outFlag)
++         if(.not. any(iTmp .eq. (/17,59,60,63,64,65,66,67,68,92,93,95,98/))) then
++            fileMeta%outFlag(iTmp) = 0
++         endif
++      enddo
++   endif
+ 
+    ! call the GetModelConfigType function
+    modelConfigType = GetModelConfigType(nlst(1)%io_config_outputs)
+@@ -1369,7 +1580,12 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+       ! attributes first.
+       if(myId .eq. 0) then
+          ! We are on the I/O node. Create output file.
+-         if (mod(output_timestep,3600) == 0) then
++         if(dailyMode) then
++            call geth_newdate(dailyDate,date,-60)
++            write(output_flnm, '(A,"/",A8,".LDASOUT_DOMAIN",I1,".daily")') outdir,&
++                  dailyDate(1:4)//dailyDate(6:7)//dailyDate(9:10), igrid
++            minSinceEpoch = minSinceEpoch - 720
++         elseif (mod(output_timestep,3600) == 0) then
+             write(output_flnm, '(A,"/",A12,".LDASOUT_DOMAIN",I1)') outdir,date(1:4)//&
+                   date(6:7)//date(9:10)//date(12:13)//date(15:16), igrid
+          elseif (mod(output_timestep,60) == 0) then
+@@ -1383,6 +1599,11 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+          iret = nf90_create(trim(output_flnm),cmode=NF90_NETCDF4,ncid = ftn)
+          call nwmCheck(diagFlag,iret,'ERROR: Unable to create LDASOUT NetCDF file.')
+          ftnNoahMP = ftn
++         if(dailyMode) then
++            ftnNoahMPDaily = ftn
++         else
++            ftnNoahMPHourly = ftn
++         endif
+ 
+          ! Write global attributes
+          iret = nf90_put_att(ftnNoahMP,NF90_GLOBAL,'TITLE',trim(fileMeta%title))
+@@ -1425,6 +1646,10 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+          call nwmCheck(diagFlag,iret,'ERROR: Unable to define snow_layers dimension')
+          iret = nf90_def_dim(ftnNoahMP,'reference_time',1,dimId(6))
+          call nwmCheck(diagFlag,iret,'ERROR: Unable to define reference_time dimension')
++         if(dailyMode) then
++            iret = nf90_def_dim(ftnNoahMP,'bounds',2,boundsId)
++            call nwmCheck(diagFlag,iret,'ERROR: Unable to define bounds dimension')
++         endif
+          if (noah_lsm%crocus_opt == 1) &
+               iret = nf90_def_dim(ftnNoahMP,'glacier_levels',fileMeta%act_lev,dimId(8))
+          call nwmCheck(diagFlag,iret,'ERROR: Unable to define act_layers dimension')
+@@ -1448,6 +1673,14 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+          call nwmCheck(diagFlag,iret,'ERROR: Unable to place valid_min attribute into time variable')
+          iret = nf90_put_att(ftn,timeId,'valid_max',fileMeta%timeValidMax)
+          call nwmCheck(diagFlag,iret,'ERROR: Unable to place valid_max attribute into time variable')
++         if(dailyMode) then
++            iret = nf90_put_att(ftnNoahMP,timeId,'bounds','time_bounds')
++            call nwmCheck(diagFlag,iret,'ERROR: Unable to place bounds attribute into time variable')
++            iret = nf90_def_var(ftnNoahMP,'time_bounds',nf90_int,(/boundsId,dimId(1)/),timeBoundsId)
++            call nwmCheck(diagFlag,iret,'ERROR: Unable to create time_bounds variable')
++            iret = nf90_put_att(ftnNoahMP,timeBoundsId,'units',trim(fileMeta%timeUnits))
++            call nwmCheck(diagFlag,iret,'ERROR: Unable to place units into time_bounds variable')
++         endif
+          iret = nf90_def_var(ftnNoahMP,"reference_time",nf90_int,dimId(6),refTimeId)
+          call nwmCheck(diagFlag,iret,'ERROR: Unable to create reference_time variable')
+          iret = nf90_put_att(ftnNoahMP,refTimeId,'long_name',trim(fileMeta%rTimeLName))
+@@ -1559,6 +1792,14 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+                call nwmCheck(diagFlag,iret,'ERROR: Unable to place long_name attribute into variable '//trim(fileMeta%varNames(iTmp)))
+                iret = nf90_put_att(ftnNoahMP,varId,'units',trim(fileMeta%units(iTmp)))
+                call nwmCheck(diagFlag,iret,'ERROR: Unable to place units attribute into variable '//trim(fileMeta%varNames(iTmp)))
++               if(dailyMode) then
++                  if(iTmp .eq. 67) then
++                     iret = nf90_put_att(ftnNoahMP,varId,'cell_methods','time: last')
++                  else
++                     iret = nf90_put_att(ftnNoahMP,varId,'cell_methods','time: mean')
++                  endif
++                  call nwmCheck(diagFlag,iret,'ERROR: Unable to place cell_methods attribute into variable '//trim(fileMeta%varNames(iTmp)))
++               endif
+                iret = nf90_put_att(ftnNoahMP,varId,'grid_mapping','crs')
+                call nwmCheck(diagFlag,iret,'ERROR: Unable to place grid_mapping attribute into variable: '//trim(fileMeta%varNames(iTmp)))
+                if((nlst(1)%io_form_outputs .eq. 1) .or. (nlst(1)%io_form_outputs .eq. 2)) then
+@@ -1645,6 +1886,11 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+          call nwmCheck(diagFlag,iret,'ERROR: Unable to locate time variable')
+          iret = nf90_put_var(ftnNoahMP,varId,minSinceEpoch)
+          call nwmCheck(diagFlag,iret,'ERROR: Failure to place data into time variable')
++         if(dailyMode) then
++            timeBounds = (/minSinceEpoch - 720, minSinceEpoch + 720/)
++            iret = nf90_put_var(ftnNoahMP,timeBoundsId,timeBounds)
++            call nwmCheck(diagFlag,iret,'ERROR: Failure to place data into time_bounds variable')
++         endif
+          iret = nf90_inq_varid(ftnNoahMP,'reference_time',varId)
+          call nwmCheck(diagFlag,iret,'ERROR: Unable to locate reference_time variable')
+          iret = nf90_put_var(ftnNoahMP,varId,minSinceEpoch1)
+@@ -1771,7 +2017,7 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+    endif
+ 
+ 
+-end subroutine output_NoahMP_NWM
++end subroutine output_NoahMP_NWM_record
+ 
+ !==============================================================================
+ ! Program Name: output_rt_NWM
+diff --git a/src/hydro_namelists.json b/src/hydro_namelists.json
+index f90073c..8adaf8b 100644
+--- a/src/hydro_namelists.json
++++ b/src/hydro_namelists.json
+@@ -7,6 +7,8 @@
+             "chanobs_domain": 1,
+             "chanrtswcrt": 1,
+             "chrtout_domain": 1,
++            "chrtout_hourly": 1,
++            "chrtout_daily": 0,
+             "chrtout_grid": 1,
+             "compound_channel": true,
+             "dtrt_ch": 300,
+@@ -24,6 +26,8 @@
+             "io_form_outputs": 4,
+             "lake_option": 1,
+             "land_spatial_meta_flnm": "NULL_specified_in_domain.json",
++            "ldasout_hourly": 1,
++            "ldasout_daily": 0,
+             "lsmout_domain": 1,
+             "nsoil": 4,
+             "order_to_write": 1,
+diff --git a/src/template/HYDRO/hydro.namelist b/src/template/HYDRO/hydro.namelist
+index 97683ae..68643f2 100644
+--- a/src/template/HYDRO/hydro.namelist
++++ b/src/template/HYDRO/hydro.namelist
+@@ -74,6 +74,12 @@ io_config_outputs = 0
+ ! Option to write output files at time 0 (restart cold start time): 0=no, 1=yes (default)
+ t0OutputFlag = 1
+ 
++! Independent temporal-resolution products. Daily output currently requires out_dt=60.
++CHRTOUT_HOURLY = 1
++CHRTOUT_DAILY = 0
++LDASOUT_HOURLY = 1
++LDASOUT_DAILY = 0
++
+ ! Options to output channel & bucket influxes. Only active for UDMP_OPT=1.
+ ! Nonzero choice requires that out_dt above matches NOAH_TIMESTEP in namelist.hrldas.
+ ! 0=None (default), 1=channel influxes (qSfcLatRunoff, qBucket)

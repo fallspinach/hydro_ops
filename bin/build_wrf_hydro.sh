@@ -41,6 +41,17 @@ else
     exit 2
 fi
 
+daily_output_patch="$project_root/patches/wrf_hydro-5.4.0-native-daily-output.patch"
+if git -C "$source_dir" apply --reverse --check "$daily_output_patch" 2>/dev/null; then
+    echo "WRF-Hydro native daily output patch is already applied"
+elif git -C "$source_dir" apply --check "$daily_output_patch"; then
+    git -C "$source_dir" apply "$daily_output_patch"
+    echo "Applied WRF-Hydro native daily output patch"
+else
+    echo "Native daily output patch does not apply cleanly to $source_dir" >&2
+    exit 2
+fi
+
 # WRF-Hydro's bundled FindNetCDF does not recognize the split Spack roots on AWARE.
 # Pin every component so CMake cannot select Miniforge's GNU-built nc-config/nf-config.
 cmake --fresh -S "$source_dir" -B "$build_dir" \

@@ -162,6 +162,82 @@ permanent filesystem metadata and storage immediately while retaining the unmodi
 model writer. A native multi-record writer can be considered later if CONUS benchmarks show
 that scratch-file creation itself remains material.
 
+WRF-Hydro v5.4.0's `SPLIT_OUTPUT_COUNT` is not a complete native-daily solution for the NWM
+configuration. A 2023 Mid-Atlantic test showed that the supported newer writer
+(`io_form_outputs=2`) still produced one-record `LDASOUT`, `RTOUT`, and `CHRTOUT` files when the
+land count was set to 24 and the hydro count to its supported single-file value of 0. An
+experimental legacy-writer run, after relaxing the hydro count validator, produced one 24-record
+`RTOUT` but continued to write hourly `LDASOUT` and compound-channel `CHRTOUT`. Its 24-record
+`RTOUT` was uncompressed and 1.05 GB. Therefore the production workflow must retain scratch
+aggregation until all three active NWM writers receive and pass a dedicated multi-record patch;
+setting the namelist value alone is insufficient.
+
+Daily-resolution model products are specified independently from their one-day file chunks.
+Hourly and daily-resolution LDASOUT and CHRTOUT are independent products and may be enabled
+together. A daily file may mix temporal reductions, so `daily` describes the data resolution and
+does not imply that every variable is a mean. Each time-varying variable records its own CF
+`cell_methods` value. The initial reviewed mapping is
+`config/wrf_hydro_daily_reducers.toml`; running accumulations `ACSNOM` and `ACCET` remain omitted
+until native interval-difference and reset behavior is implemented. Source tracing confirmed that
+`qBtmVertRunoff` is the interval groundwater-inflow volume `qin_gwsubbas` in cubic metres, so its
+daily method is `sum`; the other CHRTOUT flow and velocity fields use `mean`.
+
+`bin/reduce_wrf_hydro_daily_output.py` is the offline validation oracle. It requires exactly 24
+regularly spaced hourly records, preserves missing samples, writes an explicit aggregation period
+through `time_bounds`, and attaches the reducer to each variable. Native Fortran daily output must
+match this oracle before hourly LDASOUT is disabled. Reference Mid-Atlantic products are written
+under `work/wrf_hydro_daily_oracle` and use names such as `20230121.LDASOUT.daily` and
+`20230121.CHRTOUT.daily`.
+
+The native implementation now covers both reach-based CHRTOUT and gridded LDASOUT. Four integer
+switches in `HYDRO_nlist` are independent: `CHRTOUT_HOURLY`, `CHRTOUT_DAILY`,
+`LDASOUT_HOURLY`, and `LDASOUT_DAILY`. Each accepts 0 or 1. Hourly output defaults to on and daily
+output defaults to off, preserving upstream behavior for existing namelists. Daily accumulation excludes
+time-zero output, requires hourly output intervals, discards an incomplete initial UTC day, and
+publishes at the next complete UTC boundary as `YYYYMMDD.{CHRTOUT,LDASOUT}_DOMAIN1.daily`.
+
+CHRTOUT accumulates on local reach arrays before the existing MPI gather. Streamflow, nudging,
+velocity, surface lateral runoff, and bucket outflow are means; `qBtmVertRunoff` is a sum. LDASOUT
+uses means for its selected fluxes and states and `last` for categorical `ISNOW`; it respects the
+model's configured output-variable set rather than enabling otherwise disabled fields. Running
+accumulations `ACSNOM` and `ACCET` remain absent from daily output. Every included variable records
+its own `cell_methods`, the daily time coordinate is the interval midpoint, and `time_bounds`
+records the 24-hour UTC period.
+
+Cluster job 4458083 validated both products and the namelist interface in the official 24-hour example. Native daily values
+match reductions of all 24 hourly files within their NetCDF packing precision. Daily-only mode
+creates no hourly LDASOUT or CHRTOUT files, and both daily files are byte-identical to those from
+simultaneous hourly-plus-daily mode. Run the reproducible test with
+`slurm/test_wrf_hydro_daily_output.sh`. A daily-resolution-only production configuration is:
+
+```fortran
+CHRTOUT_HOURLY = 0
+CHRTOUT_DAILY = 1
+LDASOUT_HOURLY = 0
+LDASOUT_DAILY = 1
+```
+
+Set either hourly switch back to 1 when both temporal resolutions are required. Daily products
+currently require hourly model output intervals (`out_dt=60` for CHRTOUT and
+`OUTPUT_TIMESTEP=3600` for LDASOUT).
+
+Cluster job 4458194 extended this to a 54-hour run on two MPI ranks. It produced exactly two
+complete daily files for each product, reset both accumulators correctly between days, and did not
+publish the incomplete final six-hour period. This test exposed and fixed two multi-day/MPI issues:
+non-I/O ranks do not receive the advancing `nlst%olddate`, so CHRTOUT now reconstructs its current
+date from the synchronized start time and output counter; LDASOUT resets after variable 98 in the
+standard Noah-MP configuration and variable 116 only when Crocus is active. Run this regression
+with `slurm/test_wrf_hydro_daily_output_multiday.sh`.
+
+Cluster job 4458220 tested a mid-day restart boundary. A six-hour run wrote paired land and hydro
+restarts at 06 UTC; a 42-hour continuation then crossed two UTC boundaries. It correctly omitted
+the incomplete 18-hour initial period and published only the complete 27 August LDASOUT and
+CHRTOUT daily products. A separate continuous 48-hour control reached the same terminal time, and
+89 comparable physical variables across the land and hydro restart files agreed within numerical
+precision. Seamless continuation requires `RSTRT_SWC=0`; the upstream example value of 1
+deliberately resets restart accumulation fields and produced a scientifically different cycle.
+Run this regression with `slurm/test_wrf_hydro_daily_output_restart.sh`.
+
 Example:
 
 ```bash

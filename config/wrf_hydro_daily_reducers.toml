@@ -1,0 +1,34 @@
+# Variable-level temporal reductions for one-record-per-day WRF-Hydro products.
+# "provisional" entries must be confirmed against model source and water balance tests.
+
+[LDASOUT]
+EDIR = "mean"
+SNLIQ = "mean"
+SOIL_T = "mean"
+SOIL_M = "mean"
+SNOWH = "mean"
+SNEQV = "mean"
+QSNOW = "mean"
+ISNOW = "last"
+FSNO = "mean"
+ACSNOM = "omit"
+ACCET = "omit"
+SOILICE = "mean"
+SOILSAT_TOP = "mean"
+SNOWT_AVG = "mean"
+QRAIN = "mean"
+
+[CHRTOUT]
+streamflow = "mean"
+nudge = "mean"
+velocity = "mean"
+qSfcLatRunoff = "mean"
+qBucket = "mean"
+qBtmVertRunoff = "sum"
+
+[provisional]
+ACSNOM = "Running accumulation requires interval differencing/reset handling in the native model."
+ACCET = "Running accumulation requires interval differencing/reset handling in the native model."
+
+[notes]
+qBtmVertRunoff = "Confirmed as an interval groundwater-inflow volume (m3); daily reduction is sum."
