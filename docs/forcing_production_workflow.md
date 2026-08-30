@@ -473,7 +473,10 @@ the hourly files and manifests. The shorter timestamp distinguishes daily collec
 NWM names; neither uses a `.nc` suffix. Readers continue accepting legacy `.nc` daily files.
 This removes repeated latitude/longitude arrays and reduces metadata-server load while keeping
 revision rewrites and failure recovery bounded. `bin/submit_forcing_days.py` enables daily-only
-publication by default; `--keep-hourly` is a diagnostic escape hatch. PRISM is already daily and
+publication by default; `--keep-hourly` is a diagnostic escape hatch. Submitted arrays use
+descriptive names such as `nwm-baseline-build-20250101-20251231` and
+`nwm-baseline-repair-20250812-20250817`; `--job-name` can supply a more specific label (up to 64
+characters). PRISM is already daily and
 is not included in source-product compaction.
 
 Raw HRRR, MRMS, and Stage-IV source artifacts are retained for a rolling 31-day revision and

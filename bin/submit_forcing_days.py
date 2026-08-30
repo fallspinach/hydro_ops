@@ -60,6 +60,12 @@ def main() -> int:
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--dependency", help="SLURM dependency expression")
+    parser.add_argument(
+        "--job-name",
+        help=(
+            "SLURM job name; defaults to an informative NWM stream/operation/date-range name"
+        ),
+    )
     args = parser.parse_args()
     output_root = args.output_root or baseline_root(args.layout_root.resolve())
     if args.end < args.start:
@@ -83,6 +89,14 @@ def main() -> int:
     print(f"eligible_days={tasks}")
     if not tasks:
         return 0
+    stream = output_root.name if output_root.name in {"baseline", "nrt", "retro"} else "baseline"
+    operation = "repair" if args.missing_only or args.only_days else "build"
+    first_day, last_day = days[0], days[-1]
+    job_name = args.job_name or (
+        f"nwm-{stream}-{operation}-{first_day:%Y%m%d}-{last_day:%Y%m%d}"
+    )
+    if len(job_name) > 64:
+        parser.error("--job-name must be at most 64 characters")
     settings = load_settings()
     settings.log_root.mkdir(parents=True, exist_ok=True)
     task_file = settings.work_root / (
@@ -107,6 +121,7 @@ def main() -> int:
         "sbatch",
         f"--partition={settings.slurm_partition}",
         f"--array=0-{tasks - 1}%{args.max_concurrent}",
+        f"--job-name={job_name}",
         f"--cpus-per-task={args.cpus_per_task}",
         f"--export={','.join(exports)}",
         f"--output={settings.log_root}/forcing-day-%A_%a.out",

@@ -12,7 +12,16 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-WRITER_PREFIXES = ("forcing-day", "forcing-production", "prism-nrt", "prism-retro", "prism-historical")
+WRITER_PREFIXES = (
+    "forcing-day",
+    "forcing-production",
+    "nwm-baseline",
+    "nwm-nrt",
+    "nwm-retro",
+    "prism-nrt",
+    "prism-retro",
+    "prism-historical",
+)
 
 
 def active_writers() -> list[str]:
