@@ -66,7 +66,17 @@ python bin/update_forcing.py --dry-run
 
 The canonical project schedule is tracked in `cron/hydro_ops.crontab`, including download
 refresh and rolling forcing-production submission. Copy its reviewed entries into `crontab -e`.
-The forcing refresh entry runs every six hours using the project environment:
+The coordinated forcing entry runs source refresh, baseline production, stream publication, and
+dependency-gated cleanup in the required order. Preview any cycle without submission:
+
+```bash
+conda run --no-capture-output --name hydro-ops \
+  python bin/update_nwm_forcing.py --cycle six-hourly --dry-run
+```
+
+The reviewed UTC schedules are retained in `cron/hydro_ops.crontab`.
+
+The underlying source refresh can still be run independently using the project environment:
 
 ```cron
 0 */6 * * * cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --no-capture-output --name hydro-ops python bin/update_forcing.py >> logs/update-forcing.log 2>&1
@@ -76,6 +86,28 @@ The individual workflows retain their configured latency and refresh behavior: N
 targets its lagged day, Stage-IV refreshes realtime plus archive data, PRISM checks its
 revision window, HRRR retrieves the previous complete UTC day, and MRMS refreshes recent
 Pass 1, Pass 2, and quality fields.
+
+For a read-only operational overview, use the status monitor. Its default terminal rendering
+shows external-source freshness, daily baseline/NRT/retro coverage, and live SLURM jobs. JSON is
+the canonical machine-readable representation for dashboards. `--output` publishes atomically,
+so a web process cannot observe a partly written report.
+
+```bash
+# Human-readable terminal report (activate the hydro-ops environment first).
+python bin/report_forcing_status.py
+
+# Focus the production gap audit on an operational window.
+python bin/report_forcing_status.py --start 2026-08-01 --end 2026-09-01
+
+# Produce a dashboard input file; use --no-slurm when running off-cluster.
+python bin/report_forcing_status.py --format json \
+  --output outputs/status/forcing-status.json
+```
+
+The default scan reads filenames and filesystem metadata only; it deliberately does not open all
+large NetCDF files. JSON field `scan.netcdf_contents_validated` records that distinction. Use the
+existing validation tools when content-level verification is required. The report schema is
+versioned through `schema_version`; consumers should check that value before parsing.
 
 ## NWM 1-km target grid
 

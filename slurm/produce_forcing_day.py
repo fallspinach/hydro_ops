@@ -57,6 +57,9 @@ def main() -> int:
         "--precipitation-remap-workers",
         os.environ.get("HYDRO_OPS_PRECIPITATION_REMAP_WORKERS", "1"),
     ]
+    start_hour = os.environ.get("HYDRO_OPS_START_HOUR")
+    if start_hour:
+        command.extend(["--start-hour", start_hour])
     if output_root:
         command.extend(["--output-root", output_root])
     if os.environ.get("HYDRO_OPS_FORCE") == "1":
@@ -80,6 +83,8 @@ def main() -> int:
     ]
     if os.environ.get("HYDRO_OPS_FORCE") == "1":
         archive.append("--force")
+    if start_hour:
+        archive.extend(["--start-hour", start_hour])
     return subprocess.run(archive, check=False).returncode
 
 

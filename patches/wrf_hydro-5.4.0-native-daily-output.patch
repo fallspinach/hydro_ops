@@ -12,11 +12,11 @@ index 7b957af..7519861 100644
 +     integer :: LDASOUT_DAILY = 0
       integer :: channel_only, channelBucket_only
       integer :: output_channelBucket_influx ! used for FORCE_TYPE 9 and 10
- 
+
 @@ -299,6 +303,19 @@ contains
        call hydro_stop('hydro.namelist ERROR: Invalid t0OutputFlag specified')
     endif
- 
+
 +   if ((self%CHRTOUT_HOURLY .lt. 0) .or. (self%CHRTOUT_HOURLY .gt. 1)) then
 +      call hydro_stop('hydro.namelist ERROR: Invalid CHRTOUT_HOURLY specified')
 +   endif
@@ -48,7 +48,7 @@ index 7b957af..7519861 100644
 -         io_config_outputs, io_form_outputs, hydrotbl_f, t0OutputFlag, output_channelBucket_influx, imperv_adj
 +         io_config_outputs, io_form_outputs, hydrotbl_f, t0OutputFlag, output_channelBucket_influx, &
 +         CHRTOUT_HOURLY, CHRTOUT_DAILY, LDASOUT_HOURLY, LDASOUT_DAILY, imperv_adj
- 
+
     namelist /reservoir_nlist/ &
        reservoir_persistence_usgs, reservoir_persistence_usace, reservoir_parameter_file, reservoir_usgs_timeslice_path, &
 @@ -667,6 +686,10 @@ contains
@@ -74,12 +74,12 @@ index 7b957af..7519861 100644
      nlst(did)%land_spatial_meta_flnm = land_spatial_meta_flnm
      nlst(did)%out_dt = out_dt
 diff --git a/src/Routing/module_NWM_io.F90 b/src/Routing/module_NWM_io.F90
-index 43e7da4..93f2bda 100644
+index 43e7da4..b7eb086 100644
 --- a/src/Routing/module_NWM_io.F90
 +++ b/src/Routing/module_NWM_io.F90
 @@ -13,8 +13,16 @@ use iso_fortran_env, only: int64, compiler_version
  implicit none
- 
+
  ! Module-wide variables
 -integer, private :: ftnNoahMP ! Private NetCDF file handle since output routine
 -                              ! called multiple times for one file.
@@ -94,11 +94,11 @@ index 43e7da4..93f2bda 100644
 +type(ldasDailyVariable), save :: ldasDailyVars(116)
 +integer, save :: ldasDailyCount = 0
  contains
- 
+
  !==============================================================================
 @@ -63,6 +71,97 @@ function GetModelConfigType (io_config_outputs) result(modelConfigType)
  end function GetModelConfigType
- 
+
  subroutine output_chrt_NWM(domainId)
 +   use module_rt_data, only: rt_domain
 +   use config_base, only: nlst
@@ -195,11 +195,11 @@ index 43e7da4..93f2bda 100644
     use config_base, only: nlst
     use Module_Date_utilities_rt, only: geth_newdate, geth_idts
 @@ -76,6 +175,7 @@ subroutine output_chrt_NWM(domainId)
- 
+
     ! Pass in "did" value from hydro driving program.
     integer, intent(in) :: domainId
 +   logical, intent(in) :: dailyMode
- 
+
     ! Derived types.
     type(chrtMeta) :: fileMeta
 @@ -88,6 +188,7 @@ subroutine output_chrt_NWM(domainId)
@@ -221,7 +221,7 @@ index 43e7da4..93f2bda 100644
     integer :: featureVarId, elevVarId, orderVarId ! Misc NetCDF variable id values
 @@ -551,9 +654,16 @@ subroutine output_chrt_NWM(domainId)
     fileMeta%totalValidTime = int(nlst(1)%khour * 60 / nlst(1)%out_dt)  ! # number of valid time (#of output files)
- 
+
     ! Compose output file name.
 -   write(output_flnm, '(A12,".CHRTOUT_DOMAIN",I1)')nlst(domainId)%olddate(1:4)//&
 -         nlst(domainId)%olddate(6:7)//nlst(domainId)%olddate(9:10)//&
@@ -236,10 +236,30 @@ index 43e7da4..93f2bda 100644
 +            nlst(domainId)%olddate(6:7)//nlst(domainId)%olddate(9:10)//&
 +            nlst(domainId)%olddate(12:13)//nlst(domainId)%olddate(15:16), nlst(domainId)%igrid
 +   endif
- 
+
     ! Only run NetCDF library calls to output data if we are on the master
     ! processor.
-@@ -739,6 +849,10 @@ subroutine output_chrt_NWM(domainId)
+@@ -717,6 +827,19 @@ subroutine output_chrt_NWM(domainId)
+       call nwmCheck(diagFlag,iret,'ERROR: Unable to create model_output_type attribute')
+       iret = nf90_put_att(ftn,NF90_GLOBAL,"model_configuration",modelConfigType)
+       call nwmCheck(diagFlag,iret,'ERROR: Unable to create model_configuration attribute')
++      if(dailyMode) then
++         iret = nf90_put_att(ftn,NF90_GLOBAL,"temporal_resolution","P1D")
++         call nwmCheck(diagFlag,iret,'ERROR: Unable to create temporal_resolution attribute')
++         iret = nf90_put_att(ftn,NF90_GLOBAL,"day_definition","model_interval")
++         call nwmCheck(diagFlag,iret,'ERROR: Unable to create day_definition attribute')
++         iret = nf90_put_att(ftn,NF90_GLOBAL,"aggregation_sample_count",24)
++         call nwmCheck(diagFlag,iret,'ERROR: Unable to create aggregation_sample_count attribute')
++         iret = nf90_put_att(ftn,NF90_GLOBAL,"aggregation_sample_endpoints",&
++              "01:00 UTC through next-day 00:00 UTC")
++         call nwmCheck(diagFlag,iret,'ERROR: Unable to create aggregation_sample_endpoints attribute')
++         iret = nf90_put_att(ftn,NF90_GLOBAL,"initial_condition_sample_included","false")
++         call nwmCheck(diagFlag,iret,'ERROR: Unable to create initial_condition_sample_included attribute')
++      endif
+
+       ! Create global attributes specific to running output through the
+       ! channel-only configuration of the model.
+@@ -739,6 +862,10 @@ subroutine output_chrt_NWM(domainId)
        call nwmCheck(diagFlag,iret,'ERROR: Unable to create time dimension')
        iret = nf90_def_dim(ftn,"reference_time",1,dimId(3))
        call nwmCheck(diagFlag,iret,'ERROR: Unable to create reference_time dimension')
@@ -247,10 +267,10 @@ index 43e7da4..93f2bda 100644
 +         iret = nf90_def_dim(ftn,"bounds",2,boundsId)
 +         call nwmCheck(diagFlag,iret,'ERROR: Unable to create bounds dimension')
 +      endif
- 
+
        ! Create and populate reference_time and time variables.
        iret = nf90_def_var(ftn,"time",nf90_int,dimId(2),timeId)
-@@ -753,6 +867,14 @@ subroutine output_chrt_NWM(domainId)
+@@ -753,6 +880,14 @@ subroutine output_chrt_NWM(domainId)
        call nwmCheck(diagFlag,iret,'ERROR: Unable to place valid_min attribute into time variable')
        iret = nf90_put_att(ftn,timeId,'valid_max',fileMeta%timeValidMax)
        call nwmCheck(diagFlag,iret,'ERROR: Unable to place valid_max attribute into time variable')
@@ -265,7 +285,7 @@ index 43e7da4..93f2bda 100644
        iret = nf90_def_var(ftn,"reference_time",nf90_int,dimId(3),refTimeId)
        call nwmCheck(diagFlag,iret,'ERROR: Unable to create reference_time variable')
        iret = nf90_put_att(ftn,refTimeId,'long_name',trim(fileMeta%rTimeLName))
-@@ -902,6 +1024,14 @@ subroutine output_chrt_NWM(domainId)
+@@ -902,6 +1037,14 @@ subroutine output_chrt_NWM(domainId)
              call nwmCheck(diagFlag,iret,'ERROR: Unable to place units attribute into variable '//trim(fileMeta%varNames(iTmp)))
              iret = nf90_put_att(ftn,varId,'coordinates',trim(fileMeta%coordNames(iTmp)))
              call nwmCheck(diagFlag,iret,'ERROR: Unable to place coordinates attribute into variable '//trim(fileMeta%varNames(iTmp)))
@@ -280,7 +300,7 @@ index 43e7da4..93f2bda 100644
              iret = nf90_put_att(ftn,varId,'grid_mapping','crs')
              call nwmCheck(diagFlag,iret,'ERROR: Unable to place grid_mapping attribute into variable '//trim(fileMeta%varNames(iTmp)))
              if((nlst(1)%io_form_outputs .eq. 1) .or. (nlst(1)%io_form_outputs .eq. 2)) then
-@@ -990,6 +1120,11 @@ subroutine output_chrt_NWM(domainId)
+@@ -990,6 +1133,11 @@ subroutine output_chrt_NWM(domainId)
        call nwmCheck(diagFlag,iret,'ERROR: Unable to locate time variable')
        iret = nf90_put_var(ftn,varId,minSinceEpoch)
        call nwmCheck(diagFlag,iret,'ERROR: Failure to place data into time variable')
@@ -292,18 +312,18 @@ index 43e7da4..93f2bda 100644
        iret = nf90_inq_varid(ftn,'reference_time',varId)
        call nwmCheck(diagFlag,iret,'ERROR: Unable to locate reference_time variable')
        iret = nf90_put_var(ftn,varId,minSinceEpoch1)
-@@ -1050,7 +1185,7 @@ subroutine output_chrt_NWM(domainId)
- 
+@@ -1050,7 +1198,7 @@ subroutine output_chrt_NWM(domainId)
+
     deallocate(g_outInd)
- 
+
 -end subroutine output_chrt_NWM
 +end subroutine output_chrt_NWM_record
- 
+
  !==============================================================================
  ! Program Name: output_NoahMP_NWM
-@@ -1067,6 +1202,64 @@ end subroutine output_chrt_NWM
+@@ -1067,6 +1215,64 @@ end subroutine output_chrt_NWM
  ! User controllable options: None.
- 
+
  subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,ixPar,jxPar,zNum,varReal,vegTyp,varInd)
 +   use config_base, only: nlst, noah_lsm
 +   implicit none
@@ -366,15 +386,15 @@ index 43e7da4..93f2bda 100644
     use module_rt_data, only: rt_domain
     use config_base, only: nlst, noah_lsm
     use Module_Date_utilities_rt, only: geth_newdate, geth_idts
-@@ -1089,6 +1282,7 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+@@ -1089,6 +1295,7 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
     real, intent(in) :: varReal(ixPar,zNum,jxPar) ! Variable data to be written.
     integer, intent(inout) :: vegTyp(ixPar,jxPar) ! Vegetation type grid used to mask out variables.
     integer, intent(in) :: varInd ! Variable index used to extact meta-data from.
 +   logical, intent(in) :: dailyMode
- 
+
     ! Derived types.
     type(ldasMeta) :: fileMeta
-@@ -1101,14 +1295,18 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+@@ -1101,14 +1308,18 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
     character(len=16) :: startDateTmp ! Start of model simulation, represented as a string.
     character(len=256) :: validTime ! Global attribute time string
     character(len=256) :: initTime ! Global attribute time string
@@ -394,10 +414,10 @@ index 43e7da4..93f2bda 100644
     integer :: coordVarId ! NetCDF coordinate variable ID
     integer :: xVarId,yVarId ! NetCDF x/y variable ID
     integer :: ierr, myId ! MPI related values
-@@ -1151,6 +1349,12 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+@@ -1151,6 +1362,12 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
        myId = 0
     endif
- 
+
 +   if(dailyMode) then
 +      ftnNoahMP = ftnNoahMPDaily
 +   else
@@ -407,7 +427,7 @@ index 43e7da4..93f2bda 100644
     ! Initialize water type to 16.
     ! NOTE THIS MAY CHANGE IN THE FUTURE!!!!!
     waterVal = rt_domain(1)%iswater
-@@ -1360,6 +1564,13 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+@@ -1360,6 +1577,13 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
        fileMeta%outFlag(116) = 0
        fileMeta%numVars = numLdasVars_crocus_off ! 98
     end if
@@ -418,10 +438,10 @@ index 43e7da4..93f2bda 100644
 +         endif
 +      enddo
 +   endif
- 
+
     ! call the GetModelConfigType function
     modelConfigType = GetModelConfigType(nlst(1)%io_config_outputs)
-@@ -1369,7 +1580,12 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+@@ -1369,7 +1593,12 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
        ! attributes first.
        if(myId .eq. 0) then
           ! We are on the I/O node. Create output file.
@@ -435,7 +455,7 @@ index 43e7da4..93f2bda 100644
              write(output_flnm, '(A,"/",A12,".LDASOUT_DOMAIN",I1)') outdir,date(1:4)//&
                    date(6:7)//date(9:10)//date(12:13)//date(15:16), igrid
           elseif (mod(output_timestep,60) == 0) then
-@@ -1383,6 +1599,11 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+@@ -1383,6 +1612,11 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
           iret = nf90_create(trim(output_flnm),cmode=NF90_NETCDF4,ncid = ftn)
           call nwmCheck(diagFlag,iret,'ERROR: Unable to create LDASOUT NetCDF file.')
           ftnNoahMP = ftn
@@ -444,10 +464,36 @@ index 43e7da4..93f2bda 100644
 +         else
 +            ftnNoahMPHourly = ftn
 +         endif
- 
+
           ! Write global attributes
           iret = nf90_put_att(ftnNoahMP,NF90_GLOBAL,'TITLE',trim(fileMeta%title))
-@@ -1425,6 +1646,10 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+@@ -1403,10 +1637,23 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+          iret = nf90_put_att(ftnNoahMP,NF90_GLOBAL,"NWM_version_number",trim(get_nwm_version()))
+          call nwmCheck(diagFlag,iret,'ERROR: Unable to create NWM_version_number attribute')
+ #endif
+-         iret = nf90_put_att(ftn,NF90_GLOBAL,"model_output_type",trim(fileMeta%modelOutputType))
++         iret = nf90_put_att(ftnNoahMP,NF90_GLOBAL,"model_output_type",trim(fileMeta%modelOutputType))
+          call nwmCheck(diagFlag,iret,'ERROR: Unable to create model_output_type attribute')
+-         iret = nf90_put_att(ftn,NF90_GLOBAL,"model_configuration",modelConfigType)
++         iret = nf90_put_att(ftnNoahMP,NF90_GLOBAL,"model_configuration",modelConfigType)
+          call nwmCheck(diagFlag,iret,'ERROR: Unable to create model_configuration attribute')
++         if(dailyMode) then
++            iret = nf90_put_att(ftnNoahMP,NF90_GLOBAL,"temporal_resolution","P1D")
++            call nwmCheck(diagFlag,iret,'ERROR: Unable to create temporal_resolution attribute')
++            iret = nf90_put_att(ftnNoahMP,NF90_GLOBAL,"day_definition","model_interval")
++            call nwmCheck(diagFlag,iret,'ERROR: Unable to create day_definition attribute')
++            iret = nf90_put_att(ftnNoahMP,NF90_GLOBAL,"aggregation_sample_count",24)
++            call nwmCheck(diagFlag,iret,'ERROR: Unable to create aggregation_sample_count attribute')
++            iret = nf90_put_att(ftnNoahMP,NF90_GLOBAL,"aggregation_sample_endpoints",&
++                 "01:00 UTC through next-day 00:00 UTC")
++            call nwmCheck(diagFlag,iret,'ERROR: Unable to create aggregation_sample_endpoints attribute')
++            iret = nf90_put_att(ftnNoahMP,NF90_GLOBAL,"initial_condition_sample_included","false")
++            call nwmCheck(diagFlag,iret,'ERROR: Unable to create initial_condition_sample_included attribute')
++         endif
+          iret = nf90_put_att(ftnNoahMP,NF90_GLOBAL,"proj4",trim(fileMeta%proj4))
+          call nwmCheck(diagFlag,iret,'ERROR: Unable to create proj4 attribute')
+          iret = nf90_put_att(ftnNoahMP,NF90_GLOBAL,"GDAL_DataType","Generic")
+@@ -1425,6 +1672,10 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
           call nwmCheck(diagFlag,iret,'ERROR: Unable to define snow_layers dimension')
           iret = nf90_def_dim(ftnNoahMP,'reference_time',1,dimId(6))
           call nwmCheck(diagFlag,iret,'ERROR: Unable to define reference_time dimension')
@@ -458,9 +504,15 @@ index 43e7da4..93f2bda 100644
           if (noah_lsm%crocus_opt == 1) &
                iret = nf90_def_dim(ftnNoahMP,'glacier_levels',fileMeta%act_lev,dimId(8))
           call nwmCheck(diagFlag,iret,'ERROR: Unable to define act_layers dimension')
-@@ -1448,6 +1673,14 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+@@ -1444,10 +1695,18 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+          call nwmCheck(diagFlag,iret,'ERROR: Unable to place standard_name attribute into time variable')
+          iret = nf90_put_att(ftnNoahMP,timeId,'units',trim(fileMeta%timeUnits))
+          call nwmCheck(diagFlag,iret,'ERROR: Unable to place units attribute into time variable')
+-         iret = nf90_put_att(ftn,timeId,'valid_min',fileMeta%timeValidMin)
++         iret = nf90_put_att(ftnNoahMP,timeId,'valid_min',fileMeta%timeValidMin)
           call nwmCheck(diagFlag,iret,'ERROR: Unable to place valid_min attribute into time variable')
-          iret = nf90_put_att(ftn,timeId,'valid_max',fileMeta%timeValidMax)
+-         iret = nf90_put_att(ftn,timeId,'valid_max',fileMeta%timeValidMax)
++         iret = nf90_put_att(ftnNoahMP,timeId,'valid_max',fileMeta%timeValidMax)
           call nwmCheck(diagFlag,iret,'ERROR: Unable to place valid_max attribute into time variable')
 +         if(dailyMode) then
 +            iret = nf90_put_att(ftnNoahMP,timeId,'bounds','time_bounds')
@@ -473,7 +525,7 @@ index 43e7da4..93f2bda 100644
           iret = nf90_def_var(ftnNoahMP,"reference_time",nf90_int,dimId(6),refTimeId)
           call nwmCheck(diagFlag,iret,'ERROR: Unable to create reference_time variable')
           iret = nf90_put_att(ftnNoahMP,refTimeId,'long_name',trim(fileMeta%rTimeLName))
-@@ -1559,6 +1792,14 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+@@ -1559,6 +1818,14 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
                 call nwmCheck(diagFlag,iret,'ERROR: Unable to place long_name attribute into variable '//trim(fileMeta%varNames(iTmp)))
                 iret = nf90_put_att(ftnNoahMP,varId,'units',trim(fileMeta%units(iTmp)))
                 call nwmCheck(diagFlag,iret,'ERROR: Unable to place units attribute into variable '//trim(fileMeta%varNames(iTmp)))
@@ -488,7 +540,7 @@ index 43e7da4..93f2bda 100644
                 iret = nf90_put_att(ftnNoahMP,varId,'grid_mapping','crs')
                 call nwmCheck(diagFlag,iret,'ERROR: Unable to place grid_mapping attribute into variable: '//trim(fileMeta%varNames(iTmp)))
                 if((nlst(1)%io_form_outputs .eq. 1) .or. (nlst(1)%io_form_outputs .eq. 2)) then
-@@ -1645,6 +1886,11 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+@@ -1645,6 +1912,11 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
           call nwmCheck(diagFlag,iret,'ERROR: Unable to locate time variable')
           iret = nf90_put_var(ftnNoahMP,varId,minSinceEpoch)
           call nwmCheck(diagFlag,iret,'ERROR: Failure to place data into time variable')
@@ -500,15 +552,405 @@ index 43e7da4..93f2bda 100644
           iret = nf90_inq_varid(ftnNoahMP,'reference_time',varId)
           call nwmCheck(diagFlag,iret,'ERROR: Unable to locate reference_time variable')
           iret = nf90_put_var(ftnNoahMP,varId,minSinceEpoch1)
-@@ -1771,7 +2017,7 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
+@@ -1771,7 +2043,7 @@ subroutine output_NoahMP_NWM(outDir,iGrid,output_timestep,itime,startdate,date,i
     endif
- 
- 
+
+
 -end subroutine output_NoahMP_NWM
 +end subroutine output_NoahMP_NWM_record
- 
+
  !==============================================================================
  ! Program Name: output_rt_NWM
+diff --git a/src/Routing/module_lsm_forcing.F90 b/src/Routing/module_lsm_forcing.F90
+index 0fbf9d0..854c2f6 100644
+--- a/src/Routing/module_lsm_forcing.F90
++++ b/src/Routing/module_lsm_forcing.F90
+@@ -11,6 +11,12 @@ implicit none
+     integer :: i_forcing
+ character(len=19) out_date
+
++! Keep a daily forcing collection open within each land-model process.  The
++! hourly-file path remains the default; this cache is only used when the
++! YYYYMMDDHH file is absent and a YYYYMMDD daily collection is available.
++integer, save :: daily_forcing_ncid = -1
++character(len=256), save :: daily_forcing_file = ""
++
+ interface read_hydro_forcing
+ #ifdef MPP_LAND
+    !yw module procedure read_hydro_forcing_mpp
+@@ -424,7 +430,7 @@ Contains
+   subroutine READFORC_HRLDAS(flnm,ix,jx,target_date, &
+        forcing_name_T,forcing_name_Q,forcing_name_U,forcing_name_V,forcing_name_P, &
+        forcing_name_LW,forcing_name_SW,forcing_name_PR,forcing_name_SN, forcing_name_LF,&
+-       t,q,u,v,p,lw,sw,pcp,lai,snowbl,fpar)
++       t,q,u,v,p,lw,sw,pcp,lai,snowbl,fpar,time_index)
+     implicit none
+
+     character(len=*),                   intent(in)  :: flnm
+@@ -456,32 +462,69 @@ Contains
+     character(len=256) :: units
+     integer :: ierr
+     integer :: ncid
+-
+-    ! Open the NetCDF file.
+-    ierr = nf90_open(trim(flnm), NF90_NOWRITE, ncid)
++    integer, optional, intent(in) :: time_index
++    logical :: use_daily_collection
++
++    use_daily_collection = present(time_index)
++
++    ! Hourly files are opened and closed for backward compatibility.  Daily
++    ! collections are cached until the requested filename changes.
++    if (use_daily_collection) then
++       if (trim(daily_forcing_file) /= trim(flnm)) then
++          if (daily_forcing_ncid >= 0) ierr = nf90_close(daily_forcing_ncid)
++          ierr = nf90_open(trim(flnm), NF90_NOWRITE, daily_forcing_ncid)
++          if (ierr == NF90_NOERR) daily_forcing_file = trim(flnm)
++       else
++          ierr = NF90_NOERR
++       endif
++       ncid = daily_forcing_ncid
++    else
++       ierr = nf90_open(trim(flnm), NF90_NOWRITE, ncid)
++    endif
+     if (ierr /= NF90_NOERR) then
+        write(*,'("READFORC Problem opening netcdf file: ''", A, "''")') trim(flnm)
+        call hydro_stop("In READFORC_HRLDAS() - Problem opening netcdf file")
+     endif
+
+-    call get_2d_netcdf(trim(forcing_name_T),     ncid, t,     units, ix, jx, .TRUE., ierr)
+-    call get_2d_netcdf(trim(forcing_name_Q),     ncid, q,     units, ix, jx, .TRUE., ierr)
+-    call get_2d_netcdf(trim(forcing_name_U),     ncid, u,     units, ix, jx, .TRUE., ierr)
+-    call get_2d_netcdf(trim(forcing_name_V),     ncid, v,     units, ix, jx, .TRUE., ierr)
+-    call get_2d_netcdf(trim(forcing_name_P),    ncid, p,     units, ix, jx, .TRUE., ierr)
+-    call get_2d_netcdf(trim(forcing_name_lw),  ncid, lw,    units, ix, jx, .TRUE., ierr)
+-    call get_2d_netcdf(trim(forcing_name_sw),  ncid, sw,    units, ix, jx, .TRUE., ierr)
+-    call get_2d_netcdf(trim(forcing_name_pr),ncid, pcp,   units, ix, jx, .TRUE., ierr)
+-    call get_2d_netcdf("VEGFRA",  ncid, fpar,  units, ix, jx, .FALSE., ierr)
++    if (use_daily_collection) then
++       call get_2d_netcdf_record(trim(forcing_name_T),  ncid, t,   units, ix, jx, time_index, .TRUE., ierr)
++       call get_2d_netcdf_record(trim(forcing_name_Q),  ncid, q,   units, ix, jx, time_index, .TRUE., ierr)
++       call get_2d_netcdf_record(trim(forcing_name_U),  ncid, u,   units, ix, jx, time_index, .TRUE., ierr)
++       call get_2d_netcdf_record(trim(forcing_name_V),  ncid, v,   units, ix, jx, time_index, .TRUE., ierr)
++       call get_2d_netcdf_record(trim(forcing_name_P),  ncid, p,   units, ix, jx, time_index, .TRUE., ierr)
++       call get_2d_netcdf_record(trim(forcing_name_lw), ncid, lw,  units, ix, jx, time_index, .TRUE., ierr)
++       call get_2d_netcdf_record(trim(forcing_name_sw), ncid, sw,  units, ix, jx, time_index, .TRUE., ierr)
++       call get_2d_netcdf_record(trim(forcing_name_pr), ncid, pcp, units, ix, jx, time_index, .TRUE., ierr)
++       call get_2d_netcdf_record("VEGFRA", ncid, fpar, units, ix, jx, time_index, .FALSE., ierr)
++    else
++       call get_2d_netcdf(trim(forcing_name_T),  ncid, t,   units, ix, jx, .TRUE., ierr)
++       call get_2d_netcdf(trim(forcing_name_Q),  ncid, q,   units, ix, jx, .TRUE., ierr)
++       call get_2d_netcdf(trim(forcing_name_U),  ncid, u,   units, ix, jx, .TRUE., ierr)
++       call get_2d_netcdf(trim(forcing_name_V),  ncid, v,   units, ix, jx, .TRUE., ierr)
++       call get_2d_netcdf(trim(forcing_name_P),  ncid, p,   units, ix, jx, .TRUE., ierr)
++       call get_2d_netcdf(trim(forcing_name_lw), ncid, lw,  units, ix, jx, .TRUE., ierr)
++       call get_2d_netcdf(trim(forcing_name_sw), ncid, sw,  units, ix, jx, .TRUE., ierr)
++       call get_2d_netcdf(trim(forcing_name_pr), ncid, pcp, units, ix, jx, .TRUE., ierr)
++       call get_2d_netcdf("VEGFRA", ncid, fpar, units, ix, jx, .FALSE., ierr)
++    endif
+     if (ierr == 0) then
+       if(maxval(fpar) .gt. 10 .and. maxval(fpar) .lt. 10000)  fpar = fpar * 1.E-2
+     endif
+
+-    call get_2d_netcdf("LAI",     ncid, lai,   units, ix, jx, .FALSE., ierr)
+-    call get_2d_netcdf(trim(forcing_name_SN),    ncid, snowbl,units, ix, jx, .FALSE., ierr)
++    if (use_daily_collection) then
++       call get_2d_netcdf_record("LAI", ncid, lai, units, ix, jx, time_index, .FALSE., ierr)
++       call get_2d_netcdf_record(trim(forcing_name_SN), ncid, snowbl, units, ix, jx, time_index, .FALSE., ierr)
++    else
++       call get_2d_netcdf("LAI", ncid, lai, units, ix, jx, .FALSE., ierr)
++       call get_2d_netcdf(trim(forcing_name_SN), ncid, snowbl, units, ix, jx, .FALSE., ierr)
++    endif
+     if (ierr /= NF90_NOERR) then
+        allocate(liqfrac(ix,jx))
+-       call get_2d_netcdf(trim(forcing_name_LF), ncid, liqfrac, units, ix, jx, .FALSE., ierr)
++       if (use_daily_collection) then
++          call get_2d_netcdf_record(trim(forcing_name_LF), ncid, liqfrac, units, ix, jx, time_index, .FALSE., ierr)
++       else
++          call get_2d_netcdf(trim(forcing_name_LF), ncid, liqfrac, units, ix, jx, .FALSE., ierr)
++       endif
+        if (ierr == 0) then
+           snowbl = (1.0 - liqfrac) * pcp
+        else
+@@ -490,10 +533,43 @@ Contains
+        deallocate(liqfrac)
+     end if
+
+-    ierr = nf90_close(ncid)
++    if (.not. use_daily_collection) ierr = nf90_close(ncid)
+
+   end subroutine READFORC_HRLDAS
+
++  subroutine get_2d_netcdf_record(name, ncid, array, units, idim, jdim, time_index, fatal, ierr)
++    implicit none
++    character(len=*), intent(in) :: name
++    integer, intent(in) :: ncid, idim, jdim, time_index
++    real, dimension(idim,jdim), intent(out) :: array
++    character(len=*), intent(out) :: units
++    logical, intent(in) :: fatal
++    integer, intent(out) :: ierr
++    integer :: varid
++    integer :: att_ierr
++    real :: scale_factor, add_offset
++
++    units = ""
++    ierr = nf90_inq_varid(ncid, trim(name), varid)
++    if (ierr == NF90_NOERR) ierr = nf90_get_att(ncid, varid, "units", units)
++    if (ierr /= NF90_NOERR .and. .not. fatal) then
++       ierr = nf90_inq_varid(ncid, trim(name), varid)
++    endif
++    if (ierr == NF90_NOERR) then
++       ierr = nf90_get_var(ncid, varid, array, start=(/1,1,time_index/), count=(/idim,jdim,1/))
++       if (ierr == NF90_NOERR) then
++          att_ierr = nf90_get_att(ncid, varid, "scale_factor", scale_factor)
++          if (att_ierr == NF90_NOERR) array = array * scale_factor
++          att_ierr = nf90_get_att(ncid, varid, "add_offset", add_offset)
++          if (att_ierr == NF90_NOERR) array = array + add_offset
++       endif
++    endif
++    if (ierr /= NF90_NOERR .and. fatal) then
++       write(*,'("Problem reading daily forcing variable ''", A, "'', record ", I0)') trim(name), time_index
++       call hydro_stop("In get_2d_netcdf_record()")
++    endif
++  end subroutine get_2d_netcdf_record
++
+
+
+   subroutine READFORC_DMIP(flnm,ix,jx,var)
+@@ -929,7 +1005,7 @@ Contains
+    integer  :: i,j,mmflag,ierr_flg
+    real,dimension(ix,jx):: lai,snowbl,fpar
+    character(len=4) nwxst_t
+-   logical :: fexist
++   logical :: fexist, daily_collection
+
+         inflnm = trim(indir)//"/"//&
+              olddate(1:4)//olddate(6:7)//olddate(9:10)//olddate(12:13)//&
+@@ -937,6 +1013,7 @@ Contains
+ !!!DJG... Call READFORC_(variable) Subroutine for forcing data...
+ !!!DJG HRLDAS Format Forcing with hour format filename (NOTE: precip must be in mm/s!!!)
+    if(FORC_TYP.eq.1) then
++        daily_collection = .false.
+ !!Create forcing data filename...
+         call geth_newdate(out_date,olddate,nint(dt))
+         inflnm = trim(indir)//"/"//&
+@@ -945,15 +1022,29 @@ Contains
+
+         inquire (file=trim(inflnm), exist=fexist)
+         if ( .not. fexist ) then
+-           print*, "no forcing data found", inflnm
+-           call hydro_stop("In read_hydro_forcing_seq")
++           inflnm = trim(indir)//"/"//out_date(1:4)//out_date(6:7)//out_date(9:10)//&
++                ".LDASIN_DOMAIN"//hgrid
++           inquire (file=trim(inflnm), exist=fexist)
++           if ( .not. fexist ) then
++              print*, "no hourly or daily forcing data found", inflnm
++              call hydro_stop("In read_hydro_forcing_seq")
++           endif
++           read(out_date(12:13),*) i_forcing
++           i_forcing = i_forcing + 1
++           daily_collection = .true.
+         endif
+
+-        CALL READFORC_HRLDAS(inflnm,IX,JX,OLDDATE, &
+-             forcing_name_T,forcing_name_Q,forcing_name_U,forcing_name_V,forcing_name_P, &
+-             forcing_name_LW,forcing_name_SW,forcing_name_PR,forcing_name_SN, forcing_name_LF,&
+-             T2,Q2X,U,V,   &
+-             PRES,XLONG,SHORT,PRCP1,LAI,snowbl,FPAR)
++        if (daily_collection) then
++           CALL READFORC_HRLDAS(inflnm,IX,JX,OLDDATE, &
++                forcing_name_T,forcing_name_Q,forcing_name_U,forcing_name_V,forcing_name_P, &
++                forcing_name_LW,forcing_name_SW,forcing_name_PR,forcing_name_SN, forcing_name_LF,&
++                T2,Q2X,U,V,PRES,XLONG,SHORT,PRCP1,LAI,snowbl,FPAR,i_forcing)
++        else
++           CALL READFORC_HRLDAS(inflnm,IX,JX,OLDDATE, &
++                forcing_name_T,forcing_name_Q,forcing_name_U,forcing_name_V,forcing_name_P, &
++                forcing_name_LW,forcing_name_SW,forcing_name_PR,forcing_name_SN, forcing_name_LF,&
++                T2,Q2X,U,V,PRES,XLONG,SHORT,PRCP1,LAI,snowbl,FPAR)
++        endif
+    end if
+
+
+@@ -2312,7 +2403,7 @@ character(len=256) :: inflnm, inflnm2, product
+ integer  :: i,j,mmflag,ierr_flg
+ real,dimension(ix,jx):: lai,snowbl,fpar
+ character(len=4) nwxst_t
+-logical :: fexist
++logical :: fexist, daily_collection
+
+ inflnm = trim(indir)//"/"//&
+          olddate(1:4)//olddate(6:7)//olddate(9:10)//olddate(12:13)//&
+@@ -2324,6 +2415,7 @@ inflnm = trim(indir)//"/"//&
+
+ !!! FORC_TYPE 1 ============================================================================
+ if(FORC_TYP.eq.1) then
++   daily_collection = .false.
+    !!Create forcing data filename...
+    call geth_newdate(out_date,olddate,nint(dt))
+    inflnm = trim(indir)//"/"//&
+@@ -2336,18 +2428,35 @@ if(FORC_TYP.eq.1) then
+    call mpp_land_bcast_logical(fexist)
+ #endif
+    if ( .not. fexist ) then
+-      print*, "no forcing data found", inflnm
+-      call hydro_stop("In read_hydro_forcing_mpp1() - no forcing data found")
++      inflnm = trim(indir)//"/"//out_date(1:4)//out_date(6:7)//out_date(9:10)//&
++           ".LDASIN_DOMAIN"//hgrid
++      inquire (file=trim(inflnm), exist=fexist)
++#ifdef MPP_LAND
++      call mpp_land_bcast_logical(fexist)
++#endif
++      if ( .not. fexist ) then
++         print*, "no hourly or daily forcing data found", inflnm
++         call hydro_stop("In read_hydro_forcing_mpp1() - no forcing data found")
++      endif
++      read(out_date(12:13),*) i_forcing
++      i_forcing = i_forcing + 1
++      daily_collection = .true.
+    endif
+
+ #ifdef HYDRO_D
+    print*, "read forcing data at ", OLDDATE,  trim(inflnm)
+ #endif
+-   call READFORC_HRLDAS_mpp(inflnm,IX,JX,OLDDATE, &
+-        forcing_name_T,forcing_name_Q,forcing_name_U,forcing_name_V,forcing_name_P, &
+-        forcing_name_LW,forcing_name_SW,forcing_name_PR,forcing_name_SN, forcing_name_LF,&
+-        T2,Q2X,U,V,   &
+-        PRES,XLONG,SHORT,PRCP1,LAI,snowbl,FPAR)
++   if (daily_collection) then
++      call READFORC_HRLDAS_mpp(inflnm,IX,JX,OLDDATE, &
++           forcing_name_T,forcing_name_Q,forcing_name_U,forcing_name_V,forcing_name_P, &
++           forcing_name_LW,forcing_name_SW,forcing_name_PR,forcing_name_SN, forcing_name_LF,&
++           T2,Q2X,U,V,PRES,XLONG,SHORT,PRCP1,LAI,snowbl,FPAR,i_forcing)
++   else
++      call READFORC_HRLDAS_mpp(inflnm,IX,JX,OLDDATE, &
++           forcing_name_T,forcing_name_Q,forcing_name_U,forcing_name_V,forcing_name_P, &
++           forcing_name_LW,forcing_name_SW,forcing_name_PR,forcing_name_SN, forcing_name_LF,&
++           T2,Q2X,U,V,PRES,XLONG,SHORT,PRCP1,LAI,snowbl,FPAR)
++   endif
+
+    where(PRCP1 .lt. 0) PRCP1= 0  ! set minimum to be 0
+    where(PRCP1 .gt. 0.138889) PRCP1= 0.138889 ! set maximum to be 500 mm/h
+@@ -2785,7 +2894,7 @@ end subroutine read_hydro_forcing_mpp1
+     subroutine READFORC_HRLDAS_mpp(flnm,ix,jx,target_date, &
+          forcing_name_T,forcing_name_Q,forcing_name_U,forcing_name_V,forcing_name_P, &
+          forcing_name_LW,forcing_name_SW,forcing_name_PR,forcing_name_SN, forcing_name_LF,&
+-         t,q,u,v,p,lw,sw,pcp,lai,snowbl,fpar)
++         t,q,u,v,p,lw,sw,pcp,lai,snowbl,fpar,time_index)
+     implicit none
+
+     character(len=*),                   intent(in)  :: flnm
+@@ -2817,6 +2926,8 @@ end subroutine read_hydro_forcing_mpp1
+     character(len=256) :: units
+     integer :: ierr
+     integer :: ncid
++    integer, optional, intent(in) :: time_index
++    logical :: use_daily_collection
+
+     ! Open the NetCDF file.
+ #ifdef MPP_LAND
+@@ -2828,8 +2939,20 @@ end subroutine read_hydro_forcing_mpp1
+     else
+         allocate(buf2(1,1))
+     endif
++    use_daily_collection = present(time_index)
+     if(my_id .eq. io_id) then
+-        ierr = nf90_open(trim(flnm), NF90_NOWRITE, ncid)
++       if (use_daily_collection) then
++          if (trim(daily_forcing_file) /= trim(flnm)) then
++             if (daily_forcing_ncid >= 0) ierr = nf90_close(daily_forcing_ncid)
++             ierr = nf90_open(trim(flnm), NF90_NOWRITE, daily_forcing_ncid)
++             if (ierr == NF90_NOERR) daily_forcing_file = trim(flnm)
++          else
++             ierr = NF90_NOERR
++          endif
++          ncid = daily_forcing_ncid
++       else
++          ierr = nf90_open(trim(flnm), NF90_NOWRITE, ncid)
++       endif
+     endif
+     call mpp_land_bcast_int1(ierr)
+     if (ierr /= NF90_NOERR) then
+@@ -2838,39 +2961,39 @@ end subroutine read_hydro_forcing_mpp1
+     endif
+
+
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_T), ncid,buf2, units, global_nx, global_ny, .TRUE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_T),ncid,buf2,units,global_nx,global_ny,time_index,.TRUE.,ierr)
+     call decompose_data_real (buf2,t)
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_Q), ncid,buf2, units, global_nx, global_ny, .TRUE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_Q),ncid,buf2,units,global_nx,global_ny,time_index,.TRUE.,ierr)
+     call decompose_data_real (buf2,q)
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_U), ncid,buf2, units, global_nx, global_ny, .TRUE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_U),ncid,buf2,units,global_nx,global_ny,time_index,.TRUE.,ierr)
+     call decompose_data_real (buf2,u)
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_V), ncid,buf2, units, global_nx, global_ny, .TRUE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_V),ncid,buf2,units,global_nx,global_ny,time_index,.TRUE.,ierr)
+     call decompose_data_real (buf2,v)
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_P), ncid,buf2, units, global_nx, global_ny, .TRUE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_P),ncid,buf2,units,global_nx,global_ny,time_index,.TRUE.,ierr)
+     call decompose_data_real (buf2,p)
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_LW), ncid,buf2, units, global_nx, global_ny, .TRUE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_LW),ncid,buf2,units,global_nx,global_ny,time_index,.TRUE.,ierr)
+     call decompose_data_real (buf2,lw)
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_SW), ncid,buf2, units, global_nx, global_ny, .TRUE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_SW),ncid,buf2,units,global_nx,global_ny,time_index,.TRUE.,ierr)
+     call decompose_data_real (buf2,sw)
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_PR), ncid,buf2, units, global_nx, global_ny, .TRUE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_PR),ncid,buf2,units,global_nx,global_ny,time_index,.TRUE.,ierr)
+     call decompose_data_real (buf2,pcp)
+     if(my_id .eq. io_id ) then
+-          call get_2d_netcdf("VEGFRA", ncid,buf2, units, global_nx, global_ny, .FALSE., ierr)
++          call get_forcing_record("VEGFRA",ncid,buf2,units,global_nx,global_ny,time_index,.FALSE.,ierr)
+           if (ierr == 0) then
+             if(maxval(buf2) .gt. 10 .and. maxval(buf2) .lt. 10000)  buf2 = buf2 * 1.E-2
+           endif
+     endif
+     call mpp_land_bcast_int1(ierr)
+     if(ierr == 0) call decompose_data_real (buf2,fpar)
+-    if(my_id .eq. io_id ) call get_2d_netcdf("LAI",     ncid, buf2,   units, global_nx, global_ny, .FALSE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record("LAI",ncid,buf2,units,global_nx,global_ny,time_index,.FALSE.,ierr)
+     call mpp_land_bcast_int1(ierr)
+     if(ierr == 0) call decompose_data_real (buf2,lai)
+-    if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_SN), ncid, buf2, units, global_nx, global_ny, .FALSE., ierr)
++    if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_SN),ncid,buf2,units,global_nx,global_ny,time_index,.FALSE.,ierr)
+     call mpp_land_bcast_int1(ierr)
+     if (ierr == 0) then
+        call decompose_data_real (buf2,snowbl)
+     else
+-       if(my_id .eq. io_id ) call get_2d_netcdf(trim(forcing_name_LF), ncid, buf2, units, global_nx, global_ny, .FALSE., ierr)
++       if(my_id .eq. io_id ) call get_forcing_record(trim(forcing_name_LF),ncid,buf2,units,global_nx,global_ny,time_index,.FALSE.,ierr)
+        call mpp_land_bcast_int1(ierr)
+        if(ierr == 0) then
+           allocate(liqfrac(ix,jx))
+@@ -2918,9 +3041,26 @@ end subroutine read_hydro_forcing_mpp1
+
+ #endif
+
+-    ierr = nf90_close(ncid)
++    if (.not. use_daily_collection) ierr = nf90_close(ncid)
+   end subroutine READFORC_HRLDAS_mpp
+
++  subroutine get_forcing_record(name,ncid,array,units,idim,jdim,time_index,fatal,ierr)
++    implicit none
++    character(len=*), intent(in) :: name
++    integer, intent(in) :: ncid,idim,jdim
++    real, dimension(idim,jdim), intent(out) :: array
++    character(len=*), intent(out) :: units
++    integer, optional, intent(in) :: time_index
++    logical, intent(in) :: fatal
++    integer, intent(out) :: ierr
++
++    if (present(time_index)) then
++       call get_2d_netcdf_record(name,ncid,array,units,idim,jdim,time_index,fatal,ierr)
++    else
++       call get_2d_netcdf(name,ncid,array,units,idim,jdim,fatal,ierr)
++    endif
++  end subroutine get_forcing_record
++
+   subroutine READFORC_WRF_mpp(flnm,ix,jx,target_date,t,q,u,v,p,lw,sw,pcp,lai,fpar)
+
+     implicit none
 diff --git a/src/hydro_namelists.json b/src/hydro_namelists.json
 index f90073c..8adaf8b 100644
 --- a/src/hydro_namelists.json
@@ -538,7 +980,7 @@ index 97683ae..68643f2 100644
 @@ -74,6 +74,12 @@ io_config_outputs = 0
  ! Option to write output files at time 0 (restart cold start time): 0=no, 1=yes (default)
  t0OutputFlag = 1
- 
+
 +! Independent temporal-resolution products. Daily output currently requires out_dt=60.
 +CHRTOUT_HOURLY = 1
 +CHRTOUT_DAILY = 0

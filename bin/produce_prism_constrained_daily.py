@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Publish one fully PRISM-constrained 12Z-to-12Z daily NWM forcing file."""
+"""Legacy worker for one PRISM 12Z-to-12Z constraint window.
+
+This must not write directly into a production forcing stream. Production files are UTC
+calendar-day collections; the operational publisher is responsible for rechunking windows.
+"""
 
 from __future__ import annotations
 
@@ -136,12 +140,21 @@ def main() -> int:
     parser.add_argument("--maximum-unconverged-fraction", type=float, default=0.005)
     parser.add_argument("--force", action="store_true")
     parser.add_argument(
+        "--allow-legacy-12utc-output",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--archive-access",
         choices=("direct", "extract"),
         default="direct",
         help="read daily archive records directly or materialize them with ncks",
     )
     args = parser.parse_args()
+    if not args.allow_legacy_12utc_output:
+        parser.error(
+            "direct 12-12 UTC publication is disabled; use the calendar-day PRISM pipeline"
+        )
     if args.stream:
         validate_stream_output_root(args.output_root, args.stream)
 

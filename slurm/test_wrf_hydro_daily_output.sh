@@ -70,9 +70,14 @@ daily_path = Path(sys.argv[3])
 hourly = sorted(root.glob("*.CHRTOUT_DOMAIN1"))
 assert len(hourly) >= 24, len(hourly)
 hourly = hourly[-24:]
+assert hourly[0].name.startswith("2011082601"), hourly[0]
+assert hourly[-1].name.startswith("2011082700"), hourly[-1]
 reducers = load_reducers(project / "config/wrf_hydro_daily_reducers.toml", "CHRTOUT")
 expected = reduce_hourly_files(hourly, "CHRTOUT", reducers)
 with xr.open_dataset(daily_path) as actual:
+    assert actual.attrs["day_definition"] == "model_interval"
+    assert actual.attrs["aggregation_sample_count"] == 24
+    assert actual.attrs["initial_condition_sample_included"] == "false"
     assert actual["time"].attrs["bounds"] == "time_bounds"
     bounds = actual["time_bounds"].values.reshape(-1)
     assert bounds[1] - bounds[0] == np.timedelta64(24, "h")
@@ -107,11 +112,16 @@ root = Path(sys.argv[2])
 daily_path = Path(sys.argv[3])
 hourly = sorted(root.glob("*.LDASOUT_DOMAIN1"))[-24:]
 assert len(hourly) == 24, len(hourly)
+assert hourly[0].name.startswith("2011082601"), hourly[0]
+assert hourly[-1].name.startswith("2011082700"), hourly[-1]
 reducers = load_reducers(project / "config/wrf_hydro_daily_reducers.toml", "LDASOUT")
 with xr.open_dataset(hourly[0]) as sample:
     reducers = {name: method for name, method in reducers.items() if name in sample}
 expected = reduce_hourly_files(hourly, "LDASOUT", reducers)
 with xr.open_dataset(daily_path) as actual:
+    assert actual.attrs["day_definition"] == "model_interval"
+    assert actual.attrs["aggregation_sample_count"] == 24
+    assert actual.attrs["initial_condition_sample_included"] == "false"
     assert actual["time"].attrs["bounds"] == "time_bounds"
     bounds = actual["time_bounds"].values.reshape(-1)
     assert bounds[1] - bounds[0] == np.timedelta64(24, "h")
@@ -155,5 +165,20 @@ daily_only_ldas=$(find "$daily_only" -maxdepth 1 -name '*.LDASOUT_DOMAIN1.daily'
 test -n "$daily_only_ldas"
 cmp "$daily_ldas" "$daily_only_ldas"
 echo "daily_only_byte_identical=true"
+
+# Operational mode suppresses the duplicated initial-condition timestamp. The completed-step
+# daily reductions must remain identical to the diagnostic t0OutputFlag=1 run.
+no_t0="$scratch_root/wrf_hydro_daily_output_no_t0"
+cp -a "$daily_only" "$no_t0"
+rm -f "$no_t0"/*.daily "$no_t0"/model.log "$no_t0"/RESTART.* "$no_t0"/HYDRO_RST.*
+sed -i 's/^[[:space:]]*t0OutputFlag[[:space:]]*=.*/t0OutputFlag = 0/' "$no_t0/hydro.namelist"
+(
+    cd "$no_t0"
+    mpiexec -n "$SLURM_NTASKS" ./wrf_hydro.exe > model.log 2>&1
+)
+grep -q "The model finished successfully" "$no_t0/model.log"
+cmp "$daily" "$(find "$no_t0" -maxdepth 1 -name '*.CHRTOUT_DOMAIN1.daily' -print -quit)"
+cmp "$daily_ldas" "$(find "$no_t0" -maxdepth 1 -name '*.LDASOUT_DOMAIN1.daily' -print -quit)"
+echo "t0_disabled_daily_byte_identical=true"
 
 echo "test_root=$test_root"

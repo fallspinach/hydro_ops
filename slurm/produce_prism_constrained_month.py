@@ -47,6 +47,8 @@ def main() -> int:
         command.append("--force")
     if os.environ.get("HYDRO_OPS_DIAGNOSTICS_ONLY") == "1":
         command.append("--diagnostics-only")
+    if os.environ.get("HYDRO_OPS_ALLOW_SYNTHETIC_TIMING") == "1":
+        command.append("--allow-synthetic-timing")
     if weights := os.environ.get("HYDRO_OPS_PRECIPITATION_WEIGHTS"):
         command.extend(["--precipitation-weights", weights])
     if maximum_ratio := os.environ.get("HYDRO_OPS_MAXIMUM_RATIO"):

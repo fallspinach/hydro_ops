@@ -1,0 +1,18 @@
+# Model-interval forcing reductions over endpoint samples D 01 through D+1 00.
+# "integral" multiplies a rate by the regular sample interval before summing.
+
+[FORCING]
+T2D = "mean"
+Q2D = "mean"
+PSFC = "mean"
+SWDOWN = "mean"
+LWDOWN = "mean"
+U2D = "mean"
+V2D = "mean"
+RAINRATE = "integral"
+
+[output_names]
+RAINRATE = "RAIN_DEPTH"
+
+[output_units]
+RAINRATE = "kg m-2"

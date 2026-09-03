@@ -1,5 +1,21 @@
 # NWM 1-km meteorological forcing production workflow
 
+## Operational time and daily-summary convention
+
+NWM hourly forcing is stored in UTC calendar chunks containing timestamps `00-23`. A 24-hour
+model cycle initialized from a paired restart at day `D 00` consumes endpoint forcing `D 01`
+through `D+1 00`, crossing the chunks for `D` and `D+1`. Model-interval forcing diagnostics use
+those same 24 endpoints and bounds `[D 00,D+1 00]`; ordinary timestamp-based `00-23` daily
+statistics answer a different question. `bin/reduce_forcing_model_day.py` implements the model-
+interval definition, including rate integration, completeness checks, provenance, and explicit
+time bounds. See `docs/nwm_time_conventions.md` for the canonical operational timeline.
+
+Full-CONUS job 4464621 reduced the 2026-03-10 NRT model interval in 1 minute 58 seconds with
+2.4 GB peak memory. The level-2 compressed one-record product was 216 MB. Its temperature means
+and integrated precipitation samples matched direct calculations from hours 01 through next-day
+00, and its midpoint and bounds were `2026-03-10 12 UTC` and
+`[2026-03-10 00 UTC, 2026-03-11 00 UTC]`.
+
 ## Purpose and scope
 
 This document defines the production design for complete hourly meteorological forcing on the
@@ -476,7 +492,11 @@ revision rewrites and failure recovery bounded. `bin/submit_forcing_days.py` ena
 publication by default; `--keep-hourly` is a diagnostic escape hatch. Submitted arrays use
 descriptive names such as `nwm-baseline-build-20250101-20251231` and
 `nwm-baseline-repair-20250812-20250817`; `--job-name` can supply a more specific label (up to 64
-characters). PRISM is already daily and
+characters). Each task requests 120,000 MB of node-local temporary disk by default (`--tmp-mb`),
+because one full-CONUS day performs roughly 70-80 GB of scratch writes and CPU-only scheduling can
+otherwise pack enough tasks onto one node to trigger CDO/NetCDF HDF write failures. The cluster's
+300,000 MB `TmpDisk` nodes can schedule at most two default tasks per node, distributing larger
+arrays across additional nodes. PRISM is already daily and
 is not included in source-product compaction.
 
 Raw HRRR, MRMS, and Stage-IV source artifacts are retained for a rolling 31-day revision and
@@ -780,12 +800,16 @@ and precipitation reference results. The driver accepts either persistent hourly
 daily baseline collections; for the latter it locates records by their actual NetCDF time values,
 extracts them only to node-local scratch, and removes them at task completion.
 
-A rolling scheduler classifies PRISM days as early, provisional, or stable, checks that all PRISM
-inputs and the complete 24-hour baseline exist, and rebuilds outputs when they are absent, have a
-different revision class, or predate an input. Early and provisional output is retained in the
-`nrt` stream; stable output is published independently in `retro`. Separate concurrency-bounded
-SLURM arrays and version-controlled cron entries prevent stable publication from replacing the
-near-real-time record.
+A rolling scheduler classifies PRISM days as early, provisional, or stable and checks that the
+PRISM inputs and time-addressable baseline records exist. PRISM's physical 1200-1200 UTC
+constraint window remains an internal scientific interval, never a production file boundary.
+`bin/submit_prism_calendar_batches.py` groups missing UTC dates into bounded contiguous batches.
+Each worker keeps only two adjacent PRISM constraint windows on node-local scratch, publishes the
+corresponding `00-23 UTC` calendar file atomically, validates it, and advances by one day. Scratch
+cleanup removes the internal windows when the job exits. Early and provisional output is retained
+in the `nrt` stream; stable output is published independently in `retro`. Separate
+concurrency-bounded SLURM arrays and version-controlled cron entries prevent stable publication
+from replacing the near-real-time record.
 
 The canonical on-disk hierarchy is:
 
@@ -803,14 +827,31 @@ a third published quality tier.
 
 Baseline retention is transitional. After stable retrospective output is accepted, the baseline
 archive is deleted to avoid retaining a second multi-terabyte copy. Cleanup is deliberately
-coverage-aware: for daily PRISM constraints, UTC baseline day `D` is removed only after stable,
-accepted retro files exist for PRISM days `D` and `D+1`, because the two 12Z-to-12Z windows split
-that UTC day. For the 1979-1980 monthly method, a baseline month is removed only after its monthly
-diagnostic is accepted and every calendar-day retro file is present. Missing, provisional,
-rejected, or partial retro coverage always retains the baseline. The verified cleanup command is
+coverage-aware: parallel calendar publishers never delete baseline input because adjacent batches
+temporarily share boundary dates. After the complete controller array converges, a separate serial
+audit removes UTC baseline day `D` only when the stable, accepted retro file for that date contains
+all 24 records and no active controller can still depend on it. A failed batch is resumed by
+rerunning the idempotent submitter, which forms new contiguous batches from the remaining baseline
+inventory. For the 1979-1980 monthly
+method, a baseline month is removed only after its monthly diagnostic is accepted and every
+calendar-day retro file is present. Missing, provisional, rejected, or partial retro coverage
+always retains the baseline. The independent audit/cleanup command remains
 `bin/cleanup_stable_baseline.py`.
 
 Operational scheduling separates prompt updates from deeper revision repair:
+
+`bin/update_nwm_forcing.py` is the single operational entry point. It records a run manifest,
+submits source refreshes, attaches baseline work to those downloads, and launches the calendar-day
+PRISM continuation only after its prerequisites leave the queue. NRT cycles retain baseline.
+Monthly retro cycles build only the three-day dependency halo around missing stable targets and
+attach a serial stable-baseline cleanup after successful PRISM completion. Existing accepted retro
+dates are terminal and do not cause baseline reconstruction.
+
+```bash
+python bin/update_nwm_forcing.py --cycle six-hourly
+python bin/update_nwm_forcing.py --cycle daily
+python bin/update_nwm_forcing.py --cycle monthly-retro
+```
 
 - Run a 10-day NRT scan every six hours. This covers Stage-IV regeneration during its first day
   and at approximately 1, 3, 5, and 7 days, plus the usual 3-4-day NLDAS-2 latency and PRISM's

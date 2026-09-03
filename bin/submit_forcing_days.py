@@ -34,6 +34,12 @@ def main() -> int:
     parser.add_argument("--end", required=True, type=date.fromisoformat)
     parser.add_argument("--max-concurrent", type=int, default=16)
     parser.add_argument("--cpus-per-task", type=int, default=12)
+    parser.add_argument(
+        "--tmp-mb",
+        type=int,
+        default=120_000,
+        help="minimum node-local temporary disk per task in MB (default: 120000)",
+    )
     parser.add_argument("--output-root", type=Path)
     parser.add_argument(
         "--layout-root",
@@ -70,8 +76,10 @@ def main() -> int:
     output_root = args.output_root or baseline_root(args.layout_root.resolve())
     if args.end < args.start:
         parser.error("--end must not precede --start")
-    if args.max_concurrent <= 0 or args.cpus_per_task < 12:
-        parser.error("concurrency must be positive and each task requires at least 12 CPUs")
+    if args.max_concurrent <= 0 or args.cpus_per_task < 12 or args.tmp_mb <= 0:
+        parser.error(
+            "concurrency and temporary disk must be positive and each task requires at least 12 CPUs"
+        )
 
     days = [
         args.start + timedelta(days=index)
@@ -123,6 +131,7 @@ def main() -> int:
         f"--array=0-{tasks - 1}%{args.max_concurrent}",
         f"--job-name={job_name}",
         f"--cpus-per-task={args.cpus_per_task}",
+        f"--tmp={args.tmp_mb}",
         f"--export={','.join(exports)}",
         f"--output={settings.log_root}/forcing-day-%A_%a.out",
         "slurm/produce_forcing_day.py",

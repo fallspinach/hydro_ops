@@ -11,6 +11,7 @@ dependencies:
 
   # Array, tabular, and labeled scientific data
   - numpy
+  - scipy
   - pandas
   - xarray
   - dask

@@ -21,6 +21,7 @@ def main() -> int:
     parser.add_argument("--work-directory", type=Path, required=True)
     parser.add_argument("--assembly-workers", type=int, default=4)
     parser.add_argument("--precipitation-remap-workers", type=int, default=1)
+    parser.add_argument("--start-hour", type=int, default=0)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     output_root = args.output_root or baseline_root(args.project_root.resolve())
@@ -31,6 +32,7 @@ def main() -> int:
         work_directory=args.work_directory,
         assembly_workers=args.assembly_workers,
         precipitation_remap_workers=args.precipitation_remap_workers,
+        start_hour=args.start_hour,
         force=args.force,
     )
     for summary in summaries:

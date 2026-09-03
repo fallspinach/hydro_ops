@@ -173,6 +173,10 @@ aggregation until all three active NWM writers receive and pass a dedicated mult
 setting the namelist value alone is insufficient.
 
 Daily-resolution model products are specified independently from their one-day file chunks.
+The authoritative storage, model-cycle, forcing-endpoint, restart, and aggregation conventions
+are documented in `docs/nwm_time_conventions.md`. Operational cycles start from paired 00 UTC
+restarts and set `t0OutputFlag = 0`; enabling time-zero output is diagnostic-only because it
+duplicates the preceding cycle's terminal timestamp.
 Hourly and daily-resolution LDASOUT and CHRTOUT are independent products and may be enabled
 together. A daily file may mix temporal reductions, so `daily` describes the data resolution and
 does not imply that every variable is a mean. Each time-varying variable records its own CF
@@ -195,6 +199,10 @@ switches in `HYDRO_nlist` are independent: `CHRTOUT_HOURLY`, `CHRTOUT_DAILY`,
 output defaults to off, preserving upstream behavior for existing namelists. Daily accumulation excludes
 time-zero output, requires hourly output intervals, discards an incomplete initial UTC day, and
 publishes at the next complete UTC boundary as `YYYYMMDD.{CHRTOUT,LDASOUT}_DOMAIN1.daily`.
+For day `D`, the 24 completed endpoint samples are `D 01` through `D+1 00`, the product is named
+for `D`, its representative time is `D 12`, and its bounds are `[D 00,D+1 00]`. This endpoint
+sequence is the natural output of a 24-hour integration initialized at `D 00`; it is distinct
+from the `00-23` timestamp grouping used for hourly calendar storage.
 
 CHRTOUT accumulates on local reach arrays before the existing MPI gather. Streamflow, nudging,
 velocity, surface lateral runoff, and bucket outflow are means; `qBtmVertRunoff` is a sum. LDASOUT
@@ -211,6 +219,7 @@ simultaneous hourly-plus-daily mode. Run the reproducible test with
 `slurm/test_wrf_hydro_daily_output.sh`. A daily-resolution-only production configuration is:
 
 ```fortran
+t0OutputFlag = 0
 CHRTOUT_HOURLY = 0
 CHRTOUT_DAILY = 1
 LDASOUT_HOURLY = 0
@@ -220,6 +229,11 @@ LDASOUT_DAILY = 1
 Set either hourly switch back to 1 when both temporal resolutions are required. Daily products
 currently require hourly model output intervals (`out_dt=60` for CHRTOUT and
 `OUTPUT_TIMESTEP=3600` for LDASOUT).
+
+After formalizing 00 UTC operational boundaries, job 4464488 reconfirmed the 24 completed
+endpoint samples (`01` through next-day `00`) and the `[00,next-00]` bounds. It also demonstrated
+that operational `t0OutputFlag=0` products are byte-identical to reductions from a diagnostic
+`t0OutputFlag=1` run, proving that the duplicated initial-condition snapshot is excluded.
 
 Cluster job 4458194 extended this to a 54-hour run on two MPI ranks. It produced exactly two
 complete daily files for each product, reset both accumulators correctly between days, and did not

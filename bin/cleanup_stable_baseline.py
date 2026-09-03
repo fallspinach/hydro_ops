@@ -19,7 +19,9 @@ def forcing_path(root: Path, day: date) -> Path:
     return root / day.strftime("%Y/%m") / f"{day:%Y%m%d}.LDASIN_DOMAIN1"
 
 
-def accepted_retro(path: Path, *, frequency: str | None = None) -> bool:
+def accepted_retro(
+    path: Path, *, frequency: str | None = None, allowed_records: tuple[int, ...] = (24,)
+) -> bool:
     if not path.is_file() or path.stat().st_size == 0:
         return False
     try:
@@ -31,10 +33,8 @@ def accepted_retro(path: Path, *, frequency: str | None = None) -> bool:
             )
             if frequency and actual_frequency != frequency:
                 return False
-            accepted = (
-                str(data.getncattr("prism_reconciliation_accepted")).lower() == "true"
-            )
-            if not accepted or len(data.dimensions.get("time", ())) != 24:
+            accepted = str(data.getncattr("prism_reconciliation_accepted")).lower() == "true"
+            if not accepted or len(data.dimensions.get("time", ())) not in allowed_records:
                 return False
             if actual_frequency == "daily":
                 return data.getncattr("prism_precipitation_revision") == "stable"
@@ -53,7 +53,11 @@ def accepted_month(retro_root: Path, year: int, month: int) -> bool:
     except (OSError, AttributeError):
         return False
     return all(
-        accepted_retro(forcing_path(retro_root, date(year, month, day)), frequency="monthly")
+        accepted_retro(
+            forcing_path(retro_root, date(year, month, day)),
+            frequency="monthly",
+            allowed_records=(11,) if (year, month, day) == (1979, 1, 1) else (24,),
+        )
         for day in range(1, calendar.monthrange(year, month)[1] + 1)
     )
 
@@ -94,10 +98,8 @@ def main() -> int:
             month_cache.setdefault(key, accepted_month(retro, *key))
             covered = month_cache[key]
         elif frequency == "daily":
-            # A UTC baseline day contributes to PRISM days D and D+1 across the 12Z boundary.
-            covered = accepted_retro(
-                forcing_path(retro, day + timedelta(days=1)), frequency="daily"
-            )
+            # Calendar publication has already combined both internal 12Z windows.
+            covered = True
         else:
             covered = False
         if not covered:

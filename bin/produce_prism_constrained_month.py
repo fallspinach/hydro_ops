@@ -16,8 +16,10 @@ from netCDF4 import Dataset
 
 from hydro_ops.config import load_settings
 from hydro_ops.forcing.monthly_prism import (
+    apply_monthly_precipitation_hour,
     assess_monthly_reconciliation,
     monthly_temperature_adjustment,
+    nearest_wet_timing_donors,
     reconcile_prism_month,
 )
 from hydro_ops.forcing.operations import OperationalLayout
@@ -66,9 +68,15 @@ def main() -> int:
     parser.add_argument("--maximum-unresolved-fraction", type=float, default=0.005)
     parser.add_argument("--maximum-capped-fraction", type=float, default=0.02)
     parser.add_argument("--maximum-dry-baseline-wet-target-fraction", type=float, default=0.005)
+    parser.add_argument("--maximum-synthetic-timing-fraction", type=float, default=0.01)
     parser.add_argument("--maximum-monthly-depth", type=float, default=4000.0)
     parser.add_argument("--maximum-ratio", type=float, default=10.0)
     parser.add_argument("--maximum-corrected-hourly-depth", type=float, default=300.0)
+    parser.add_argument(
+        "--allow-synthetic-timing",
+        action="store_true",
+        help="use the nearest wet NWM cell's hourly profile where the monthly baseline is dry",
+    )
     parser.add_argument(
         "--diagnostics-only",
         action="store_true",
@@ -126,10 +134,15 @@ def main() -> int:
         minimum_sum = maximum_sum = None
         minimum_count = maximum_count = None
         grid_shape = None
-        for path in inputs:
+        available_hours = 0
+        expected_month_hours = 24 * len(days)
+        for day, path in zip(days, inputs, strict=True):
             with Dataset(path) as data:
-                if len(data.dimensions["time"]) != 24:
-                    raise ValueError(f"Daily archive does not contain 24 records: {path}")
+                records = len(data.dimensions["time"])
+                allowed_partial = day == date(1979, 1, 1) and records == 11
+                if records != 24 and not allowed_partial:
+                    raise ValueError(f"Daily archive has unsupported record count: {path}")
+                available_hours += records
                 rain = np.ma.asarray(data["RAINRATE"][:], dtype=np.float64).filled(np.nan)
                 temperature = np.ma.asarray(data["T2D"][:], dtype=np.float64).filled(np.nan)
             if grid_shape is None:
@@ -147,6 +160,8 @@ def main() -> int:
                 maximum_hourly_depth,
                 np.nanmax(np.where(np.isfinite(rain), rain * 3600.0, 0.0), axis=0),
             )
+            if records != 24:
+                continue
             finite_temperature = np.isfinite(temperature)
             daily_minimum = np.min(np.where(finite_temperature, temperature, np.inf), axis=0)
             daily_maximum = np.max(np.where(finite_temperature, temperature, -np.inf), axis=0)
@@ -175,6 +190,8 @@ def main() -> int:
         )
         with xr.open_dataset(prism["ppt"], mask_and_scale=True) as source:
             prism_depth = np.asarray(source["ppt"].squeeze().values, dtype=np.float64)
+        coverage_fraction = available_hours / expected_month_hours
+        prism_depth *= coverage_fraction
         precipitation_weights = args.precipitation_weights or (
             settings.data_root
             / "static/remapping/nwm_conus_1km/nwm_to_prism_conservative_masked.nc"
@@ -187,6 +204,7 @@ def main() -> int:
             ratio_bounds=(0.1, args.maximum_ratio),
             cumulative_ratio_bounds=(0.0, args.maximum_ratio),
             maximum_monthly_depth=args.maximum_monthly_depth,
+            allow_synthetic_timing=args.allow_synthetic_timing,
         )
 
         assessment = assess_monthly_reconciliation(
@@ -198,15 +216,27 @@ def main() -> int:
             maximum_dry_baseline_wet_target_fraction=(
                 args.maximum_dry_baseline_wet_target_fraction
             ),
+            maximum_synthetic_timing_fraction=args.maximum_synthetic_timing_fraction,
+        )
+        synthetic_mask, donor_y, donor_x = nearest_wet_timing_donors(
+            precipitation_sum, precipitation.daily_depth
         )
         safe_precipitation_factor = np.where(
             np.isfinite(precipitation.correction_factor),
             precipitation.correction_factor,
             1.0,
         )
-        maximum_corrected_hourly_depth = float(
-            np.nanmax(maximum_hourly_depth * safe_precipitation_factor)
-        )
+        corrected_maximum = maximum_hourly_depth * safe_precipitation_factor
+        if np.any(synthetic_mask):
+            donor_depth = precipitation_sum[donor_y, donor_x]
+            synthetic_maximum = np.divide(
+                maximum_hourly_depth[donor_y, donor_x] * precipitation.daily_depth,
+                donor_depth,
+                out=np.zeros_like(precipitation.daily_depth),
+                where=np.isfinite(donor_depth) & (donor_depth > 0),
+            )
+            corrected_maximum[synthetic_mask] = synthetic_maximum[synthetic_mask]
+        maximum_corrected_hourly_depth = float(np.nanmax(corrected_maximum))
         accepted = assessment.accepted and (
             maximum_corrected_hourly_depth <= args.maximum_corrected_hourly_depth
         )
@@ -236,6 +266,10 @@ def main() -> int:
                     ("y", "x"),
                     temperature_adjustment.constraint_valid.astype(np.uint8),
                 ),
+                "synthetic_timing_source": (
+                    ("y", "x"),
+                    synthetic_mask.astype(np.uint8),
+                ),
                 "prism_target_residual": (
                     ("prism_y", "prism_x"),
                     precipitation.target_residual.astype(np.float32),
@@ -248,6 +282,9 @@ def main() -> int:
             attrs={
                 "forcing_stream": args.stream,
                 "period": stamp,
+                "available_hour_count": available_hours,
+                "expected_month_hour_count": expected_month_hours,
+                "prism_precipitation_coverage_fraction": coverage_fraction,
                 "precipitation_weights": str(precipitation_weights),
                 "prism_constraint_frequency": "monthly",
                 "precipitation_converged": str(precipitation.converged).lower(),
@@ -259,12 +296,17 @@ def main() -> int:
                 "precipitation_dry_baseline_wet_target_fraction": (
                     assessment.dry_baseline_wet_target_fraction
                 ),
+                "precipitation_synthetic_timing_fraction": (
+                    assessment.synthetic_timing_fraction
+                ),
                 "maximum_unconverged_fraction": args.maximum_unconverged_fraction,
                 "maximum_unresolved_fraction": args.maximum_unresolved_fraction,
                 "maximum_capped_fraction": args.maximum_capped_fraction,
                 "maximum_dry_baseline_wet_target_fraction": (
                     args.maximum_dry_baseline_wet_target_fraction
                 ),
+                "maximum_synthetic_timing_fraction": args.maximum_synthetic_timing_fraction,
+                "synthetic_timing_method": "nearest_wet_nwm_monthly_profile",
                 "maximum_precipitation_ratio": args.maximum_ratio,
                 "maximum_corrected_hourly_depth_mm": maximum_corrected_hourly_depth,
                 "maximum_allowed_corrected_hourly_depth_mm": (
@@ -302,7 +344,7 @@ def main() -> int:
             staged = temp / destination.name
             shutil.copyfile(source_path, staged)
             with Dataset(staged, "a") as output:
-                for hour in range(24):
+                for hour in range(len(output.dimensions["time"])):
                     old_temperature = np.ma.asarray(output["T2D"][hour]).filled(np.nan)
                     pressure = np.ma.asarray(output["PSFC"][hour]).filled(np.nan)
                     old_humidity = np.ma.asarray(output["Q2D"][hour]).filled(np.nan)
@@ -331,13 +373,24 @@ def main() -> int:
                     output["Q2D"][hour] = np.ma.masked_invalid(final_humidity)
                     output["LWDOWN"][hour] = np.ma.masked_invalid(factor * new_emission)
                     output["RAINRATE"][hour] = np.ma.masked_invalid(
-                        rainrate * safe_precipitation_factor
+                        apply_monthly_precipitation_hour(
+                            rainrate,
+                            precipitation_sum,
+                            precipitation.daily_depth,
+                            precipitation.correction_factor,
+                            synthetic_mask,
+                            donor_y,
+                            donor_x,
+                        )
                     )
                 output.setncatts(
                     {
                         "forcing_stream": args.stream,
                         "prism_constraint_frequency": "monthly",
                         "prism_constraint_period": stamp,
+                        "prism_precipitation_coverage_fraction": coverage_fraction,
+                        "available_hour_count": available_hours,
+                        "expected_month_hour_count": expected_month_hours,
                         "prism_precipitation_source": str(prism["ppt"]),
                         "prism_temperature_minimum_source": str(prism["tmin"]),
                         "prism_temperature_maximum_source": str(prism["tmax"]),
@@ -352,6 +405,12 @@ def main() -> int:
                         "prism_reconciliation_capped_fraction": assessment.capped_fraction,
                         "prism_reconciliation_dry_baseline_wet_target_fraction": (
                             assessment.dry_baseline_wet_target_fraction
+                        ),
+                        "prism_reconciliation_synthetic_timing_fraction": (
+                            assessment.synthetic_timing_fraction
+                        ),
+                        "prism_synthetic_timing_method": (
+                            "nearest_wet_nwm_monthly_profile"
                         ),
                         "prism_maximum_corrected_hourly_depth_mm": (
                             maximum_corrected_hourly_depth

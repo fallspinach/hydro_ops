@@ -160,9 +160,23 @@ def main() -> int:
     parser.add_argument("--end", type=date.fromisoformat)
     parser.add_argument("--max-concurrent", type=int, default=4)
     parser.add_argument("--cpus-per-task", type=int, default=64)
+    parser.add_argument(
+        "--job-name",
+        help="informative SLURM worker-array name (default: prism-STREAM-day)",
+    )
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--allow-legacy-12utc-output",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if not args.allow_legacy_12utc_output:
+        parser.error(
+            "daily PRISM submission is paused: the legacy worker publishes 12-12 UTC "
+            "constraint windows instead of UTC calendar-day production files"
+        )
     settings = load_settings()
     output_root = validate_stream_output_root(
         args.output_root or forcing_stream_root(settings.project_root, args.stream), args.stream
@@ -221,15 +235,15 @@ def main() -> int:
             return 0
     settings.work_root.mkdir(parents=True, exist_ok=True)
     settings.log_root.mkdir(parents=True, exist_ok=True)
-    task_file = (
-        settings.work_root / f"prism-{args.stream}-tasks-{datetime.now(UTC):%Y%m%dT%H%M%S}.txt"
+    task_file = settings.work_root / (
+        f"prism-{args.stream}-tasks-{datetime.now(UTC):%Y%m%dT%H%M%S%f}.txt"
     )
     if not args.dry_run:
         task_file.write_text("".join(f"{day.isoformat()} {revision}\n" for day, revision in tasks))
     command = [
         "sbatch",
         f"--partition={settings.slurm_partition}",
-        f"--job-name=prism-{args.stream}-day",
+        f"--job-name={args.job_name or f'prism-{args.stream}-day'}",
         f"--array=0-{len(tasks) - 1}%{args.max_concurrent}",
         f"--cpus-per-task={args.cpus_per_task}",
         (

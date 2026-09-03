@@ -27,6 +27,7 @@ def main() -> int:
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument("--work-directory", type=Path)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--start-hour", type=int, default=0)
     parser.add_argument(
         "--delete-hourly",
         action="store_true",
@@ -35,7 +36,12 @@ def main() -> int:
     args = parser.parse_args()
 
     start = datetime.combine(args.day, datetime.min.time(), tzinfo=UTC)
-    paths = [hourly_path(args.hourly_root, start + timedelta(hours=hour)) for hour in range(24)]
+    if not 0 <= args.start_hour <= 23:
+        parser.error("--start-hour must be between 0 and 23")
+    paths = [
+        hourly_path(args.hourly_root, start + timedelta(hours=hour))
+        for hour in range(args.start_hour, 24)
+    ]
     missing = [path for path in paths if not path.is_file()]
     if missing:
         raise FileNotFoundError(f"Missing {len(missing)} hourly inputs; first is {missing[0]}")
@@ -52,8 +58,14 @@ def main() -> int:
         paths,
         destination,
         args.day,
+        expected_hours=len(paths),
         compression_level=2,
         work_directory=work,
+        global_attributes={
+            "partial_utc_day": str(args.start_hour > 0).lower(),
+            "available_start_hour_utc": args.start_hour,
+            "available_hour_count": len(paths),
+        },
         verification="targeted",
     )
     if args.delete_hourly:

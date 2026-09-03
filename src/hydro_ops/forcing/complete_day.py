@@ -216,7 +216,7 @@ def _write_native_batch(
     output.attrs.update(
         {
             "source_product": product,
-            "batch_hours": 24,
+            "batch_hours": int(source.sizes["time"]),
             "batch_start": str(source.time.values[0]),
             "batch_end": str(source.time.values[-1]),
         }
@@ -237,14 +237,17 @@ def produce_complete_day(
     mrms_quality_threshold: float = 0.5,
     assembly_workers: int = 4,
     precipitation_remap_workers: int = 1,
+    start_hour: int = 0,
     force: bool = False,
 ) -> list[dict]:
-    """Remap all variables in daily batches and publish 24 hourly LDASIN files."""
+    """Remap all available variables in one UTC-day batch."""
     if assembly_workers <= 0:
         raise ValueError("assembly_workers must be positive")
     if precipitation_remap_workers <= 0:
         raise ValueError("precipitation_remap_workers must be positive")
-    valid_times = utc_hours(day)
+    if not 0 <= start_hour <= 23:
+        raise ValueError("start_hour must be between 0 and 23")
+    valid_times = utc_hours(day)[start_hour:]
     outputs = [
         output_root / valid.strftime("%Y/%m/%d/%Y%m%d%H.LDASIN_DOMAIN1")
         for valid in valid_times
@@ -260,7 +263,7 @@ def produce_complete_day(
     ]
     product = selections[0].product
     if any(selected.product != product for selected in selections):
-        raise ValueError("Daily batching requires one non-precipitation source for all 24 hours")
+        raise ValueError("Daily batching requires one non-precipitation source for all hours")
     static = {
         "nldas2": (layout.nldas2_elevation, "NLDAS_elev", layout.nldas2_bilinear),
         "hrrr": (layout.hrrr_elevation, "HGT_surface", layout.hrrr_bilinear),
@@ -376,7 +379,7 @@ def produce_complete_day(
             for task in tasks:
                 task.staged_output.parent.mkdir(parents=True, exist_ok=True)
             stage_started = time.perf_counter()
-            with ProcessPoolExecutor(max_workers=min(assembly_workers, 24)) as executor:
+            with ProcessPoolExecutor(max_workers=min(assembly_workers, len(tasks))) as executor:
                 summaries = list(executor.map(_assemble_hour, tasks))
             for task in tasks:
                 task.published_output.parent.mkdir(parents=True, exist_ok=True)

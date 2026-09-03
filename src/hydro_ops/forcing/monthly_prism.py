@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.ndimage import distance_transform_edt
 
 from hydro_ops.forcing.precipitation_reconciliation import (
     ConservativeOperator,
@@ -44,6 +45,7 @@ class MonthlyReconciliationAcceptance:
     unresolved_fraction: float
     capped_fraction: float
     dry_baseline_wet_target_fraction: float
+    synthetic_timing_fraction: float
 
 
 def assess_monthly_reconciliation(
@@ -55,6 +57,7 @@ def assess_monthly_reconciliation(
     maximum_unresolved_fraction: float = 0.005,
     maximum_capped_fraction: float = 0.02,
     maximum_dry_baseline_wet_target_fraction: float = 0.005,
+    maximum_synthetic_timing_fraction: float = 0.01,
 ) -> MonthlyReconciliationAcceptance:
     """Apply independent convergence and physical-safeguard publication gates."""
     flags = np.asarray(result.target_qc_flags, dtype=np.uint16)
@@ -67,6 +70,8 @@ def assess_monthly_reconciliation(
     unconverged = constrained & ((flags & np.uint16(ReconciliationQC.NOT_CONVERGED)) != 0)
     capped = constrained & ((flags & np.uint16(ReconciliationQC.RATIO_CAPPED)) != 0)
     dry_wet = constrained & ((flags & np.uint16(ReconciliationQC.BASE_DRY_TARGET_WET)) != 0)
+    synthetic = constrained & ((flags & np.uint16(ReconciliationQC.SYNTHETIC_TIMING)) != 0)
+    unhandled_dry_wet = dry_wet & ~synthetic
     relative_error = np.divide(
         np.abs(residual),
         np.maximum(target, 1.0),
@@ -75,13 +80,15 @@ def assess_monthly_reconciliation(
     )
     unresolved = constrained & (relative_error > tolerance)
     fractions = tuple(
-        float(np.count_nonzero(mask) / count) for mask in (unconverged, unresolved, capped, dry_wet)
+        float(np.count_nonzero(mask) / count)
+        for mask in (unconverged, unresolved, capped, unhandled_dry_wet, synthetic)
     )
     limits = (
         maximum_unconverged_fraction,
         maximum_unresolved_fraction,
         maximum_capped_fraction,
         maximum_dry_baseline_wet_target_fraction,
+        maximum_synthetic_timing_fraction,
     )
     if any(value < 0 or value > 1 for value in limits):
         raise ValueError("Monthly acceptance fractions must be between zero and one")
@@ -92,6 +99,7 @@ def assess_monthly_reconciliation(
         unresolved_fraction=fractions[1],
         capped_fraction=fractions[2],
         dry_baseline_wet_target_fraction=fractions[3],
+        synthetic_timing_fraction=fractions[4],
     )
 
 
@@ -162,6 +170,7 @@ def reconcile_prism_month(
     cumulative_ratio_bounds: tuple[float, float] = (0.0, 10.0),
     maximum_monthly_depth: float = 4000.0,
     damping: float = 1.0,
+    allow_synthetic_timing: bool = False,
 ) -> ReconciliationResult:
     """Derive a monthly precipitation factor from an accumulated NWM field.
 
@@ -179,5 +188,55 @@ def reconcile_prism_month(
         cumulative_ratio_bounds=cumulative_ratio_bounds,
         maximum_period_depth=maximum_monthly_depth,
         damping=damping,
-        allow_synthetic_timing=False,
+        allow_synthetic_timing=allow_synthetic_timing,
     )
+
+
+def nearest_wet_timing_donors(
+    baseline_monthly_depth: np.ndarray,
+    corrected_monthly_depth: np.ndarray,
+    *,
+    dry_tolerance: float = 1.0e-8,
+) -> tuple[NDArray[np.bool_], NDArray[np.intp], NDArray[np.intp]]:
+    """Locate the nearest wet NWM cell for each synthesized monthly source cell."""
+    baseline = np.asarray(baseline_monthly_depth, dtype=np.float64)
+    corrected = np.asarray(corrected_monthly_depth, dtype=np.float64)
+    if baseline.shape != corrected.shape or baseline.ndim != 2:
+        raise ValueError("Monthly precipitation grids must be matching two-dimensional arrays")
+    wet = np.isfinite(baseline) & (baseline > dry_tolerance)
+    synthetic = (
+        np.isfinite(baseline)
+        & (baseline <= dry_tolerance)
+        & np.isfinite(corrected)
+        & (corrected > dry_tolerance)
+    )
+    if np.any(synthetic) and not np.any(wet):
+        raise ValueError("Synthetic monthly precipitation has no wet timing donor")
+    indices = distance_transform_edt(~wet, return_distances=False, return_indices=True)
+    return synthetic, indices[0], indices[1]
+
+
+def apply_monthly_precipitation_hour(
+    rainrate: np.ndarray,
+    baseline_monthly_depth: np.ndarray,
+    corrected_monthly_depth: np.ndarray,
+    correction_factor: np.ndarray,
+    synthetic_mask: np.ndarray,
+    donor_y: np.ndarray,
+    donor_x: np.ndarray,
+) -> NDArray[np.float64]:
+    """Apply ordinary factors and nearest-wet temporal profiles to one hourly field."""
+    rain = np.asarray(rainrate, dtype=np.float64)
+    factor = np.asarray(correction_factor, dtype=np.float64)
+    result = rain * np.where(np.isfinite(factor), factor, 1.0)
+    if np.any(synthetic_mask):
+        donor_depth = baseline_monthly_depth[donor_y, donor_x]
+        donor_rate = rain[donor_y, donor_x]
+        scale = np.divide(
+            corrected_monthly_depth,
+            donor_depth,
+            out=np.zeros_like(corrected_monthly_depth, dtype=np.float64),
+            where=np.isfinite(donor_depth) & (donor_depth > 0),
+        )
+        result[synthetic_mask] = (donor_rate * scale)[synthetic_mask]
+    return result

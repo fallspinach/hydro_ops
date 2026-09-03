@@ -3,8 +3,10 @@ from __future__ import annotations
 import numpy as np
 
 from hydro_ops.forcing.monthly_prism import (
+    apply_monthly_precipitation_hour,
     assess_monthly_reconciliation,
     monthly_temperature_adjustment,
+    nearest_wet_timing_donors,
     reconcile_prism_month,
 )
 from hydro_ops.forcing.precipitation_reconciliation import (
@@ -53,6 +55,57 @@ def test_monthly_precipitation_factor_preserves_hourly_fractions() -> None:
     corrected = hours * result.correction_factor
     np.testing.assert_allclose(operator.apply(corrected.sum(axis=0)), [12.0])
     np.testing.assert_allclose(corrected[1] / corrected[0], [3.0, 3.0])
+
+
+def test_monthly_synthetic_timing_uses_nearest_wet_cell_profile() -> None:
+    baseline = np.array([[3.0, 0.0, 0.0], [0.0, 0.0, 6.0]])
+    corrected = np.array([[3.0, 2.0, 0.0], [0.0, 4.0, 6.0]])
+    synthetic, donor_y, donor_x = nearest_wet_timing_donors(baseline, corrected)
+    first = apply_monthly_precipitation_hour(
+        np.array([[1.0, 0.0, 0.0], [0.0, 0.0, 2.0]]),
+        baseline,
+        corrected,
+        np.ones_like(baseline),
+        synthetic,
+        donor_y,
+        donor_x,
+    )
+    second = apply_monthly_precipitation_hour(
+        np.array([[2.0, 0.0, 0.0], [0.0, 0.0, 4.0]]),
+        baseline,
+        corrected,
+        np.ones_like(baseline),
+        synthetic,
+        donor_y,
+        donor_x,
+    )
+    np.testing.assert_allclose((first + second)[synthetic], corrected[synthetic])
+    assert first[0, 1] == 2.0 / 3.0
+    assert first[1, 1] == 4.0 / 3.0
+
+
+def test_monthly_synthetic_targets_are_bounded_separately() -> None:
+    operator = ConservativeOperator(
+        source_size=2,
+        target_size=2,
+        source_index=np.array([0, 1]),
+        target_index=np.array([0, 1]),
+        weight=np.ones(2),
+    )
+    result = reconcile_prism_month(
+        np.array([2.0, 0.0]),
+        np.array([2.0, 1.0]),
+        operator,
+        allow_synthetic_timing=True,
+    )
+    assessment = assess_monthly_reconciliation(
+        result,
+        np.array([2.0, 1.0]),
+        maximum_synthetic_timing_fraction=0.6,
+    )
+    assert assessment.accepted
+    assert assessment.dry_baseline_wet_target_fraction == 0.0
+    assert assessment.synthetic_timing_fraction == 0.5
 
 
 def test_monthly_acceptance_rejects_capped_and_dry_wet_population() -> None:
