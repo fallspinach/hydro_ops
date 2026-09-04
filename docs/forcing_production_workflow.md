@@ -853,6 +853,43 @@ python bin/update_nwm_forcing.py --cycle daily
 python bin/update_nwm_forcing.py --cycle monthly-retro
 ```
 
+An explicit historical retrospective window uses the same baseline → stable PRISM → cleanup
+dependency chain without refreshing already archived external sources:
+
+```bash
+python bin/update_nwm_forcing.py --cycle monthly-retro \
+  --start 1982-01-01 --end 1982-12-31 --skip-source-refresh
+```
+
+Explicit windows are restricted to retrospective mode. Their date-specific job names allow a
+historical backfill to coexist with a non-overlapping retrospective array already in progress.
+Adjacent years may be queued safely with `--dependency afterany:JOB_ID`, where `JOB_ID` is the
+preceding year's cleanup job. The later baseline audit then runs after the shared boundary is
+released and regenerates the boundary halo if cleanup removed it.
+The continuation is a bounded convergence controller rather than a one-shot submission. After
+each array leaves the queue it audits accepted calendar outputs, rebuilds only missing D-1/D/D+1
+baseline dependencies, and resubmits only unresolved PRISM dates. Four attempts are allowed by
+default. The cycle manifest records each stage, attempt, job ID, and unresolved-date sample.
+Stable-baseline cleanup runs only after every requested retro day passes the final content audit;
+otherwise the manifest ends in a machine-readable blocked state and baseline is retained.
+
+Long historical spans use `bin/update_nwm_forcing_multi_year.py`. It shards the baseline calendar
+at the cluster's 1,001-task array limit, divides one global baseline worker budget across those
+non-overlapping shards, and launches one convergence controller for the entire span. PRISM has a
+separate global worker limit. Because cleanup occurs once after the full span validates, adjacent
+year boundaries cannot be deleted while a neighboring year still needs them.
+Workers are apportioned by shard-day count so unequal final shards finish at approximately the
+same time. The production defaults are 42 baseline workers at 12 CPUs each (504 CPUs) and 32
+PRISM workers at 12 CPUs each (384 CPUs). Multi-year cleanup defaults to `deferred`; completed
+blocks report `complete_pending_cleanup` and retain baseline until all concurrently processed
+neighboring blocks have converged and a global cleanup audit is run.
+
+Baseline arrays are submitted by a lightweight staging controller. Every array element counts
+against SLURM's `MaxSubmitJobsPerAccount` limit, so the controller records each accepted shard in
+the cycle manifest and retries later shards as quota becomes available. Submission is therefore
+resumable after partial acceptance, and convergence is released only after every baseline shard
+has been submitted and finished.
+
 - Run a 10-day NRT scan every six hours. This covers Stage-IV regeneration during its first day
   and at approximately 1, 3, 5, and 7 days, plus the usual 3-4-day NLDAS-2 latency and PRISM's
   first and five-day runs.

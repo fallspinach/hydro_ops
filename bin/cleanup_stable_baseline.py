@@ -37,9 +37,14 @@ def accepted_retro(
             if not accepted or len(data.dimensions.get("time", ())) not in allowed_records:
                 return False
             if actual_frequency == "daily":
-                return data.getncattr("prism_precipitation_revision") == "stable"
+                if "prism_precipitation_revision" in data.ncattrs():
+                    return data.getncattr("prism_precipitation_revision") == "stable"
+                if "prism_precipitation_revisions" in data.ncattrs():
+                    revisions = json.loads(data.getncattr("prism_precipitation_revisions"))
+                    return bool(revisions) and set(revisions.values()) == {"stable"}
+                return False
             return actual_frequency == "monthly"
-    except (OSError, AttributeError, KeyError):
+    except (OSError, RuntimeError, AttributeError, KeyError, json.JSONDecodeError):
         return False
 
 

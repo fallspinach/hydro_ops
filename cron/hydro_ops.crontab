@@ -14,5 +14,6 @@ CRON_TZ=UTC
 # dependency-gated final stage and never runs inside parallel PRISM workers.
 0 10 18 * * cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --no-capture-output --name hydro-ops python bin/update_nwm_forcing.py --cycle monthly-retro >> logs/nwm-cycle-retro.log 2>&1
 
-# Weekly read-only source coverage report.
-30 11 * * 0 cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --no-capture-output --name hydro-ops python bin/update_forcing.py --status-only >> logs/forcing-inventory.log 2>&1
+# Read-only dashboard status, offset 30 minutes from the even-hour production submissions. The
+# writer atomically replaces the canonical JSON document, so web readers never see partial JSON.
+30 */2 * * * cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --no-capture-output --name hydro-ops python bin/report_forcing_status.py --format json --output outputs/status/forcing-status.json >> logs/forcing-status.log 2>&1

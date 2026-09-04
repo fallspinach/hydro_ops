@@ -108,6 +108,8 @@ The default scan reads filenames and filesystem metadata only; it deliberately d
 large NetCDF files. JSON field `scan.netcdf_contents_validated` records that distinction. Use the
 existing validation tools when content-level verification is required. The report schema is
 versioned through `schema_version`; consumers should check that value before parsing.
+The canonical cron schedule refreshes this report every two hours at minute 30, offset from the
+even-hour forcing cycles. This replaces the older weekly source-only inventory entry.
 
 ## NWM 1-km target grid
 

@@ -1,3 +1,4 @@
+import json
 from datetime import date
 from pathlib import Path
 
@@ -29,6 +30,24 @@ def test_daily_cleanup_requires_stable_revision(tmp_path: Path) -> None:
     assert not module.accepted_retro(path, frequency="daily")
     path.unlink()
     _write_retro(path, frequency="daily", revision="stable")
+    assert module.accepted_retro(path, frequency="daily")
+
+
+def test_calendar_daily_cleanup_accepts_two_stable_window_revisions(tmp_path: Path) -> None:
+    import importlib.util
+
+    script = Path(__file__).parents[1] / "bin/cleanup_stable_baseline.py"
+    spec = importlib.util.spec_from_file_location("cleanup_calendar_baseline", script)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    path = module.forcing_path(tmp_path, date(2025, 1, 1))
+    _write_retro(path, frequency="daily")
+    with Dataset(path, "a") as data:
+        data.setncattr(
+            "prism_precipitation_revisions",
+            json.dumps({"2025-01-01": "stable", "2025-01-02": "stable"}),
+        )
     assert module.accepted_retro(path, frequency="daily")
 
 
