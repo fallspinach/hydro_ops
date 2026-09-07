@@ -82,7 +82,7 @@ def convergence_command(
         "--time=48:00:00",
         "--requeue",
         f"--export={exports}",
-        f"--output={project}/logs/nwm-retro-{state['start'][:4]}-{state['end'][:4]}-converge-%j.out",
+        f"--output={project}/forcing/logs/nwm-retro-{state['start'][:4]}-{state['end'][:4]}-converge-%j.out",
         "slurm/converge_nwm_forcing_cycle.py",
     ]
     job_ids = state["baseline_job_ids"]

@@ -18,7 +18,7 @@ URL = (
     "https://edcintl.cr.usgs.gov/downloads/sciweb1/shared/topo/downloads/"
     "GMTED/Grid_ZipFiles/mn30_grd.zip"
 )
-DEFAULT_ROOT = Path("data/static/dem/gmted2010/mean_30arcsec")
+DEFAULT_ROOT = Path("forcing/static/dem/gmted2010/mean_30arcsec")
 NWM_BOUNDS = (-134.0, 58.0, -60.0, 20.0)  # west, north, east, south
 LOG = logging.getLogger(__name__)
 

@@ -11,13 +11,13 @@ set -euo pipefail
 
 project_root=${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 python=/home/mpan/local/miniforge3/envs/hydro-ops/bin/python
-subset="$project_root/work/nwm_subset_mid_atlantic"
+subset="$project_root/nwm/runs/nwm_subset_mid_atlantic"
 template="$subset/run_prism_native_daily"
-forcing_root="$project_root/outputs/forcing/nwm/nrt"
+forcing_root="$project_root/forcing/outputs/conus/nrt"
 scratch_root=${SLURM_TMPDIR:-"/scratch/${SLURM_JOB_USER}/job_${SLURM_JOB_ID}"}
 test_root="$scratch_root/wrfh-midatlantic-nrt-20260310-48h"
 run_dir="$test_root/run"
-result_dir="$project_root/outputs/wrf_hydro_tests/mid_atlantic/nrt_20260310_48h/job_${SLURM_JOB_ID}"
+result_dir="$project_root/nwm/outputs/tests/mid_atlantic/nrt_20260310_48h/job_${SLURM_JOB_ID}"
 
 mkdir -p "$run_dir/forcing" "$result_dir"
 
@@ -33,6 +33,7 @@ mkdir -p "$run_dir/forcing" "$result_dir"
 
 cp "$template/namelist.hrldas" "$run_dir/namelist.hrldas"
 cp "$template/hydro.namelist" "$run_dir/hydro.namelist"
+sed -i 's/^io_form_outputs = .*/io_form_outputs = 3/' "$run_dir/hydro.namelist"
 for table in CHANPARM.TBL GENPARM.TBL HYDRO.TBL MPTABLE.TBL SOILPARM.TBL; do
     cp "$template/$table" "$run_dir/$table"
 done

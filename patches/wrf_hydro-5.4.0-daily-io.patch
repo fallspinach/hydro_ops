@@ -171,7 +171,7 @@ index 0fbf9d0..854c2f6 100644
  !!Create forcing data filename...
          call geth_newdate(out_date,olddate,nint(dt))
          inflnm = trim(indir)//"/"//&
-@@ -945,15 +1022,29 @@ Contains
+@@ -945,15 +1022,34 @@ Contains
 
          inquire (file=trim(inflnm), exist=fexist)
          if ( .not. fexist ) then
@@ -181,8 +181,13 @@ index 0fbf9d0..854c2f6 100644
 +                ".LDASIN_DOMAIN"//hgrid
 +           inquire (file=trim(inflnm), exist=fexist)
 +           if ( .not. fexist ) then
-+              print*, "no hourly or daily forcing data found", inflnm
-+              call hydro_stop("In read_hydro_forcing_seq")
++              inflnm = trim(indir)//"/"//out_date(1:4)//"/"//out_date(6:7)//"/"//&
++                   out_date(1:4)//out_date(6:7)//out_date(9:10)//".LDASIN_DOMAIN"//hgrid
++              inquire (file=trim(inflnm), exist=fexist)
++              if ( .not. fexist ) then
++                 print*, "no hourly or daily forcing data found; last path checked", inflnm
++                 call hydro_stop("In read_hydro_forcing_seq")
++              endif
 +           endif
 +           read(out_date(12:13),*) i_forcing
 +           i_forcing = i_forcing + 1
@@ -208,7 +213,7 @@ index 0fbf9d0..854c2f6 100644
     end if
 
 
-@@ -2312,7 +2403,7 @@ character(len=256) :: inflnm, inflnm2, product
+@@ -2312,7 +2408,7 @@ character(len=256) :: inflnm, inflnm2, product
  integer  :: i,j,mmflag,ierr_flg
  real,dimension(ix,jx):: lai,snowbl,fpar
  character(len=4) nwxst_t
@@ -217,7 +222,7 @@ index 0fbf9d0..854c2f6 100644
 
  inflnm = trim(indir)//"/"//&
           olddate(1:4)//olddate(6:7)//olddate(9:10)//olddate(12:13)//&
-@@ -2324,6 +2415,7 @@ inflnm = trim(indir)//"/"//&
+@@ -2324,6 +2420,7 @@ inflnm = trim(indir)//"/"//&
 
  !!! FORC_TYPE 1 ============================================================================
  if(FORC_TYP.eq.1) then
@@ -225,7 +230,7 @@ index 0fbf9d0..854c2f6 100644
     !!Create forcing data filename...
     call geth_newdate(out_date,olddate,nint(dt))
     inflnm = trim(indir)//"/"//&
-@@ -2336,18 +2428,35 @@ if(FORC_TYP.eq.1) then
+@@ -2336,18 +2433,43 @@ if(FORC_TYP.eq.1) then
     call mpp_land_bcast_logical(fexist)
  #endif
     if ( .not. fexist ) then
@@ -238,8 +243,16 @@ index 0fbf9d0..854c2f6 100644
 +      call mpp_land_bcast_logical(fexist)
 +#endif
 +      if ( .not. fexist ) then
-+         print*, "no hourly or daily forcing data found", inflnm
-+         call hydro_stop("In read_hydro_forcing_mpp1() - no forcing data found")
++         inflnm = trim(indir)//"/"//out_date(1:4)//"/"//out_date(6:7)//"/"//&
++              out_date(1:4)//out_date(6:7)//out_date(9:10)//".LDASIN_DOMAIN"//hgrid
++         inquire (file=trim(inflnm), exist=fexist)
++#ifdef MPP_LAND
++         call mpp_land_bcast_logical(fexist)
++#endif
++         if ( .not. fexist ) then
++            print*, "no hourly or daily forcing data found; last path checked", inflnm
++            call hydro_stop("In read_hydro_forcing_mpp1() - no forcing data found")
++         endif
 +      endif
 +      read(out_date(12:13),*) i_forcing
 +      i_forcing = i_forcing + 1
@@ -268,7 +281,7 @@ index 0fbf9d0..854c2f6 100644
 
     where(PRCP1 .lt. 0) PRCP1= 0  ! set minimum to be 0
     where(PRCP1 .gt. 0.138889) PRCP1= 0.138889 ! set maximum to be 500 mm/h
-@@ -2785,7 +2894,7 @@ end subroutine read_hydro_forcing_mpp1
+@@ -2785,7 +2907,7 @@ end subroutine read_hydro_forcing_mpp1
      subroutine READFORC_HRLDAS_mpp(flnm,ix,jx,target_date, &
           forcing_name_T,forcing_name_Q,forcing_name_U,forcing_name_V,forcing_name_P, &
           forcing_name_LW,forcing_name_SW,forcing_name_PR,forcing_name_SN, forcing_name_LF,&
@@ -277,7 +290,7 @@ index 0fbf9d0..854c2f6 100644
      implicit none
 
      character(len=*),                   intent(in)  :: flnm
-@@ -2817,6 +2926,8 @@ end subroutine read_hydro_forcing_mpp1
+@@ -2817,6 +2939,8 @@ end subroutine read_hydro_forcing_mpp1
      character(len=256) :: units
      integer :: ierr
      integer :: ncid
@@ -286,7 +299,7 @@ index 0fbf9d0..854c2f6 100644
 
      ! Open the NetCDF file.
  #ifdef MPP_LAND
-@@ -2828,8 +2939,20 @@ end subroutine read_hydro_forcing_mpp1
+@@ -2828,8 +2952,20 @@ end subroutine read_hydro_forcing_mpp1
      else
          allocate(buf2(1,1))
      endif
@@ -308,7 +321,7 @@ index 0fbf9d0..854c2f6 100644
      endif
      call mpp_land_bcast_int1(ierr)
      if (ierr /= NF90_NOERR) then
-@@ -2838,39 +2961,39 @@ end subroutine read_hydro_forcing_mpp1
+@@ -2838,39 +2974,39 @@ end subroutine read_hydro_forcing_mpp1
      endif
 
 
@@ -360,7 +373,7 @@ index 0fbf9d0..854c2f6 100644
         call mpp_land_bcast_int1(ierr)
         if(ierr == 0) then
            allocate(liqfrac(ix,jx))
-@@ -2918,9 +3041,26 @@ end subroutine read_hydro_forcing_mpp1
+@@ -2918,9 +3054,26 @@ end subroutine read_hydro_forcing_mpp1
 
  #endif
 

@@ -13,9 +13,9 @@ from hydro_ops.download.netcdf_compression import compress_netcdf, is_compressed
 
 LOG = logging.getLogger("compress_forcing_netcdf")
 DEFAULT_ROOTS = (
-    Path("data/forcing/noaa/hrrr"),
-    Path("data/forcing/noaa/mrms/conus/1km/hourly/netcdf"),
-    Path("data/forcing/noaa/stage4/netcdf"),
+    Path("forcing/inputs/noaa/hrrr"),
+    Path("forcing/inputs/noaa/mrms/conus/1km/hourly/netcdf"),
+    Path("forcing/inputs/noaa/stage4/netcdf"),
 )
 
 

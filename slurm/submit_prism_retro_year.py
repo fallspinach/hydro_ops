@@ -55,7 +55,7 @@ def main() -> int:
             f"HYDRO_OPS_CLEANUP_START={year:04d}-01-01,"
             f"HYDRO_OPS_CLEANUP_END={year:04d}-12-31"
         ),
-        f"--output={project}/logs/cleanup-stable-baseline-{year}-%j.out",
+        f"--output={project}/forcing/logs/cleanup-stable-baseline-{year}-%j.out",
         str(project / "slurm/cleanup_stable_baseline.py"),
     ]
     if match:

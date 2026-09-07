@@ -109,7 +109,7 @@ module load slurm/AWARE/23.02.7 cpu/0.21.2 intel/2023.2.4.31 \
   intel-mpi/2021.14.2.9 netcdf-fortran/4.5.3 cmake/3.27.7
 cmake --build external/wrf_hydro_nwm_public-v5.4.0/build-intel \
   --target croton-nwm_ana
-sbatch --partition=shared-128 --output=logs/wrf_hydro/croton-%j.out \
+sbatch --partition=shared-128 --output=nwm/logs/wrf_hydro/croton-%j.out \
   slurm/test_wrf_hydro_croton.sh
 ```
 
@@ -139,9 +139,44 @@ corrected wrapper behavior.
 The project build applies `patches/wrf_hydro-5.4.0-daily-io.patch` automatically. For
 `FORC_TYP=1`, the patched reader first looks for the original hourly
 `YYYYMMDDHH.LDASIN_DOMAIN1` file. If it is absent, it opens
-`YYYYMMDD.LDASIN_DOMAIN1`, selects the requested hourly record, and keeps that daily file open
-until the date changes. Both sequential and MPP land-reader paths are covered. Existing hourly
-forcing directories therefore remain valid without a namelist change.
+`YYYYMMDD.LDASIN_DOMAIN1` and then `YYYY/MM/YYYYMMDD.LDASIN_DOMAIN1`, selects the requested
+hourly record, and keeps that daily file open until the date changes. Both sequential and MPP
+land-reader paths are covered. Existing flat forcing directories therefore remain valid, while
+an operational run can set `INDIR` directly to `forcing/outputs/conus/nrt` or
+`forcing/outputs/conus/retro` without staging links or copies.
+
+Treat restarts as paired model state rather than forcing or ordinary history output. Noah-MP
+reads the exact path in `RESTART_FILENAME_REQUESTED`; routing reads the exact path in
+`RESTART_FILE`. Production cycles begin and end at 00 UTC and retain only 00 UTC checkpoints.
+Operational storage should place each verified pair in a dedicated `restart/YYYY/MM/` directory:
+
+```text
+restart/YYYY/MM/RESTART.YYYYMMDD00_DOMAIN1
+restart/YYYY/MM/HYDRO_RST.YYYY-MM-DD_00:00_DOMAIN1
+```
+
+The date-bearing filenames make a day directory redundant. The run planner must select land and
+hydro files with the same valid timestamp. The model may write them initially to its cycle
+output/scratch directory; publication should atomically move the verified pair into the restart
+store. Non-00 UTC checkpoints may be created for a recovery experiment or regression test but are
+scratch-only and are not published. A `latest` pointer or manifest is useful for discovery, but
+namelists should receive the resolved immutable paths so independently selected, mismatched
+restart times are impossible.
+
+The build also applies `patches/wrf_hydro-5.4.0-netcdf-compression.patch`. All array variables
+created by the active Noah-MP land, routing, NWM, and streamflow-nudging runtime writers use
+NetCDF-4 lossless DEFLATE level 2. The land, legacy routing/restart, and nudging writers also use
+the shuffle filter; the NWM writer retains its upstream no-shuffle performance choice. This
+includes hourly and native-daily LDASOUT, CHRTOUT and the other enabled routing products, land
+restart files, hydro restart files, and nudging state. Scalar metadata variables are left
+unfiltered because HDF5 compression requires chunked array storage. The NWM writer selects
+`io_form_outputs=3`, retaining floating-point values while enabling its built-in lossless
+compression; mode 1 would additionally apply NWM scale/offset packing and is intentionally not
+used.
+
+Cluster regression job `4474923` exercised a six-hour spin-up, a restart continuation, and a
+continuous control. It verified DEFLATE level 2 on every array variable in 537 generated NetCDF
+files and confirmed numerical equivalence for 89 comparable land and hydro restart variables.
 
 The 24-hour Croton comparison on 2026-08-29 used one MPI rank and the MPP land path. The hourly
 case finished in 8.59 seconds and the daily-input case in 6.75 seconds. All 153 channel, routing,
@@ -149,7 +184,7 @@ groundwater, lake, land-surface, and observation output files were byte-for-byte
 Run the reproducible cluster test with:
 
 ```bash
-sbatch --output=logs/wrf_hydro/daily-io-%j.out slurm/test_wrf_hydro_daily_io.sh
+sbatch --output=nwm/logs/wrf_hydro/daily-io-%j.out slurm/test_wrf_hydro_daily_io.sh
 ```
 
 For output, the initial operational implementation writes ordinary hourly model files to node
@@ -190,7 +225,7 @@ daily method is `sum`; the other CHRTOUT flow and velocity fields use `mean`.
 regularly spaced hourly records, preserves missing samples, writes an explicit aggregation period
 through `time_bounds`, and attaches the reducer to each variable. Native Fortran daily output must
 match this oracle before hourly LDASOUT is disabled. Reference Mid-Atlantic products are written
-under `work/wrf_hydro_daily_oracle` and use names such as `20230121.LDASOUT.daily` and
+under `nwm/runs/wrf_hydro_daily_oracle` and use names such as `20230121.LDASOUT.daily` and
 `20230121.CHRTOUT.daily`.
 
 The native implementation now covers both reach-based CHRTOUT and gridded LDASOUT. Four integer
@@ -303,8 +338,8 @@ routing window:
 
 ```bash
 python bin/subset_nwm_domain.py \
-  --domain-dir data/static/nwm/operational/nwm.v3.1.6/domain \
-  --output-dir work/nwm_subset_croton \
+  --domain-dir nwm/static/operational/nwm.v3.1.6/domain \
+  --output-dir nwm/runs/nwm_subset_croton \
   --bbox -74.2 40.9 -73.4 41.7 --execute
 ```
 
@@ -368,6 +403,6 @@ repair counts, and the policy metadata. Original forcing files are never modifie
 The 24-hour stable-PRISM test window from 2023-01-21 12 UTC through 2023-01-22 11 UTC passed this
 gate. It contained 1,364 persistent active-land coverage-mismatch cells, no transient gaps, and a
 maximum fill distance of 24 cells. The report is
-`work/nwm_subset_mid_atlantic/forcing_prism_20230121_22.coverage.json`. A four-rank, 24-hour
+`nwm/runs/nwm_subset_mid_atlantic/forcing_prism_20230121_22.coverage.json`. A four-rank, 24-hour
 WRF-Hydro run using those constrained and provenance-marked files completed successfully in
 223.6 seconds, essentially the same performance as the baseline-forcing run.

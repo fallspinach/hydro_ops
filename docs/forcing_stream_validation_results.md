@@ -2,13 +2,13 @@
 
 This log records promotion evidence for the test plan in
 `docs/forcing_stream_validation_plan.md`. Outputs and machine-readable reports are isolated under
-`outputs/forcing/validation/` and are not operational products.
+`forcing/outputs/validation/` and are not operational products.
 
 ## Gate A: accepted
 
 Gate A passed 16 of 16 natural-boundary, controlled-availability, expected-failure, and
 input-layout checks on 2026-08-26. The authoritative ledger is
-`outputs/forcing/validation/reports/gate-a-ledger.json`.
+`forcing/outputs/validation/reports/gate-a-ledger.json`.
 
 - Stable PRISM routing produced a `retro` result for 2026-02-24; the following day routed to
   provisional `nrt`.

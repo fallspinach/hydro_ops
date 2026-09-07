@@ -38,7 +38,7 @@ def main() -> int:
     parser.add_argument("--end", required=True, type=parse_month)
     parser.add_argument("--complete-root", required=True, type=Path)
     parser.add_argument(
-        "--output-root", type=Path, help="defaults to outputs/forcing/nwm/retro"
+        "--output-root", type=Path, help="defaults to forcing/outputs/conus/retro"
     )
     parser.add_argument("--precipitation-weights", required=True, type=Path)
     parser.add_argument("--maximum-ratio", type=float, required=True)

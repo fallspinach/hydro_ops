@@ -192,7 +192,7 @@ def build_status(
                 "status": "available" if row.latest else "missing",
             }
         )
-    nwm_root = settings.output_root / "forcing" / "nwm"
+    nwm_root = settings.output_root / "conus"
     production = {
         stream: production_inventory(nwm_root / stream, start=start, end=end, gap_limit=gap_limit)
         for stream in ("baseline", "nrt", "retro")

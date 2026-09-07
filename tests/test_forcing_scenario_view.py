@@ -23,8 +23,8 @@ def test_scenario_view_hides_products_without_touching_sources(tmp_path: Path) -
     report = module.create_view(source, destination, {"nldas2", "mrms_pass2"})
 
     assert report["hidden_products"] == ["mrms_pass2", "nldas2"]
-    assert (destination / "data/static").is_symlink()
-    assert not (destination / "data" / module.PRODUCT_PATHS["nldas2"]).exists()
-    assert not (destination / "data" / module.PRODUCT_PATHS["mrms_pass2"]).exists()
-    assert (destination / "data" / module.PRODUCT_PATHS["hrrr"]).is_symlink()
+    assert (destination / "forcing/static").is_symlink()
+    assert not (destination / "forcing" / module.PRODUCT_PATHS["nldas2"]).exists()
+    assert not (destination / "forcing" / module.PRODUCT_PATHS["mrms_pass2"]).exists()
+    assert (destination / "forcing" / module.PRODUCT_PATHS["hrrr"]).is_symlink()
     assert (source / module.PRODUCT_PATHS["nldas2"]).is_dir()

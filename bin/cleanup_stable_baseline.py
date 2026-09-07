@@ -94,10 +94,13 @@ def main() -> int:
             continue
         retro_day = forcing_path(retro, day)
         frequency = None
-        if accepted_retro(retro_day, frequency="monthly"):
-            frequency = "monthly"
-        elif accepted_retro(retro_day, frequency="daily"):
+        # Daily constraints cover 1981 onward and dominate cleanup volume. Check
+        # them first so modern archives require one NetCDF header open per day;
+        # monthly constraints remain available for the 1979-1980 extension.
+        if accepted_retro(retro_day, frequency="daily"):
             frequency = "daily"
+        elif accepted_retro(retro_day, frequency="monthly"):
+            frequency = "monthly"
         if frequency == "monthly":
             key = (day.year, day.month)
             month_cache.setdefault(key, accepted_month(retro, *key))

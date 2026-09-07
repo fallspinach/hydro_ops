@@ -25,12 +25,12 @@ raise SystemExit(
             "--month",
             str(month),
             "--baseline-root",
-            str(project / "outputs/forcing/nwm/baseline"),
+            str(project / "forcing/outputs/conus/baseline"),
             "--retro-root",
-            str(project / "outputs/forcing/nwm/retro"),
+            str(project / "forcing/outputs/conus/retro"),
             "--report",
             str(
-                project / f"outputs/forcing/validation/reports/monthly-prism/{year}{month:02d}.json"
+                project / f"forcing/outputs/validation/reports/monthly-prism/{year}{month:02d}.json"
             ),
         ],
         check=False,

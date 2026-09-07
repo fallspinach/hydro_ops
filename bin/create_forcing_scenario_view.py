@@ -10,13 +10,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 PRODUCT_PATHS = {
-    "nldas2": "forcing/nasa/nldas2/fora0125_hourly_v2.0",
-    "hrrr": "forcing/noaa/hrrr/conus/3km/hourly",
-    "mrms_pass1": "forcing/noaa/mrms/conus/1km/hourly/netcdf/pass1",
-    "mrms_pass2": "forcing/noaa/mrms/conus/1km/hourly/netcdf/pass2",
-    "mrms_quality": "forcing/noaa/mrms/conus/1km/hourly/netcdf/quality",
-    "stage4_archive": "forcing/noaa/stage4/netcdf/archive",
-    "stage4_realtime": "forcing/noaa/stage4/netcdf/realtime",
+    "nldas2": "inputs/nasa/nldas2/fora0125_hourly_v2.0",
+    "hrrr": "inputs/noaa/hrrr/conus/3km/hourly",
+    "mrms_pass1": "inputs/noaa/mrms/conus/1km/hourly/netcdf/pass1",
+    "mrms_pass2": "inputs/noaa/mrms/conus/1km/hourly/netcdf/pass2",
+    "mrms_quality": "inputs/noaa/mrms/conus/1km/hourly/netcdf/quality",
+    "stage4_archive": "inputs/noaa/stage4/netcdf/archive",
+    "stage4_realtime": "inputs/noaa/stage4/netcdf/realtime",
 }
 
 
@@ -29,14 +29,14 @@ def create_view(
         if not force:
             raise FileExistsError(f"Scenario view exists; use --force to replace it: {destination}")
         shutil.rmtree(destination)
-    (destination / "data").mkdir(parents=True)
+    (destination / "forcing").mkdir(parents=True)
     links: dict[str, str] = {}
 
     def link(relative: str) -> None:
         source = source_data / relative
         if not source.exists():
             raise FileNotFoundError(f"Required source path is missing: {source}")
-        target = destination / "data" / relative
+        target = destination / "forcing" / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.symlink_to(source, target_is_directory=source.is_dir())
         links[relative] = str(source)
@@ -58,7 +58,7 @@ def create_view(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-data", type=Path, default=Path("data"))
+    parser.add_argument("--source-data", type=Path, default=Path("forcing"))
     parser.add_argument("--destination", required=True, type=Path)
     parser.add_argument(
         "--hide",

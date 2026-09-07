@@ -24,6 +24,7 @@ prepare_run() {
     mkdir -p "$run_dir"
     cp "$example_dir/NWM/namelist.hrldas" "$run_dir/namelist.hrldas"
     cp "$example_dir/NWM/hydro.namelist" "$run_dir/hydro.namelist"
+    sed -i 's/^io_form_outputs = .*/io_form_outputs = 3/' "$run_dir/hydro.namelist"
     for item in DOMAIN nudgingTimeSliceObs; do
         ln -s "$example_dir/NWM/$item" "$run_dir/$item"
     done
@@ -75,15 +76,17 @@ ln -s "$example_dir/NWM/RESTART" "$continuous/RESTART"
 run_model "$continuous"
 
 "/home/mpan/local/miniforge3/bin/conda" run --no-capture-output --name hydro-ops \
-    python - "$continued" "$continuous" <<'PY'
+    python - "$spinup" "$continued" "$continuous" <<'PY'
 import sys
 from pathlib import Path
 
 import numpy as np
 import xarray as xr
+from netCDF4 import Dataset
 
-continued = Path(sys.argv[1])
-continuous = Path(sys.argv[2])
+spinup = Path(sys.argv[1])
+continued = Path(sys.argv[2])
+continuous = Path(sys.argv[3])
 for product in ("CHRTOUT", "LDASOUT"):
     files = sorted(continued.glob(f"*.{product}_DOMAIN1.daily"))
     assert [path.name[:8] for path in files] == ["20110827"], files
@@ -119,9 +122,32 @@ hydro_count = compare_restart(
     continuous / "HYDRO_RST.2011-08-28_00:00_DOMAIN1",
 )
 assert land_count and hydro_count
+
+checked_files = 0
+for root in (spinup, continued, continuous):
+    for path in root.iterdir():
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            with Dataset(path) as dataset:
+                variables = [variable for variable in dataset.variables.values() if variable.ndim]
+                if not variables:
+                    continue
+                uncompressed = [
+                    variable.name
+                    for variable in variables
+                    if not variable.filters().get("zlib")
+                    or variable.filters().get("complevel") != 2
+                ]
+                assert not uncompressed, f"{path}: uncompressed variables {uncompressed}"
+                checked_files += 1
+        except OSError:
+            continue
+assert checked_files
 print("incomplete_initial_day_suppressed=true")
 print("complete_post_restart_days=1")
 print(f"continuous_restart_variables_compared={land_count + hydro_count}")
+print(f"compressed_netcdf_files_checked={checked_files}")
 PY
 
 echo "test_root=$test_root"

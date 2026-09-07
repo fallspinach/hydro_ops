@@ -17,10 +17,10 @@ boundaries immediately before testing because scheduled downloads will advance t
 Use separate roots so no test can be mistaken for operational output:
 
 ```text
-outputs/forcing/validation/baseline/
-outputs/forcing/validation/nrt/
-outputs/forcing/validation/retro/
-outputs/forcing/validation/scenarios/<scenario>/
+forcing/outputs/validation/baseline/
+forcing/outputs/validation/nrt/
+forcing/outputs/validation/retro/
+forcing/outputs/validation/scenarios/<scenario>/
 ```
 
 Record the Git commit, configuration, source inventory, remapping-weight fingerprints, SLURM job

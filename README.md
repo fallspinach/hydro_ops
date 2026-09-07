@@ -7,6 +7,8 @@ NWM 3.1 is documented in [WRF-Hydro 5.4.0 build on AWARE](docs/wrf_hydro_build.m
 The authoritative public NWM 3.1.6 CONUS static-input inventory, downloader, compatibility
 boundaries, and initialization strategy are documented in
 [NWM 3.1 operational inputs](docs/nwm_operational_inputs.md).
+The canonical split between the forcing and NWM production systems is documented in
+[Forcing and NWM project layout](docs/project_layout.md).
 
 ## Python environment
 
@@ -38,10 +40,9 @@ src/       installable Python package and command-line interface
 config/    portable TOML defaults and ignored local overrides
 slurm/     batch entry points
 tests/     unit tests
-data/      forcing/<provider>/<product>, observations, static, model_inputs
-outputs/   model_runs and analysis products
-work/      temporary/intermediate files
-logs/      job logs
+forcing/   external inputs, forcing static data, CONUS streams, work, logs, and status
+nwm/       model domains/parameters, inputs, runs, outputs, restarts, logs, and status
+data/, outputs/, work, logs  transitional compatibility paths for historical manifests
 ```
 
 Downloaded data, outputs, work files, logs, credentials, and `config/local.toml` are ignored by Git. Empty directory markers only are tracked.
@@ -101,7 +102,7 @@ python bin/report_forcing_status.py --start 2026-08-01 --end 2026-09-01
 
 # Produce a dashboard input file; use --no-slurm when running off-cluster.
 python bin/report_forcing_status.py --format json \
-  --output outputs/status/forcing-status.json
+  --output forcing/status/forcing-status.json
 ```
 
 The default scan reads filenames and filesystem metadata only; it deliberately does not open all
@@ -119,9 +120,9 @@ into memory:
 
 ```bash
 python bin/extract_nwm_grid.py \
-  data/static/nwm/forcing_grid/20250101.LDASIN_DOMAIN1 \
-  --target data/static/nwm/forcing_grid/nwm_conus_1km_grid.nc \
-  --scrip data/static/nwm/forcing_grid/nwm_conus_1km_scrip.nc
+  nwm/static/forcing_grid/20250101.LDASIN_DOMAIN1 \
+  --target nwm/static/forcing_grid/nwm_conus_1km_grid.nc \
+  --scrip nwm/static/forcing_grid/nwm_conus_1km_scrip.nc
 ```
 
 The CF target file contains the 2-D cell centers, four cell corners, grid indices, and
@@ -140,9 +141,9 @@ compressed GeoTIFF covering the entire NWM geographic envelope with:
 python bin/download_gmted2010.py
 ```
 
-The archive is retained below `data/static/dem/gmted2010/mean_30arcsec/raw`, and the
+The archive is retained below `forcing/static/dem/gmted2010/mean_30arcsec/raw`, and the
 derived file is
-`data/static/dem/gmted2010/mean_30arcsec/gmted2010_mean_30arcsec_nwm_extent.tif`.
+`forcing/static/dem/gmted2010/mean_30arcsec/gmted2010_mean_30arcsec_nwm_extent.tif`.
 Reruns validate and reuse the archive and extracted grid; pass `--force` to deliberately
 rebuild the derived GeoTIFF.
 
@@ -151,9 +152,9 @@ downscaling physics:
 
 ```bash
 python bin/create_nwm_elevation.py \
-  data/static/dem/gmted2010/mean_30arcsec/gmted2010_mean_30arcsec_nwm_extent.tif \
-  data/static/nwm/forcing_grid/nwm_conus_1km_grid.nc \
-  data/static/nwm/forcing_grid/nwm_conus_1km_elevation.nc
+  forcing/static/dem/gmted2010/mean_30arcsec/gmted2010_mean_30arcsec_nwm_extent.tif \
+  nwm/static/forcing_grid/nwm_conus_1km_grid.nc \
+  nwm/static/forcing_grid/nwm_conus_1km_elevation.nc
 ```
 
 The sampler operates in row chunks, applies the NWM active-domain mask, and records the DEM,
@@ -162,9 +163,9 @@ mean elevation as the source terrain for NLDAS temperature, pressure, humidity, 
 adjustment rather than inferring a new terrain surface:
 
 ```bash
-mkdir -p data/static/nldas2
+mkdir -p forcing/static/nldas2
 curl --fail --location \
-  --output data/static/nldas2/NLDAS_elevation.nc4 \
+  --output forcing/static/nldas2/NLDAS_elevation.nc4 \
   https://ldas.gsfc.nasa.gov/sites/default/files/ldas/nldas/NLDAS_elevation.nc4
 ```
 
@@ -176,7 +177,7 @@ python bin/download_hrrr_static.py --cycle 2022100100
 ```
 
 This writes the native `HGT:surface:anl` record, its NetCDF conversion, and the complete
-`wgrib2 -grid` description below `data/static/hrrr/conus`. The grid description also preserves
+`wgrib2 -grid` description below `forcing/static/hrrr/conus`. The grid description also preserves
 the GRIB wind-orientation flag; the current CONUS grid reports grid-relative winds, which must
 be rotated to earth-relative `U2D` and `V2D` before publication.
 
@@ -210,8 +211,8 @@ Generate reusable direct source-to-NWM weights from one structurally validated e
 python bin/generate_forcing_weights.py \
   --source path/to/NLDAS_FORA0125_H.nc \
   --product nldas2 --variable Tair \
-  --target-grid data/static/nwm/forcing_grid/nwm_conus_1km_grid.nc \
-  --output data/static/remapping/nwm_conus_1km/nldas2_bilinear.nc \
+  --target-grid nwm/static/forcing_grid/nwm_conus_1km_grid.nc \
+  --output forcing/static/remapping/nwm_conus_1km/nldas2_bilinear.nc \
   --method bilinear
 ```
 
@@ -226,8 +227,8 @@ identity:
 python bin/generate_forcing_weights.py \
   --source path/to/hrrr_forcing.grib2.nc --product hrrr --variable APCP_surface \
   --cdo-source path/to/hrrr_forcing.grib2 --cdo-variable tp \
-  --target-grid data/static/nwm/forcing_grid/nwm_conus_1km_grid.nc \
-  --output data/static/remapping/nwm_conus_1km/hrrr_conservative.nc \
+  --target-grid nwm/static/forcing_grid/nwm_conus_1km_grid.nc \
+  --output forcing/static/remapping/nwm_conus_1km/hrrr_conservative.nc \
   --method conservative
 ```
 
@@ -238,12 +239,12 @@ downward-longwave bundle:
 python bin/process_thermodynamic_hour.py \
   --source path/to/NLDAS_FORA0125_H.nc \
   --product nldas2 \
-  --source-elevation data/static/nldas2/NLDAS_elevation.nc4 \
+  --source-elevation forcing/static/nldas2/NLDAS_elevation.nc4 \
   --source-elevation-variable NLDAS_elev \
-  --target-grid data/static/nwm/forcing_grid/nwm_conus_1km_grid.nc \
-  --target-elevation data/static/nwm/forcing_grid/nwm_conus_1km_elevation.nc \
-  --weights data/static/remapping/nwm_conus_1km/nldas2_bilinear.nc \
-  --output outputs/forcing/thermodynamic/2022080100.nc
+  --target-grid nwm/static/forcing_grid/nwm_conus_1km_grid.nc \
+  --target-elevation nwm/static/forcing_grid/nwm_conus_1km_elevation.nc \
+  --weights forcing/static/remapping/nwm_conus_1km/nldas2_bilinear.nc \
+  --output forcing/outputs/thermodynamic/2022080100.nc
 ```
 
 Use `--product hrrr` with the HRRR bilinear weights and static `HGT_surface` terrain. The
@@ -261,9 +262,9 @@ Process shortwave and the paired wind components for the same selected source ho
 python bin/process_radiation_wind_hour.py \
   --source path/to/hrrr_forcing.grib2.nc \
   --product hrrr \
-  --target-grid data/static/nwm/forcing_grid/nwm_conus_1km_grid.nc \
-  --weights data/static/remapping/nwm_conus_1km/hrrr_bilinear.nc \
-  --output outputs/forcing/radiation_wind/2022080100.nc
+  --target-grid nwm/static/forcing_grid/nwm_conus_1km_grid.nc \
+  --weights forcing/static/remapping/nwm_conus_1km/hrrr_bilinear.nc \
+  --output forcing/outputs/radiation_wind/2022080100.nc
 ```
 
 For HRRR, `UGRD` and `VGRD` are rotated from its native Lambert grid to earth-relative eastward
@@ -277,15 +278,15 @@ Produce a seven-field hourly LDASIN file with automatic whole-hour source select
 
 ```bash
 python bin/produce_forcing_hour.py 2022121212 \
-  --nldas2-root data/forcing/nasa/nldas2/fora0125_hourly_v2.0 \
-  --hrrr-root data/forcing/noaa/hrrr/conus/3km/hourly \
-  --target-grid data/static/nwm/forcing_grid/nwm_conus_1km_grid.nc \
-  --target-elevation data/static/nwm/forcing_grid/nwm_conus_1km_elevation.nc \
-  --nldas2-elevation data/static/nldas2/NLDAS_elevation.nc4 \
-  --hrrr-elevation data/static/hrrr/conus/hrrr_static.2022100100.grib2.nc \
-  --nldas2-weights data/static/remapping/nwm_conus_1km/nldas2_bilinear.nc \
-  --hrrr-weights data/static/remapping/nwm_conus_1km/hrrr_bilinear.nc \
-  --output outputs/forcing/2022121212.LDASIN_DOMAIN1
+  --nldas2-root forcing/inputs/nasa/nldas2/fora0125_hourly_v2.0 \
+  --hrrr-root forcing/inputs/noaa/hrrr/conus/3km/hourly \
+  --target-grid nwm/static/forcing_grid/nwm_conus_1km_grid.nc \
+  --target-elevation nwm/static/forcing_grid/nwm_conus_1km_elevation.nc \
+  --nldas2-elevation forcing/static/nldas2/NLDAS_elevation.nc4 \
+  --hrrr-elevation forcing/static/hrrr/conus/hrrr_static.2022100100.grib2.nc \
+  --nldas2-weights forcing/static/remapping/nwm_conus_1km/nldas2_bilinear.nc \
+  --hrrr-weights forcing/static/remapping/nwm_conus_1km/hrrr_bilinear.nc \
+  --output forcing/outputs/2022121212.LDASIN_DOMAIN1
 ```
 
 The selector prefers a structurally valid, exact-time NLDAS-2 file and falls back to HRRR as a
@@ -300,16 +301,16 @@ constraint:
 
 ```bash
 python bin/create_prism_elevation.py \
-  data/static/dem/gmted2010/mean_30arcsec/gmted2010_mean_30arcsec_nwm_extent.tif \
+  forcing/static/dem/gmted2010/mean_30arcsec/gmted2010_mean_30arcsec_nwm_extent.tif \
   path/to/prism_tmin_example.nc \
-  data/static/prism/prism_an_4km_elevation.nc
+  forcing/static/prism/prism_an_4km_elevation.nc
 
 python bin/prepare_prism_temperature.py \
   --minimum path/to/prism_tmin_day.nc --maximum path/to/prism_tmax_day.nc \
-  --source-elevation data/static/prism/prism_an_4km_elevation.nc \
-  --target-grid data/static/nwm/forcing_grid/nwm_conus_1km_grid.nc \
-  --target-elevation data/static/nwm/forcing_grid/nwm_conus_1km_elevation.nc \
-  --weights data/static/remapping/nwm_conus_1km/prism_bilinear.nc \
+  --source-elevation forcing/static/prism/prism_an_4km_elevation.nc \
+  --target-grid nwm/static/forcing_grid/nwm_conus_1km_grid.nc \
+  --target-elevation nwm/static/forcing_grid/nwm_conus_1km_elevation.nc \
+  --weights forcing/static/remapping/nwm_conus_1km/prism_bilinear.nc \
   --output work/prism_temperature_day.nc
 ```
 
@@ -339,15 +340,15 @@ python bin/process_precipitation_hour.py \
   --candidate stage4_archive=path/to/stage4.nc \
   --candidate nldas2=path/to/nldas.nc \
   --candidate hrrr=path/to/hrrr.nc \
-  --weights mrms_pass2=data/static/remapping/nwm_conus_1km/mrms_conservative.nc \
-  --weights mrms_pass1=data/static/remapping/nwm_conus_1km/mrms_conservative.nc \
-  --weights stage4_archive=data/static/remapping/nwm_conus_1km/stage4_conservative.nc \
-  --weights nldas2=data/static/remapping/nwm_conus_1km/nldas2_conservative.nc \
-  --weights hrrr=data/static/remapping/nwm_conus_1km/hrrr_conservative.nc \
+  --weights mrms_pass2=forcing/static/remapping/nwm_conus_1km/mrms_conservative.nc \
+  --weights mrms_pass1=forcing/static/remapping/nwm_conus_1km/mrms_conservative.nc \
+  --weights stage4_archive=forcing/static/remapping/nwm_conus_1km/stage4_conservative.nc \
+  --weights nldas2=forcing/static/remapping/nwm_conus_1km/nldas2_conservative.nc \
+  --weights hrrr=forcing/static/remapping/nwm_conus_1km/hrrr_conservative.nc \
   --quality path/to/mrms_quality.nc \
-  --quality-weights data/static/remapping/nwm_conus_1km/mrms_quality_bilinear.nc \
-  --target-grid data/static/nwm/forcing_grid/nwm_conus_1km_grid.nc \
-  --remap-grid data/static/nwm/forcing_grid/nwm_conus_1km_scrip.nc \
+  --quality-weights forcing/static/remapping/nwm_conus_1km/mrms_quality_bilinear.nc \
+  --target-grid nwm/static/forcing_grid/nwm_conus_1km_grid.nc \
+  --remap-grid nwm/static/forcing_grid/nwm_conus_1km_scrip.nc \
   --output work/precipitation.nc
 ```
 
@@ -371,7 +372,7 @@ python bin/produce_forcing_range.py --start 2026072410 --end 2026072412
 
 Each hour discovers available revisions, runs the seven-field path, composites precipitation,
 and atomically publishes a complete LDASIN plus JSON manifest below
-`outputs/forcing/nwm/baseline`.
+`forcing/outputs/conus/baseline`.
 Existing structurally complete hours are skipped. `--continue-on-error` reports unavailable
 hours without stopping an entire range.
 
@@ -425,9 +426,9 @@ stable PRISM release for retrospective final output, and label mutable runs `ear
 ```bash
 python bin/reconcile_prism_precipitation_day.py path/to/24/hourly/files/* \
   --prism path/to/prism_ppt_day.nc \
-  --weights data/static/remapping/nwm_conus_1km/nwm_to_prism_conservative_masked.nc \
-  --revision stable --output-directory outputs/forcing/nwm_prism_final/day \
-  --diagnostics outputs/forcing/diagnostics/prism_day.nc
+  --weights forcing/static/remapping/nwm_conus_1km/nwm_to_prism_conservative_masked.nc \
+  --revision stable --output-directory forcing/outputs/conus_prism_final/day \
+  --diagnostics forcing/outputs/diagnostics/prism_day.nc
 ```
 
 The conservative operator is intentionally the reverse of the existing PRISM-to-NWM weight
@@ -435,10 +436,10 @@ file; do not reuse `prism_conservative.nc`. Generate and fingerprint it with:
 
 ```bash
 python bin/generate_prism_reconciliation_weights.py \
-  --nwm-grid data/static/nwm/forcing_grid/nwm_conus_1km_grid.nc \
-  --nwm-scrip data/static/remapping/nwm_conus_1km/nwm_conus_1km_scrip.nc \
+  --nwm-grid nwm/static/forcing_grid/nwm_conus_1km_grid.nc \
+  --nwm-scrip forcing/static/remapping/nwm_conus_1km/nwm_conus_1km_scrip.nc \
   --prism-grid path/to/prism_ppt_day.nc \
-  --output data/static/remapping/nwm_conus_1km/nwm_to_prism_conservative_masked.nc
+  --output forcing/static/remapping/nwm_conus_1km/nwm_to_prism_conservative_masked.nc
 ```
 
 The solver preserves native hourly
@@ -451,8 +452,8 @@ daily LDASIN collection with:
 ```bash
 python bin/produce_prism_constrained_daily.py \
   --day 2026-07-15 \
-  --complete-root outputs/forcing/nwm/baseline \
-  --output-root outputs/forcing/nwm/nrt \
+  --complete-root forcing/outputs/conus/baseline \
+  --output-root forcing/outputs/conus/nrt \
   --stream nrt \
   --revision provisional
 ```
@@ -468,8 +469,8 @@ Create a verified calendar-day baseline collection before removing its hourly in
 ```bash
 python bin/archive_nwm_forcing_day.py \
   --day 2026-07-15 \
-  --hourly-root outputs/forcing/nwm/baseline \
-  --output-root outputs/forcing/nwm/baseline \
+  --hourly-root forcing/outputs/conus/baseline \
+  --output-root forcing/outputs/conus/baseline \
   --delete-hourly
 ```
 
@@ -494,8 +495,8 @@ a crossed NRT/retro destination fails before opening an output.
 
 Current-month days are labeled `early`, older mutable days `provisional`, and days at least 183
 days old `stable`. The `nrt` stream retains early/provisional forcing below
-`outputs/forcing/nwm/nrt`; the `retro` stream independently publishes stable forcing below
-`outputs/forcing/nwm/retro`. Stable publication therefore never replaces the retained NRT
+`forcing/outputs/conus/nrt`; the `retro` stream independently publishes stable forcing below
+`forcing/outputs/conus/retro`. Stable publication therefore never replaces the retained NRT
 record. Source modification times and the revision stored in each output are used to decide
 whether it must be rebuilt. The canonical recurring entries are in `cron/hydro_ops.crontab`.
 
@@ -613,11 +614,11 @@ hydro-ops download stage4 --stream realtime --date 2026-08-20
 hydro-ops submit stage4 --stream archive --start 2026-07-01 --end 2026-07-31
 ```
 
-Data are stored below `data/forcing/noaa/stage4/{realtime,archive}`. With no
+Data are stored below `forcing/inputs/noaa/stage4/{realtime,archive}`. With no
 date arguments, realtime refreshes today plus the preceding seven days, while archive
 fetches the day eight UTC days ago. These values and both server URLs are configurable
 under `[stage4]` or with `HYDRO_OPS_STAGE4_*` environment variables.
-Converted files are stored below `data/forcing/noaa/stage4/netcdf/{realtime,archive}`.
+Converted files are stored below `forcing/inputs/noaa/stage4/netcdf/{realtime,archive}`.
 Existing local files can be converted without contacting NOAA:
 
 ```bash
@@ -642,7 +643,7 @@ hydro-ops submit hrrr --start 2026-08-01 --end 2026-08-07
 Each command processes all 24 hours of every requested UTC date. With no date argument,
 the configured `lag_days` selects the previous UTC day. Eight-record subset GRIB2 files
 and converted NetCDF files are stored below
-`data/forcing/noaa/hrrr/conus/3km/hourly/YYYY/MM/DD`. The source URL, lag, concurrency,
+`forcing/inputs/noaa/hrrr/conus/3km/hourly/YYYY/MM/DD`. The source URL, lag, concurrency,
 timeouts, retries, destination, and `wgrib2` executable are configurable under `[hrrr]`
 or through `HYDRO_OPS_HRRR_*` environment variables.
 
@@ -662,7 +663,7 @@ hydro-ops submit prism --start 2026-07-01 --end 2026-08-31
 ```
 
 NetCDF files are stored under
-`data/forcing/oregon_state/prism/an/4km/daily/{ppt,tmean,tmax,tmin}/YYYY/MM`. PRISM ZIP packages and
+`forcing/inputs/oregon_state/prism/an/4km/daily/{ppt,tmean,tmax,tmin}/YYYY/MM`. PRISM ZIP packages and
 extracted intermediate files use `/scratch/$SLURM_JOB_USER/job_$SLURM_JOB_ID/prism`
 inside SLURM jobs and fall back to the project `work/prism` directory otherwise. Stage-IV
 archive conversion uses the same scratch policy. The server request delay, lag, refresh
@@ -687,7 +688,7 @@ hydro-ops submit mrms --start 2026-08-01 --end 2026-08-07
 ```
 
 Timestamped gzip-compressed GRIB2 sources are retained under
-`data/forcing/noaa/mrms/conus/1km/hourly/raw/{pass1,pass2,quality}` and native-grid
+`forcing/inputs/noaa/mrms/conus/1km/hourly/raw/{pass1,pass2,quality}` and native-grid
 NetCDF files under the corresponding `netcdf` tree. With no date arguments, the command
 refreshes the configured lookback through the most recent hour expected to have Pass 1;
 a later run fills in Pass 2. Source, lookback, products, concurrency, retries, timeouts,

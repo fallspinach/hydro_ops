@@ -21,7 +21,7 @@ def parse_cycle(value: str) -> datetime:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cycle", required=True, type=parse_cycle)
-    parser.add_argument("--output-dir", type=Path, default=Path("data/static/hrrr/conus"))
+    parser.add_argument("--output-dir", type=Path, default=Path("forcing/static/hrrr/conus"))
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     outputs = download_hrrr_static(

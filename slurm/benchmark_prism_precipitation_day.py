@@ -33,13 +33,13 @@ def main() -> int:
         "--prism",
         str(
             project
-            / f"data/forcing/oregon_state/prism/an/4km/daily/ppt/{day:%Y/%m}"
+            / f"forcing/inputs/oregon_state/prism/an/4km/daily/ppt/{day:%Y/%m}"
             / f"prism_ppt_us_25m_{stamp}.nc"
         ),
         "--weights",
         str(
             project
-            / "data/static/remapping/nwm_conus_1km/nwm_to_prism_conservative_masked.nc"
+            / "forcing/static/remapping/nwm_conus_1km/nwm_to_prism_conservative_masked.nc"
         ),
         "--diagnostics",
         str(day_root / f"prism_precipitation_diagnostics.{stamp}.nc"),

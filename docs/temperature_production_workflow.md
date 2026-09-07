@@ -373,7 +373,7 @@ hydro-ops submit prism  --start YYYY-MM-DD --end YYYY-MM-DD
 As of 2026-08-22:
 
 - The authoritative NASA NLDAS mean-elevation grid, one native HRRR terrain/grid definition,
-  and the GMTED2010-derived NWM target elevation are available below `data/static`.
+  and the GMTED2010-derived NWM target elevation are available below `forcing/static`.
 - Normalized NLDAS-2, HRRR, and PRISM readers validate exact fields and units and attach stable
   source-grid fingerprints.
 - NLDAS-2, HRRR, and PRISM bilinear weights to the NWM grid have been generated with manifests.

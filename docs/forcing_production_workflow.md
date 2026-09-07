@@ -696,13 +696,13 @@ NLDAS-2 begins at 13 UTC on 1979-01-01. January 1979 cannot form a complete cale
 constraint and is intentionally excluded; unconstrained daily baseline production begins on
 1979-01-02, and monthly constrained production covers 1979-02 through 1980-12.
 
-For example, after unconstrained daily forcing exists below `outputs/forcing/nwm/baseline`, run:
+For example, after unconstrained daily forcing exists below `forcing/outputs/conus/baseline`, run:
 
 ```bash
 python bin/produce_prism_constrained_month.py \
   --year 1979 --month 2 \
-  --complete-root outputs/forcing/nwm/baseline \
-  --output-root outputs/forcing/nwm/retro \
+  --complete-root forcing/outputs/conus/baseline \
+  --output-root forcing/outputs/conus/retro \
   --maximum-ratio 100
 ```
 
@@ -814,9 +814,9 @@ from replacing the near-real-time record.
 The canonical on-disk hierarchy is:
 
 ```text
-outputs/forcing/nwm/baseline/        unconstrained reusable baseline
-outputs/forcing/nwm/nrt/             retained early/provisional operational record
-outputs/forcing/nwm/retro/           stable daily or historical-month retrospective record
+forcing/outputs/conus/baseline/        unconstrained reusable baseline
+forcing/outputs/conus/nrt/             retained early/provisional operational record
+forcing/outputs/conus/retro/           stable daily or historical-month retrospective record
 ```
 
 Both published streams use `YYYY/MM/YYYYMMDD.LDASIN_DOMAIN1` below their root. Stream schedulers
@@ -1009,7 +1009,7 @@ implemented and tested:
 - Revision-aware rolling PRISM scheduling with completeness, staleness, revision-transition,
   active-job, and bounded-concurrency guards plus a version-controlled cron entry.
 
-Generated static and remapping artifacts live below `data/static` and are intentionally ignored
+Generated static and remapping artifacts live below `forcing/static` and are intentionally ignored
 by Git; the scripts, tests, and documentation required to recreate them are tracked.
 
 The following production components remain incomplete and must not be inferred from the

@@ -43,18 +43,21 @@ class OperationalLayout:
 
     @classmethod
     def project_defaults(cls, root: Path = Path(".")) -> OperationalLayout:
-        data = root / "data"
-        remap = data / "static/remapping/nwm_conus_1km"
+        forcing = root / "forcing"
+        inputs = forcing / "inputs"
+        static = forcing / "static"
+        remap = static / "remapping/nwm_conus_1km"
+        nwm_grid = root / "nwm/static/forcing_grid"
         return cls(
-            data / "forcing/nasa/nldas2/fora0125_hourly_v2.0",
-            data / "forcing/noaa/hrrr/conus/3km/hourly",
-            data / "forcing/noaa/mrms/conus/1km/hourly/netcdf",
-            data / "forcing/noaa/stage4/netcdf",
-            data / "static/nwm/forcing_grid/nwm_conus_1km_grid.nc",
-            data / "static/nwm/forcing_grid/nwm_conus_1km_scrip.nc",
-            data / "static/nwm/forcing_grid/nwm_conus_1km_elevation.nc",
-            data / "static/nldas2/NLDAS_elevation.nc4",
-            data / "static/hrrr/conus/hrrr_static.2022100100.grib2.nc",
+            inputs / "nasa/nldas2/fora0125_hourly_v2.0",
+            inputs / "noaa/hrrr/conus/3km/hourly",
+            inputs / "noaa/mrms/conus/1km/hourly/netcdf",
+            inputs / "noaa/stage4/netcdf",
+            nwm_grid / "nwm_conus_1km_grid.nc",
+            nwm_grid / "nwm_conus_1km_scrip.nc",
+            nwm_grid / "nwm_conus_1km_elevation.nc",
+            static / "nldas2/NLDAS_elevation.nc4",
+            static / "hrrr/conus/hrrr_static.2022100100.grib2.nc",
             remap / "nldas2_bilinear.nc",
             remap / "hrrr_bilinear.nc",
             remap / "nldas2_conservative.nc",

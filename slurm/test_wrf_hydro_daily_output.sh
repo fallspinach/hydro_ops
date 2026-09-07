@@ -14,7 +14,7 @@ build_dir=${WRF_HYDRO_BUILD_DIR:-"$source_dir/build-intel"}
 example_dir="$build_dir/Run/example_case"
 scratch_root=${SLURM_TMPDIR:-"/scratch/${SLURM_JOB_USER}/job_${SLURM_JOB_ID}"}
 test_root="$scratch_root/wrf_hydro_daily_output"
-failure_log="$project_root/logs/wrf_hydro/native-daily-output-${SLURM_JOB_ID:-local}.model.log"
+failure_log="$project_root/nwm/logs/wrf_hydro/native-daily-output-${SLURM_JOB_ID:-local}.model.log"
 preserve_failure_log() {
     status=$?
     if [[ $status -ne 0 && -f "$test_root/model.log" ]]; then
@@ -32,6 +32,7 @@ module load intel-mpi/2021.14.2.9 netcdf-fortran/4.5.3
 mkdir -p "$test_root"
 cp "$example_dir/NWM/namelist.hrldas" "$test_root/namelist.hrldas"
 cp "$example_dir/NWM/hydro.namelist" "$test_root/hydro.namelist"
+sed -i 's/^io_form_outputs = .*/io_form_outputs = 3/' "$test_root/hydro.namelist"
 sed -i 's/^KDAY = 7/! KDAY = 7/; s/^! KHOUR = 8/KHOUR = 24/' "$test_root/namelist.hrldas"
 sed -i '/^[[:space:]]*t0OutputFlag[[:space:]]*=/a\CHRTOUT_HOURLY = 1\nCHRTOUT_DAILY = 1\nLDASOUT_HOURLY = 1\nLDASOUT_DAILY = 1' "$test_root/hydro.namelist"
 ln -s "$example_dir/NWM/DOMAIN" "$test_root/DOMAIN"

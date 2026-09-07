@@ -8,19 +8,15 @@ FORCING_STREAMS = ("nrt", "retro")
 
 
 def forcing_stream_root(project_root: Path, stream: str) -> Path:
-    """Return the canonical root, falling back during the active layout migration."""
+    """Return the canonical domain and stream root."""
     if stream not in FORCING_STREAMS:
         raise ValueError(f"Unknown forcing stream: {stream}")
-    canonical = project_root / "outputs/forcing/nwm" / stream
-    legacy = project_root / "outputs/forcing/nwm_prism" / stream
-    return canonical if canonical.exists() or not legacy.exists() else legacy
+    return project_root / "forcing/outputs/conus" / stream
 
 
 def baseline_root(project_root: Path) -> Path:
-    """Return the canonical baseline root, with a safe pre-migration fallback."""
-    legacy = project_root / "outputs/forcing/nwm"
-    canonical = legacy / "baseline"
-    return canonical if canonical.exists() else legacy
+    """Return the canonical reusable baseline root."""
+    return project_root / "forcing/outputs/conus/baseline"
 
 
 def validate_stream_output_root(root: Path, stream: str) -> Path:

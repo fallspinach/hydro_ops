@@ -19,7 +19,9 @@ def main() -> int:
     parser.add_argument("--end", required=True, help="YYYYMMDDHH")
     parser.add_argument("--project-root", type=Path, default=Path("."))
     parser.add_argument("--output-root", type=Path)
-    parser.add_argument("--work-directory", type=Path, default=Path("work/forcing_production"))
+    parser.add_argument(
+        "--work-directory", type=Path, default=Path("forcing/work/forcing_production")
+    )
     parser.add_argument("--final-temperature", type=Path)
     parser.add_argument("--mrms-quality-threshold", type=float, default=0.5)
     parser.add_argument("--hybrid-temperature-weight", type=float, default=0.0)

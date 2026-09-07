@@ -125,11 +125,11 @@ def remove_empty_parents(paths: list[Path], stop_roots: set[Path]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=Path("data/forcing/noaa"))
+    parser.add_argument("--root", type=Path, default=Path("forcing/inputs/noaa"))
     parser.add_argument("--retention-days", type=int, default=31)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument(
-        "--report", type=Path, default=Path("outputs/inventory/forcing_cleanup.json")
+        "--report", type=Path, default=Path("forcing/status/inventory/forcing_cleanup.json")
     )
     args = parser.parse_args()
     if args.retention_days < 0:

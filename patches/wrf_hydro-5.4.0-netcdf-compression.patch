@@ -1,0 +1,286 @@
+diff --git a/src/Land_models/NoahMP/IO_code/module_hrldas_netcdf_io.F b/src/Land_models/NoahMP/IO_code/module_hrldas_netcdf_io.F
+index 69be3ae..dc04425 100644
+--- a/src/Land_models/NoahMP/IO_code/module_hrldas_netcdf_io.F
++++ b/src/Land_models/NoahMP/IO_code/module_hrldas_netcdf_io.F
+@@ -1,6 +1,6 @@
+ module module_hrldas_netcdf_io
+   use module_date_utilities
+-  use netcdf
++  use netcdf, netcdf_enddef => nf90_enddef
+   use module_hydro_stop, only:HYDRO_stop
+   use, intrinsic :: ieee_arithmetic, only: IEEE_Value, IEEE_QUIET_NAN
+
+@@ -15,6 +15,8 @@ module module_hrldas_netcdf_io
+ #endif
+   implicit none
+
++  private :: nf90_enddef
++
+   logical, parameter :: FATAL = .TRUE.
+   logical, parameter :: NOT_FATAL = .FALSE.
+
+@@ -96,6 +98,22 @@ module module_hrldas_netcdf_io
+
+ contains
+
++  integer function nf90_enddef(ncid)
++    implicit none
++    integer, intent(in) :: ncid
++    integer :: iret, nvars, varid, ndims
++
++    iret = nf90_inquire(ncid, nVariables=nvars)
++    if (iret == NF90_NOERR) then
++       do varid = 1, nvars
++          iret = nf90_inquire_variable(ncid, varid, ndims=ndims)
++          if (iret == NF90_NOERR .and. ndims > 0) &
++               iret = nf90_def_var_deflate(ncid, varid, 1, 1, 2)
++       enddo
++    endif
++    nf90_enddef = netcdf_enddef(ncid)
++  end function nf90_enddef
++
+ !-------------------------------------------------------------------------------------------------------
+ !-------------------------------------------------------------------------------------------------------
+
+@@ -2822,5 +2840,8 @@ subroutine make_var_att_2d(ncid, dimid_ix, dimid_jx, dimid_times, itype, varname, vardesc, varunits)
+     iret = nf90_def_var(ncid,  varname,   itype, (/dimid_ix,dimid_jx,dimid_times/), varid)
+     call error_handler(iret, "In module_hrldas_netcdf_io.F make_var_att_2d() - "// &
+          "Failure defining variable "//trim(varname))
++    iret = nf90_def_var_deflate(ncid, varid, 1, 1, 2)
++    call error_handler(iret, "In module_hrldas_netcdf_io.F make_var_att_2d() - "// &
++         "Failure enabling compression for "//trim(varname))
+
+     iret = nf90_put_att(ncid, varid, "MemoryOrder", "XY ")
+@@ -2859,5 +2880,8 @@ subroutine make_var_att_3d(ncid, dimid_ix, dimid_jx, dimid_times, itype, dimid_layers, varname, vardesc, varunits)
+     iret = nf90_def_var(ncid,  varname, itype, (/dimid_ix,dimid_layers,dimid_jx,dimid_times/), varid)
+     call error_handler(iret, "In module_hrldas_netcdf_io.F make_var_att_3d() - "// &
+          "Failure defining variable "//trim(varname))
++    iret = nf90_def_var_deflate(ncid, varid, 1, 1, 2)
++    call error_handler(iret, "In module_hrldas_netcdf_io.F make_var_att_3d() - "// &
++         "Failure enabling compression for "//trim(varname))
+
+     iret = nf90_put_att(ncid, varid, "MemoryOrder", "XZY")
+diff --git a/src/Routing/module_HYDRO_io.F90 b/src/Routing/module_HYDRO_io.F90
+index 06083c7..6ddfe81 100644
+--- a/src/Routing/module_HYDRO_io.F90
++++ b/src/Routing/module_HYDRO_io.F90
+@@ -11,13 +11,15 @@ module module_HYDRO_io
+    use module_RT_data, only: rt_domain
+    use module_gw_gw2d_data, only: gw2d
+    use module_reservoir_utilities, only: read_reservoir_type
+-   use netcdf
++   use netcdf, netcdf_enddef => nf90_enddef
+    use module_hydro_stop, only:HYDRO_stop
+    use hashtable
+    use iso_fortran_env, only: int64, compiler_version
+
+    implicit none
+
++   private :: nf90_enddef
++
+    interface w_rst_crt_reach
+       module procedure w_rst_crt_reach_real
+       module procedure w_rst_crt_reach_real8
+@@ -33,6 +35,22 @@ module module_HYDRO_io
+
+      contains
+
++        integer function nf90_enddef(ncid)
++          implicit none
++          integer, intent(in) :: ncid
++          integer :: iret, nvars, varid, ndims
++
++          iret = nf90_inquire(ncid, nVariables=nvars)
++          if (iret == NF90_NOERR) then
++             do varid = 1, nvars
++                iret = nf90_inquire_variable(ncid, varid, ndims=ndims)
++                if (iret == NF90_NOERR .and. ndims > 0) &
++                     iret = nf90_def_var_deflate(ncid, varid, 1, 1, 2)
++             enddo
++          endif
++          nf90_enddef = netcdf_enddef(ncid)
++        end function nf90_enddef
++
+         integer function get2d_real(var_name,out_buff,ix,jx,fileName, fatalErr)
+           implicit none
+           integer :: ivar, iret,varid,ncid,ix,jx
+diff --git a/src/Routing/module_NWM_io.F90 b/src/Routing/module_NWM_io.F90
+--- a/src/Routing/module_NWM_io.F90
++++ b/src/Routing/module_NWM_io.F90
+@@ -7,11 +7,14 @@ module module_NWM_io
+
+ use module_version, only: get_code_version, get_nwm_version
+ use orchestrator_base
++use netcdf, netcdf_enddef => nf90_enddef
+ use module_hydro_stop, only: HYDRO_stop
+ use iso_fortran_env, only: int64, compiler_version
+
+ implicit none
+
++private :: hydro_enddef
++
+ ! Module-wide variables
+ integer, private :: ftnNoahMPHourly ! Separate handles are required because the
+ integer, private :: ftnNoahMPDaily  ! hourly and daily files are built together.
+@@ -26,4 +29,20 @@ integer, save :: ldasDailyCount = 0
+ contains
+
++integer function hydro_enddef(ncid)
++   implicit none
++   integer, intent(in) :: ncid
++   integer :: iret, nvars, varid, ndims
++
++   iret = nf90_inquire(ncid, nVariables=nvars)
++   if (iret == NF90_NOERR) then
++      do varid = 1, nvars
++         iret = nf90_inquire_variable(ncid, varid, ndims=ndims)
++         if (iret == NF90_NOERR .and. ndims > 0) &
++              iret = nf90_def_var_deflate(ncid, varid, 1, 1, 2)
++      enddo
++   endif
++   hydro_enddef = netcdf_enddef(ncid)
++end function hydro_enddef
++
+ !==============================================================================
+ ! Program Name: output_chrt_NWM
+@@ -927,5 +962,5 @@ subroutine output_chrt_NWM_record(domainId, dailyMode)
+
+       ! Remove NetCDF file from definition mode.
+-      iret = nf90_enddef(ftn)
++      iret = hydro_enddef(ftn)
+       call nwmCheck(diagFlag,iret,'ERROR: Unable to take CHRTOUT file out of definition mode')
+
+@@ -1591,5 +1626,5 @@ subroutine output_NoahMP_NWM_record(outDir,iGrid,output_timestep,itime,startdate,date,ixPar,jxPar,zNum,varReal,vegTyp,varInd,dailyMode)
+
+          ! Remove NetCDF file from definition mode.
+-         iret = nf90_enddef(ftnNoahMP)
++         iret = hydro_enddef(ftnNoahMP)
+          call nwmCheck(diagFlag,iret,'ERROR: Unable to take LDASOUT file out of definition mode')
+
+@@ -2149,5 +2184,5 @@ subroutine output_rt_NWM(domainId,iGrid)
+
+       ! Remove NetCDF file from definition mode.
+-      iret = nf90_enddef(ftn)
++      iret = hydro_enddef(ftn)
+       call nwmCheck(diagFlag,iret,'ERROR: Unable to take RT_DOMAIN file out of definition mode')
+
+@@ -2907,5 +2942,5 @@ subroutine output_lakes_NWM(domainId,iGrid)
+
+       ! Remove NetCDF file from definition mode.
+-      iret = nf90_enddef(ftn)
++      iret = hydro_enddef(ftn)
+       call nwmCheck(diagFlag,iret,'ERROR: Unable to take LAKETOUT file out of definition mode')
+
+@@ -3441,5 +3476,5 @@ subroutine output_chrtout_grd_NWM(domainId,iGrid)
+
+       ! Remove NetCDF file from definition mode.
+-      iret = nf90_enddef(ftn)
++      iret = hydro_enddef(ftn)
+       call nwmCheck(diagFlag,iret,'ERROR: Unable to take RT_DOMAIN file out of definition mode')
+
+@@ -3846,5 +3881,5 @@ subroutine output_lsmOut_NWM(domainId)
+
+       ! Remove NetCDF file from definition mode.
+-      iret = nf90_enddef(ftn)
++      iret = hydro_enddef(ftn)
+       call nwmCheck(diagFlag,iret,'ERROR: Unable to take LSMOUT file out of definition mode')
+
+@@ -4869,5 +4904,5 @@ subroutine output_chanObs_NWM(domainId)
+
+          ! Remove NetCDF file from definition mode.
+-         iret = nf90_enddef(ftn)
++         iret = hydro_enddef(ftn)
+          call nwmCheck(diagFlag,iret,'ERROR: Unable to take CHANOBS file out of definition mode')
+
+@@ -5416,5 +5451,5 @@ subroutine output_gw_NWM(domainId,iGrid)
+
+       ! Remove NetCDF file from definition mode.
+-      iret = nf90_enddef(ftn)
++      iret = hydro_enddef(ftn)
+       call nwmCheck(diagFlag,iret,'ERROR: Unable to take GWOUT file out of definition mode')
+
+diff --git a/src/hydro_namelists.json b/src/hydro_namelists.json
+--- a/src/hydro_namelists.json
++++ b/src/hydro_namelists.json
+@@ -23,7 +23,7 @@
+             "hydrotbl_f": "NULL_specified_in_domain.json",
+             "igrid": 1,
+             "io_config_outputs": 0,
+-            "io_form_outputs": 4,
++            "io_form_outputs": 3,
+             "lake_option": 1,
+             "land_spatial_meta_flnm": "NULL_specified_in_domain.json",
+             "ldasout_hourly": 1,
+diff --git a/src/nudging/module_nudging_io.F90 b/src/nudging/module_nudging_io.F90
+index 80f8780..4d8fa52 100644
+--- a/src/nudging/module_nudging_io.F90
++++ b/src/nudging/module_nudging_io.F90
+@@ -1,12 +1,14 @@
+ module module_nudging_io
+
+-use netcdf
++use netcdf, netcdf_enddef => nf90_enddef
+ use config_base, only: nlst
+ use module_RT_data,  only: rt_domain
+ use module_hydro_stop, only: HYDRO_stop
+
+ implicit none
+
++private :: nf90_enddef
++
+ !========================
+ ! lastObs structure, corresponding to nudgingLastObs.YYYY-mm-dd_HH:MM:ss.nc
+ ! How observations from the past are carried forward.
+@@ -31,6 +33,22 @@ integer, parameter :: did = 1
+
+ contains
+
++integer function nf90_enddef(ncid)
++   implicit none
++   integer, intent(in) :: ncid
++   integer :: iret, nvars, varid, ndims
++
++   iret = nf90_inquire(ncid, nVariables=nvars)
++   if (iret == NF90_NOERR) then
++      do varid = 1, nvars
++         iret = nf90_inquire_variable(ncid, varid, ndims=ndims)
++         if (iret == NF90_NOERR .and. ndims > 0) &
++              iret = nf90_def_var_deflate(ncid, varid, 1, 1, 2)
++      enddo
++   endif
++   nf90_enddef = netcdf_enddef(ncid)
++end function nf90_enddef
++
+ !===================================================================================================
+ ! Program Name:
+ !   subroutine find_timeslice_file
+@@ -563,7 +581,7 @@ nFeature = size(g_nudge)
+ outFileName='nudgingLastObs.' // modelTime // '.nc'
+
+ ! create file
+-iret = nf90_create(outFileName, nf90_clobber, ncid)
++iret = nf90_create(outFileName, OR(nf90_clobber, nf90_netcdf4), ncid)
+
+ ! create dimensions
+ ! station id has length of the number of gages
+@@ -712,7 +730,7 @@ nFeature = size(g_nudge)
+ outFileName='nudgingLastObs.' // modelTime // '.nc'
+
+ ! create file
+-iret = nf90_create(outFileName, nf90_clobber, ncid)
++iret = nf90_create(outFileName, OR(nf90_clobber, nf90_netcdf4), ncid)
+
+ ! create dimensions
+ ! station id has length of the number of gages
+diff --git a/src/template/HYDRO/hydro.namelist b/src/template/HYDRO/hydro.namelist
+--- a/src/template/HYDRO/hydro.namelist
++++ b/src/template/HYDRO/hydro.namelist
+@@ -64,7 +64,7 @@ order_to_write = 1
+ ! Flag to turn on/off new I/O routines: 0 = deprecated output routines (use when running with Noah LSM),
+ ! 1 = with scale/offset/compression, ! 2 = with scale/offset/NO compression,
+ ! 3 = compression only, 4 = no scale/offset/compression (default)
+-io_form_outputs = 4
++io_form_outputs = 3
+
+ ! Realtime run configuration option:
+ ! 0=all (default), 1=analysis, 2=short-range, 3=medium-range, 4=long-range, 5=retrospective,

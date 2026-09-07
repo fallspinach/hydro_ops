@@ -23,11 +23,11 @@ def main() -> int:
     year, month = add_months(2002, 1, int(os.environ["SLURM_ARRAY_TASK_ID"]))
     project = Path(os.environ["HYDRO_OPS_PROJECT_ROOT"])
     archive = (
-        project / "data/forcing/noaa/stage4/archive" / f"{year:04d}"
+        project / "forcing/inputs/noaa/stage4/archive" / f"{year:04d}"
         / f"stage4.{year:04d}{month:02d}.tar"
     )
     template = (
-        project / "data/forcing/noaa/stage4/netcdf/archive/2020/07"
+        project / "forcing/inputs/noaa/stage4/netcdf/archive/2020/07"
         / "stage4_archive_01h.20200701.nc"
     )
     if not archive.is_file():

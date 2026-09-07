@@ -13,10 +13,10 @@ from hydro_ops.nwm_domain import inventory, write_inventory
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--input", type=Path, default=Path("data/static/nwm/operational/nwm.v3.1.6")
+        "--input", type=Path, default=Path("nwm/static/operational/nwm.v3.1.6")
     )
     parser.add_argument(
-        "--output", type=Path, default=Path("outputs/inventory/nwm.v3.1.6-domain.json")
+        "--output", type=Path, default=Path("nwm/status/inventory/nwm.v3.1.6-domain.json")
     )
     args = parser.parse_args()
     report = inventory(args.input)

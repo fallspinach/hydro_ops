@@ -152,7 +152,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--complete-root", type=Path)
     parser.add_argument(
-        "--output-root", type=Path, help="defaults to outputs/forcing/nwm/STREAM"
+        "--output-root", type=Path, help="defaults to forcing/outputs/conus/STREAM"
     )
     parser.add_argument("--stream", required=True, choices=("nrt", "retro"))
     parser.add_argument("--lookback-days", type=int)

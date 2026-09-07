@@ -9,6 +9,19 @@ logs/**
 work/**
 !work/.gitkeep
 
+# Canonical forcing and NWM subprojects (retain directory markers only)
+forcing/**
+!forcing/**/
+!forcing/**/.gitkeep
+nwm/**
+!nwm/**/
+!nwm/**/.gitkeep
+
+# Runtime compatibility links and default SLURM output
+/work
+/logs
+/slurm-*.out
+
 # Reproducibly downloaded third-party model source and local builds
 external/
 

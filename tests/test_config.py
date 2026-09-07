@@ -13,5 +13,5 @@ def test_settings_resolve_relative_paths(monkeypatch):
     monkeypatch.setenv("HYDRO_OPS_PROJECT_ROOT", str(root))
     settings = load_settings()
     assert settings.project_root == root
-    assert settings.data_root == root / "data"
+    assert settings.data_root == root / "forcing"
     assert settings.nldas_data_dir.is_absolute()

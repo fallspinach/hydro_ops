@@ -69,6 +69,12 @@ terminal endpoint, and rewind according to the NRT lookback policy. A non-midnig
 restart may continue the simulation, but a daily product spanning that restart is publishable only
 after comparison with an uninterrupted reference or after accumulator state is made restart-aware.
 
+Only paired 00 UTC Noah-MP and routing checkpoints are retained operationally. Store them below
+`restart/YYYY/MM/`; their date-bearing filenames distinguish every day within the month. Configure
+production restart output at 24-hour intervals from a 00 UTC initialization. Any non-00 checkpoint
+needed for diagnosis or exceptional recovery remains temporary job-scratch data and is not copied
+to permanent storage.
+
 Generate a canonical plan before staging a run:
 
 ```bash
@@ -79,7 +85,7 @@ Create a forcing summary matching one model interval:
 
 ```bash
 python bin/reduce_forcing_model_day.py \
-  --input-root outputs/forcing/nwm/nrt \
+  --input-root forcing/outputs/conus/nrt \
   --day 2026-09-01 \
-  --output outputs/forcing/nwm_summary/nrt/2026/09/20260901.forcing_summary.nc
+  --output forcing/outputs/conus_summary/nrt/2026/09/20260901.forcing_summary.nc
 ```

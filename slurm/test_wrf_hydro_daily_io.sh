@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-project_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+project_root=${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 source_dir=${WRF_HYDRO_SOURCE_DIR:-"$project_root/external/wrf_hydro_nwm_public-v5.4.0"}
 build_dir=${WRF_HYDRO_BUILD_DIR:-"$source_dir/build-intel"}
 example_dir="$build_dir/Run/example_case"
@@ -26,16 +26,17 @@ if [[ ! -x "$ncrcat" ]]; then
     exit 2
 fi
 
-mkdir -p "$test_root/hourly" "$test_root/daily" "$test_root/daily_forcing"
+mkdir -p "$test_root/hourly" "$test_root/daily" "$test_root/daily_forcing/2011/08"
 
 for day in 20110826 20110827; do
     "$ncrcat" -O "$example_dir/FORCING/${day}"??.LDASIN_DOMAIN1 \
-        "$test_root/daily_forcing/${day}.LDASIN_DOMAIN1"
+        "$test_root/daily_forcing/2011/08/${day}.LDASIN_DOMAIN1"
 done
 
 for mode in hourly daily; do
     cp "$example_dir/NWM/namelist.hrldas" "$test_root/$mode/namelist.hrldas"
     cp "$example_dir/NWM/hydro.namelist" "$test_root/$mode/hydro.namelist"
+    sed -i 's/^io_form_outputs = .*/io_form_outputs = 3/' "$test_root/$mode/hydro.namelist"
     sed -i 's/^KDAY = 7/! KDAY = 7/; s/^! KHOUR = 8/KHOUR = 24/' \
         "$test_root/$mode/namelist.hrldas"
     ln -s "$example_dir/NWM/DOMAIN" "$test_root/$mode/DOMAIN"

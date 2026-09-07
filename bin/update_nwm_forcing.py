@@ -13,6 +13,7 @@ import sys
 from datetime import UTC, date, datetime, timedelta
 
 from hydro_ops.config import load_settings
+from hydro_ops.forcing.streams import forcing_stream_root
 
 
 def cycle_window(cycle: str, today: date) -> tuple[str, date, date, int, int]:
@@ -162,7 +163,7 @@ def main() -> int:
         if stream == "retro":
             missing_targets: list[date] = []
             day = start
-            retro_root = settings.project_root / "outputs/forcing/nwm/retro"
+            retro_root = forcing_stream_root(settings.project_root, "retro")
             while day <= end:
                 output = retro_root / day.strftime("%Y/%m") / f"{day:%Y%m%d}.LDASIN_DOMAIN1"
                 if not output.is_file():

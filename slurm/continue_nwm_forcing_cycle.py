@@ -63,7 +63,7 @@ def main() -> int:
                     f"HYDRO_OPS_PYTHON={python},HYDRO_OPS_CLEANUP_START={state['start']},"
                     f"HYDRO_OPS_CLEANUP_END={state['end']}"
                 ),
-                f"--output={project}/logs/nwm-retro-cleanup-%j.out",
+                f"--output={project}/forcing/logs/nwm-retro-cleanup-%j.out",
                 str(project / "slurm/cleanup_stable_baseline.py"),
             ],
             cwd=project,

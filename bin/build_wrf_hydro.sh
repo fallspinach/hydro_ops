@@ -42,13 +42,25 @@ else
 fi
 
 daily_output_patch="$project_root/patches/wrf_hydro-5.4.0-native-daily-output.patch"
-if git -C "$source_dir" apply --reverse --check "$daily_output_patch" 2>/dev/null; then
+if grep -q 'CHRTOUT_DAILY' "$source_dir/src/OrchestratorLayer/config.F90" && \
+        grep -q 'output_chrt_NWM_record' "$source_dir/src/Routing/module_NWM_io.F90"; then
     echo "WRF-Hydro native daily output patch is already applied"
 elif git -C "$source_dir" apply --check "$daily_output_patch"; then
     git -C "$source_dir" apply "$daily_output_patch"
     echo "Applied WRF-Hydro native daily output patch"
 else
     echo "Native daily output patch does not apply cleanly to $source_dir" >&2
+    exit 2
+fi
+
+compression_patch="$project_root/patches/wrf_hydro-5.4.0-netcdf-compression.patch"
+if git -C "$source_dir" apply --reverse --check "$compression_patch" 2>/dev/null; then
+    echo "WRF-Hydro NetCDF compression patch is already applied"
+elif git -C "$source_dir" apply --check "$compression_patch"; then
+    git -C "$source_dir" apply "$compression_patch"
+    echo "Applied WRF-Hydro NetCDF compression patch"
+else
+    echo "NetCDF compression patch does not apply cleanly to $source_dir" >&2
     exit 2
 fi
 

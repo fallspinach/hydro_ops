@@ -82,7 +82,7 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("data/static/nwm/operational/nwm.v3.1.6"),
+        default=Path("nwm/static/operational/nwm.v3.1.6"),
     )
     parser.add_argument("--status-only", action="store_true")
     args = parser.parse_args()

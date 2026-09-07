@@ -12,7 +12,7 @@ https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/nwm.v3.1.6/parm/
 
 `bin/download_nwm_operational_inputs.py` retrieves the CONUS full-routing static files,
 operational tables, analysis namelists, reservoir indexes, RouteLink hydrofabric, and diversion
-definition into `data/static/nwm/operational/nwm.v3.1.6`. Downloads resume through `.part`
+definition into `nwm/static/operational/nwm.v3.1.6`. Downloads resume through `.part`
 files, require exact server content lengths, and produce a SHA-256 manifest.
 
 The selected files total approximately 34 GB. Long-range alternatives are deliberately omitted
@@ -71,7 +71,7 @@ NWM versions, parameter revisions, timestamps, domains, or MPI decompositions.
 ## Remaining acceptance checks
 
 Run `bin/inventory_nwm_operational_inputs.py` after download. It writes a machine-readable report
-to `outputs/inventory/nwm.v3.1.6-domain.json`, opens every one of the 15 NetCDF domain files,
+to `nwm/status/inventory/nwm.v3.1.6-domain.json`, opens every one of the 15 NetCDF domain files,
 records its format, dimensions, and variables, checks the minimum WRF-Hydro 5.4 NWM structural
 interface, and compares the four 1-km land-grid dimensions. Missing downloads remain `pending`;
 schema or NetCDF failures are `incompatible`.
