@@ -15,6 +15,7 @@ from netCDF4 import Dataset, date2num
 
 from hydro_ops.forcing.precipitation import (
     SOURCE_IDS,
+    PrecipitationQC,
     composite_precipitation,
     open_precipitation_candidate,
 )
@@ -107,7 +108,7 @@ def write_precipitation_output(
             )
             source.setncatts(
                 {"flag_values": np.array([0, *SOURCE_IDS.values()], dtype=np.uint8),
-                 "flag_meanings": "missing mrms_pass2 mrms_pass1 stage4_archive stage4_realtime nldas2 hrrr"}
+                 "flag_meanings": "missing mrms_pass2 mrms_pass1 stage4_archive stage4_realtime nldas2 hrrr stage4_06h_constrained"}
             )
             source[0] = np.where(active, composite.source_id, 0)
             confidence = output.createVariable(
@@ -119,6 +120,16 @@ def write_precipitation_output(
             qc = output.createVariable(
                 "precip_qc_flags", "u2", ("time", "y", "x"),
                 zlib=True, complevel=2, shuffle=True, chunksizes=chunks3,
+            )
+            qc.setncatts(
+                {
+                    "flag_masks": np.array(
+                        [int(flag) for flag in PrecipitationQC], dtype=np.uint16
+                    ),
+                    "flag_meanings": " ".join(
+                        flag.name.lower() for flag in PrecipitationQC
+                    ),
+                }
             )
             qc[0] = np.where(active, composite.qc_flags, np.uint16(8))
         partial.replace(output_path)

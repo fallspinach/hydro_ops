@@ -84,10 +84,44 @@ Source-specific rules include:
 
 ### Stage-IV
 
-- Use only CONUS one-hour accumulations for hourly compositing.
-- Never mix 1-, 6-, and 24-hour records as interchangeable observations.
+- Before 2020-07-01, use CONUS one-hour accumulations for hourly compositing.
+- Beginning 2020-07-01, reject the one-hour Stage-IV field inside the official CNRFC
+  responsibility area. The repeating stripes observed there are not treated as physical
+  hourly precipitation.
+- Inside CNRFC in that period, treat each CONUS six-hour Stage-IV accumulation as an amount
+  constraint, not as an hourly observation. Distribute its total among the six `(T-1h,T]`
+  intervals in proportion to the ordinary quality-aware hourly composite (normally MRMS Pass
+  2, then Pass 1, then NLDAS-2/HRRR fallbacks). If the timing composite is dry under a positive
+  six-hour total, use an equal six-way split and set an explicit timing-fallback QC flag.
+- Outside CNRFC, retain the ordinary one-hour Stage-IV selection rules. If a six-hour record is
+  absent or invalid, retain the ordinary non-Stage-IV hierarchy inside CNRFC as well.
+- Never mix 1-, 6-, and 24-hour records as interchangeable observations: the six-hour product
+  is solely a block-total constraint and the 24-hour product is not used here.
 - Treat the stable archive and mutable realtime feed as distinct revisions.
 - Record the contributing accumulation file and stream.
+
+The CNRFC mask is rasterized at grid-cell centers from the official NWS RFC boundary dataset.
+Its source URL, feature attributes, retrieval checksum, and rasterization rule are embedded in
+the static mask. The policy is spatially limited to that mask; no other RFC is altered.
+
+The reproducible static inputs are generated with `bin/generate_stage4_rfc_mask.py`. The
+operational NWM-grid mask is
+`forcing/static/noaa/stage4/nwm_conus_1km_cnrfcmask.nc`; a native Stage-IV-grid mask is retained
+for source diagnostics. Retained daily Stage-IV archives are converted into four-timestep daily
+constraint collections with `bin/backfill_stage4_six_hour.py`; its converter handles both the
+GRIB1/gzip and GRIB2 archive forms and deletes the four temporary single-record NetCDF files only
+after validating the daily collection.
+
+Some retained upstream archives omit one or more six-hour records, and isolated records may be
+undecodable. The backfill reports `missing_days`, `incomplete_days`, and `failed_days` separately
+without aborting the rest of a month. Production applies the constraint only to complete,
+successfully decoded blocks; an absent constraint therefore triggers the documented ordinary
+MRMS/NLDAS-2/HRRR hierarchy rather than a fabricated six-hour amount.
+
+Because Stage-IV accumulations are interval-end labeled, a calendar-day production pass reads
+the five preceding hourly fields and next-day 00 UTC in addition to its 00–23 UTC publication
+hours. This halo permits exact reconciliation of all six-hour blocks without changing the
+calendar-day file layout. Only the central 24 hours are published.
 
 ### NLDAS-2
 
@@ -242,6 +276,7 @@ The production output contains at least:
 
 - `RAINRATE(time, y, x)` in `kg m-2 s-1`.
 - `precip_source_id(time, y, x)`.
+- `precip_timing_source_id(time, y, x)` where a multi-hour amount constraint was applied.
 - `precip_confidence(time, y, x)` or a documented quality class.
 - `precip_qc_flags(time, y, x)` as a bit mask.
 - `prism_correction_factor(day, y, x)` or an equivalent diagnostic.
@@ -259,8 +294,12 @@ Suggested source identifiers are stable integers with a lookup attribute:
 4 Stage-IV realtime
 5 NLDAS-2
 6 HRRR
-7 synthetic temporal fallback
+7 Stage-IV six-hour constrained
 ```
+
+For source ID 7, `precip_timing_source_id` records the hourly composite source whose proportions
+were retained. The QC mask separately distinguishes a successful six-hour constraint, rejected
+CNRFC hourly Stage-IV, and the equal-hour timing fallback.
 
 If multiple native cells contribute to one NWM cell, `precip_source_id` records the selected
 product, not individual native-cell lineage. Detailed file lineage remains in global metadata or
@@ -379,6 +418,23 @@ The operational data contract, leakage controls, scorecard, calibration command,
 and parameter-promotion procedure are specified in
 [Precipitation calibration and validation](precipitation_calibration_validation.md).
 
+### CNRFC Stage-IV policy validation
+
+The CNRFC correction was tested first on dry 2020-07-01 conditions and then on the substantially
+wetter 2026-04-12 event. The wet-day production test used 12 CPUs, completed in 17 minutes 15
+seconds, and peaked at approximately 7 GB memory. Within the 613,843-cell NWM-grid CNRFC mask,
+mean calendar-day precipitation was 9.39 mm, the grid-cell maximum was 112.78 mm, and 426,092
+cells received more than 1 mm.
+
+All 14,732,232 published CNRFC cell-hours carried the six-hour-constrained source identifier.
+MRMS Pass 2 supplied 8,279,231 hourly timing values and NLDAS-2 supplied the remaining 6,453,001.
+The explicitly flagged equal-hour fallback affected 584,557 cell-hours (about 4.0 percent), where
+Stage-IV reported positive six-hour precipitation but the timing composite was dry. For the three
+complete six-hour blocks wholly contained in the retained 00--23 UTC files, maximum conservation
+errors were between `3.3e-6` and `7.2e-6` mm, with no cell exceeding `1e-4` mm. Manual map
+comparison against the former hourly-Stage-IV result confirmed that the unphysical CNRFC stripes
+were removed and that the corrected field was substantially more coherent.
+
 ## References
 
 - Cosgrove, B. A., et al. (2003), *Real-time and retrospective forcing in the North
@@ -390,6 +446,10 @@ and parameter-promotion procedure are specified in
   <https://inside.nssl.noaa.gov/mrms/past-code-updates/>.
 - NOAA/NWS National Water Prediction Service product guide (Stage-IV description),
   <https://www.weather.gov/media/owp/operations/nwps_user_guide.pdf>.
+- NOAA/NWS RFC boundary shapefile, <https://www.weather.gov/gis/RFCBounds>.
+- NCEP Climatology-Calibrated Precipitation Analysis v4 implementation notes (western RFC
+  six-hour QPE disaggregation),
+  <https://www.emc.ncep.noaa.gov/gmb/yzhu/imp/i201801/CCPAv4_upgrade_2017.pdf>.
 - PRISM dataset documentation,
   <https://www.prism.oregonstate.edu/documents/PRISM_datasets.pdf>.
 - PRISM time-series revision policy, <https://prism.oregonstate.edu/data/>.

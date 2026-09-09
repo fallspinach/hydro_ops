@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
 
@@ -14,7 +14,13 @@ import numpy as np
 import xarray as xr
 from netCDF4 import Dataset
 
-from hydro_ops.forcing.precipitation import composite_precipitation, open_precipitation_candidate
+from hydro_ops.forcing.precipitation import (
+    CNRFC_STAGE4_POLICY_START,
+    SOURCE_IDS,
+    PrecipitationQC,
+    composite_precipitation,
+    open_precipitation_candidate,
+)
 from hydro_ops.forcing.precipitation_hour import write_precipitation_output
 from hydro_ops.forcing.thermodynamic_hour import build_remap_command
 from hydro_ops.forcing.weights import validate_weight_manifest
@@ -142,6 +148,92 @@ def _target_field(dataset: xr.Dataset, variable: str, valid_time: datetime) -> n
     return values
 
 
+def _load_cnrf_mask(path: Path, shape: tuple[int, int]) -> np.ndarray:
+    with Dataset(path) as dataset:
+        mask = np.asarray(dataset["cnrfc_mask"][:], dtype=bool)
+    if mask.shape != shape:
+        raise ValueError(f"CNRFC mask {path} has shape {mask.shape}, expected {shape}")
+    return mask
+
+
+def reconcile_stage4_six_hour_block(
+    output_paths: list[Path],
+    constraint_depth: np.ndarray,
+    cnrfc_mask: np.ndarray,
+    *,
+    constraint_path: Path,
+    constraint_end: datetime,
+) -> None:
+    """Conserve a Stage-IV six-hour total while retaining the best hourly timing pattern."""
+    if len(output_paths) != 6:
+        raise ValueError("A Stage-IV reconciliation block must contain exactly six hours")
+    constraint = np.asarray(constraint_depth, dtype=np.float32)
+    mask = np.asarray(cnrfc_mask, dtype=bool)
+    if constraint.shape != mask.shape:
+        raise ValueError("Stage-IV constraint and CNRFC mask shapes differ")
+    hourly: list[np.ndarray] = []
+    timing_ids: list[np.ndarray] = []
+    for path in output_paths:
+        with Dataset(path) as dataset:
+            rate = np.ma.filled(dataset["RAINRATE"][0], np.nan).astype(np.float32)
+            hourly.append(np.maximum(rate * np.float32(3600.0), 0.0))
+            timing_ids.append(np.asarray(dataset["precip_source_id"][0], dtype=np.uint8))
+    proxy = np.stack(hourly)
+    proxy_sum = np.nansum(proxy, axis=0, dtype=np.float32)
+    constrained = mask & np.isfinite(constraint) & (constraint >= 0)
+    fallback = constrained & (constraint > 0) & (~np.isfinite(proxy_sum) | (proxy_sum <= 0))
+    wet = constrained & ~fallback & (proxy_sum > 0)
+    reconciled = proxy.copy()
+    reconciled[:, wet] *= (constraint[wet] / proxy_sum[wet])[None, :]
+    reconciled[:, fallback] = constraint[fallback][None, :] / np.float32(6.0)
+    reconciled[:, constrained & (constraint == 0)] = 0.0
+    # Put float32 rounding residual into the final interval so the stored hourly depths
+    # reproduce the trusted six-hour total as closely as the output precision permits.
+    residual = constraint - np.sum(reconciled[:5], axis=0, dtype=np.float32)
+    reconciled[5, constrained] = np.maximum(residual[constrained], 0.0)
+    for index, path in enumerate(output_paths):
+        with Dataset(path, "a") as dataset:
+            chunks = dataset["precip_source_id"].chunking()
+            chunksizes = None if chunks == "contiguous" else tuple(chunks)
+            timing = dataset.variables.get("precip_timing_source_id")
+            if timing is None:
+                timing = dataset.createVariable(
+                    "precip_timing_source_id", "u1", ("time", "y", "x"),
+                    zlib=True, complevel=2, shuffle=True, chunksizes=chunksizes,
+                )
+                timing.setncatts(
+                    {
+                        "long_name": "source supplying the within-block hourly timing pattern",
+                        "flag_values": np.array([0, *SOURCE_IDS.values()], dtype=np.uint8),
+                        "flag_meanings": "missing mrms_pass2 mrms_pass1 stage4_archive stage4_realtime nldas2 hrrr stage4_06h_constrained",
+                    }
+                )
+                timing[:] = 0
+            timing_values = np.asarray(timing[0], dtype=np.uint8)
+            timing_values[constrained] = timing_ids[index][constrained]
+            timing[0] = timing_values
+            rate = np.ma.filled(dataset["RAINRATE"][0], np.nan).astype(np.float32)
+            rate[constrained] = reconciled[index, constrained] / np.float32(3600.0)
+            dataset["RAINRATE"][0] = rate
+            source = np.asarray(dataset["precip_source_id"][0])
+            source[constrained] = SOURCE_IDS["stage4_06h_constrained"]
+            dataset["precip_source_id"][0] = source
+            confidence = np.asarray(dataset["precip_confidence"][0])
+            confidence[constrained] = 0.85
+            dataset["precip_confidence"][0] = confidence
+            qc = np.asarray(dataset["precip_qc_flags"][0], dtype=np.uint16)
+            qc[constrained] |= np.uint16(PrecipitationQC.CNRFC_SIX_HOUR_CONSTRAINED)
+            qc[fallback] |= np.uint16(PrecipitationQC.CNRFC_TIMING_FALLBACK)
+            dataset["precip_qc_flags"][0] = qc
+            dataset.setncatts(
+                {
+                    "cnrfc_stage4_policy": "hourly Stage-IV rejected; six-hour total imposed using composite hourly proportions",
+                    "stage4_six_hour_constraint_file": str(constraint_path),
+                    "stage4_six_hour_constraint_end": constraint_end.astimezone(UTC).isoformat(),
+                }
+            )
+
+
 def process_precipitation_day(
     valid_times: list[datetime],
     candidate_hours: list[dict[str, Path]],
@@ -158,6 +250,10 @@ def process_precipitation_day(
     validate_weights: bool = True,
     remap_workers: int = 1,
     force: bool = False,
+    stage4_six_hour_paths: dict[datetime, Path] | None = None,
+    stage4_six_hour_weights: Path | None = None,
+    cnrfc_mask_path: Path | None = None,
+    cnrfc_policy_start: datetime = CNRFC_STAGE4_POLICY_START,
 ) -> list[Path]:
     """Apply each static remapping operator once to a contiguous multi-hour batch."""
     if not valid_times or len(valid_times) != len(candidate_hours):
@@ -187,9 +283,14 @@ def process_precipitation_day(
     if not force and any(path.exists() for path in outputs):
         raise FileExistsError("One or more batch precipitation outputs already exist; use --force")
 
+    constraints = stage4_six_hour_paths or {}
+    if constraints and (stage4_six_hour_weights is None or cnrfc_mask_path is None):
+        raise ValueError("Stage-IV six-hour constraints require weights and a CNRFC mask")
     items = sorted(products)
     if has_quality:
         items.append("mrms_quality")
+    if constraints:
+        items.append("stage4_06h")
     with tempfile.TemporaryDirectory(prefix="hydro_ops_precipitation_day_", dir=work_root) as temp:
         temp = Path(temp)
         remapped_paths: dict[str, Path] = {}
@@ -212,6 +313,8 @@ def process_precipitation_day(
                     for valid, path in zip(valid_times, quality_hours, strict=True)
                     if path is not None
                 ]
+            elif product == "stage4_06h":
+                available = sorted(constraints.items())
             else:
                 available = [
                     (valid, hour[product])
@@ -220,12 +323,21 @@ def process_precipitation_day(
                 ]
             product_times = [valid for valid, _ in available]
             paths = [path for _, path in available]
-            weights = quality_weights if product == "mrms_quality" else weight_paths[product]
+            weights = (
+                quality_weights if product == "mrms_quality"
+                else stage4_six_hour_weights if product == "stage4_06h"
+                else weight_paths[product]
+            )
             assert weights is not None
             if validate_weights:
+                validation_product = (
+                    "stage4_archive" if product == "stage4_06h" and "/archive/" in str(paths[0])
+                    else "stage4_realtime" if product == "stage4_06h"
+                    else product
+                )
                 validate_weight_manifest(
                     paths[0],
-                    product,
+                    validation_product,
                     target_grid_path,
                     weights,
                     expected_method="bilinear" if product == "mrms_quality" else "conservative",
@@ -260,6 +372,13 @@ def process_precipitation_day(
             for product, path in remapped_paths.items()
         }
         try:
+            cnrfc_mask: np.ndarray | None = None
+            if cnrfc_mask_path is not None and valid_times[-1] >= cnrfc_policy_start:
+                first_product = next(iter(candidate_hours[0]))
+                sample_shape = _target_field(
+                    datasets[first_product], variables[first_product], valid_times[0]
+                ).shape
+                cnrfc_mask = _load_cnrf_mask(cnrfc_mask_path, sample_shape)
             for index, valid_time in enumerate(valid_times):
                 remapped_values = {
                     product: _target_field(datasets[product], variables[product], valid_time)
@@ -274,6 +393,11 @@ def process_precipitation_day(
                     remapped_values,
                     mrms_quality=quality,
                     mrms_quality_threshold=mrms_quality_threshold,
+                    stage4_exclusion=(
+                        cnrfc_mask
+                        if cnrfc_mask is not None and valid_time >= cnrfc_policy_start
+                        else None
+                    ),
                 )
                 write_precipitation_output(
                     composite,
@@ -287,6 +411,20 @@ def process_precipitation_day(
                 )
                 with Dataset(outputs[index], "a") as output:
                     output.setncattr("precipitation_remap_mode", "daily_batch")
+            if constraints:
+                assert cnrfc_mask is not None
+                index_by_time = {valid: index for index, valid in enumerate(valid_times)}
+                for end, constraint_path in sorted(constraints.items()):
+                    block = [end - timedelta(hours=offset) for offset in range(5, -1, -1)]
+                    if end < cnrfc_policy_start or any(hour not in index_by_time for hour in block):
+                        continue
+                    reconcile_stage4_six_hour_block(
+                        [outputs[index_by_time[hour]] for hour in block],
+                        _target_field(datasets["stage4_06h"], "precipitation_depth", end),
+                        cnrfc_mask,
+                        constraint_path=constraint_path,
+                        constraint_end=end,
+                    )
         finally:
             for dataset in datasets.values():
                 dataset.close()

@@ -17,6 +17,7 @@ from hydro_ops.work import temporary_work_root
 LOG = logging.getLogger(__name__)
 CONUS_GRIB2 = re.compile(r"^st4_conus\.[0-9]{10}\.(?:01h|06h|24h)\.grb2$")
 CONUS_HOURLY_GRIB2 = re.compile(r"^st4_conus\.[0-9]{10}\.01h\.grb2$")
+CONUS_RECONCILIATION_GRIB2 = re.compile(r"^st4_conus\.[0-9]{10}\.(?:01h|06h)\.grb2$")
 NETCDF_MAGICS = (b"CDF\x01", b"CDF\x02", b"\x89HDF\r\n\x1a\n")
 
 
@@ -89,7 +90,9 @@ class Stage4Converter:
             raise
         return "converted"
 
-    def convert_archive(self, archive: Path) -> tuple[int, int]:
+    def convert_archive(
+        self, archive: Path, *, include_hourly: bool = True
+    ) -> tuple[int, int]:
         selected = converted = 0
         work_root = temporary_work_root(self.settings, "stage4")
         with (
@@ -102,7 +105,11 @@ class Stage4Converter:
                 if (
                     member.name != name
                     or not member.isfile()
-                    or not CONUS_HOURLY_GRIB2.fullmatch(name)
+                    or not (
+                        CONUS_RECONCILIATION_GRIB2.fullmatch(name)
+                        if include_hourly
+                        else name.endswith(".06h.grb2") and CONUS_GRIB2.fullmatch(name)
+                    )
                 ):
                     continue
                 selected += 1

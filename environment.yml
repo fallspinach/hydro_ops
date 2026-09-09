@@ -27,6 +27,7 @@ dependencies:
   - nco
   - esmf
   - gdal
+  - shapely
 
   # Development and testing
   - pip

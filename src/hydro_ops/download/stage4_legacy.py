@@ -20,6 +20,7 @@ from hydro_ops.forcing.daily_archive import create_daily_archive, verified_daily
 from hydro_ops.work import temporary_work_root
 
 LEGACY_HOURLY = re.compile(r"^ST4\.(\d{10})\.01h\.(Z|gz)$")
+LEGACY_SIX_HOURLY = re.compile(r"^ST4\.(\d{10})\.06h\.(Z|gz)$")
 FILL_VALUE = np.float32(9.999e20)
 TIME_UNITS = "seconds since 1970-01-01 00:00:00.0 0:00"
 
@@ -41,14 +42,15 @@ def _decompress(name: str, payload: bytes, work: Path) -> bytes:
         compressed.unlink(missing_ok=True)
 
 
-def _decode_wgrib(wgrib: str, payload: bytes, work: Path) -> np.ndarray:
+def _decode_wgrib(wgrib: str, payload: bytes, work: Path, accumulation_hours: int = 1) -> np.ndarray:
     source = work / "legacy.grb"
     binary = work / "legacy.bin"
     source.write_bytes(payload)
     inventory = subprocess.run(
         [wgrib, str(source), "-s"], check=True, capture_output=True, text=True
     ).stdout
-    if "APCP" not in inventory or "0-1hr acc" not in inventory:
+    expected = f"0-{accumulation_hours}hr acc"
+    if "APCP" not in inventory or expected not in inventory:
         raise RuntimeError(f"Unexpected legacy Stage-IV field: {inventory.strip()}")
     subprocess.run(
         [wgrib, str(source), "-d", "1", "-bin", "-nh", "-o", str(binary)],
@@ -67,8 +69,9 @@ def write_legacy_hourly_netcdf(
     values: np.ndarray,
     valid_time: datetime,
     source_name: str,
+    accumulation_hours: int = 1,
 ) -> Path:
-    """Write one decoded GRIB1 field using the canonical Stage-IV grid schema."""
+    """Write one decoded GRIB1 accumulation using the canonical Stage-IV grid schema."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     partial = destination.with_name(f"{destination.name}.part")
     partial.unlink(missing_ok=True)
@@ -91,12 +94,12 @@ def write_legacy_hourly_netcdf(
             {
                 "units": TIME_UNITS,
                 "long_name": "verification time decoded from legacy Stage-IV filename",
-                "reference_time": (valid_time - timedelta(hours=1)).timestamp(),
+                "reference_time": (valid_time - timedelta(hours=accumulation_hours)).timestamp(),
                 "reference_time_type": 3,
-                "reference_date": (valid_time - timedelta(hours=1)).strftime(
+                "reference_date": (valid_time - timedelta(hours=accumulation_hours)).strftime(
                     "%Y.%m.%d %H:%M:%S UTC"
                 ),
-                "reference_time_description": "start of one-hour accumulation",
+                "reference_time_description": f"start of {accumulation_hours}-hour accumulation",
                 "time_step_setting": "auto",
                 "time_step": 0.0,
             }
@@ -139,6 +142,51 @@ class LegacyStage4Converter:
         if not template.is_file():
             raise FileNotFoundError(f"Stage-IV grid template not found: {template}")
         self.wgrib = executable
+
+    def convert_daily_six_hour(self, archive: Path) -> tuple[int, int]:
+        """Extract the four GRIB1 six-hour fields from one daily Stage-IV tar file."""
+        selected = converted = 0
+        work_root = temporary_work_root(self.settings, "stage4-legacy")
+        with (
+            tarfile.open(archive) as daily,
+            tempfile.TemporaryDirectory(dir=work_root) as temporary,
+        ):
+            temporary_path = Path(temporary)
+            for member in daily.getmembers():
+                name = Path(member.name).name
+                match = LEGACY_SIX_HOURLY.fullmatch(name)
+                if member.name != name or not member.isfile() or not match:
+                    continue
+                selected += 1
+                valid_time = datetime.strptime(match.group(1), "%Y%m%d%H").replace(tzinfo=UTC)
+                destination = (
+                    self.settings.stage4_data_dir / "netcdf/archive"
+                    / valid_time.strftime("%Y/%m/%d")
+                    / f"st4_conus.{valid_time:%Y%m%d%H}.06h.grib1.nc"
+                )
+                if destination.is_file():
+                    continue
+                source = daily.extractfile(member)
+                if source is None:
+                    raise RuntimeError(f"Could not read {member.name} from {archive}")
+                values = _decode_wgrib(
+                    self.wgrib,
+                    _decompress(name, source.read(), temporary_path),
+                    temporary_path,
+                    accumulation_hours=6,
+                )
+                write_legacy_hourly_netcdf(
+                    destination,
+                    self.template,
+                    values,
+                    valid_time,
+                    name,
+                    accumulation_hours=6,
+                )
+                converted += 1
+        if not selected:
+            raise RuntimeError(f"No six-hour Stage-IV GRIB1 members found in {archive}")
+        return selected, converted
 
     def convert_month(self, archive: Path, *, delete_hourly: bool = True) -> tuple[int, int]:
         """Convert all complete days in one nested monthly archive."""

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import IntFlag
 from pathlib import Path
 
@@ -20,9 +20,12 @@ PRECIPITATION_VARIABLES = {
     **{name: variable for name, variable in MRMS_VARIABLES.items() if name != "mrms_quality"},
     "stage4_archive": "APCP_surface",
     "stage4_realtime": "APCP_surface",
+    "stage4_06h": "APCP_surface",
     "nldas2": "Rainf",
     "hrrr": "APCP_surface",
 }
+
+CNRFC_STAGE4_POLICY_START = datetime(2020, 7, 1, tzinfo=UTC)
 SOURCE_IDS = {
     "mrms_pass2": 1,
     "mrms_pass1": 2,
@@ -30,6 +33,7 @@ SOURCE_IDS = {
     "stage4_realtime": 4,
     "nldas2": 5,
     "hrrr": 6,
+    "stage4_06h_constrained": 7,
 }
 
 
@@ -42,6 +46,9 @@ class PrecipitationQC(IntFlag):
     MISSING = 8
     NEGATIVE_REJECTED = 16
     EXTREME = 32
+    CNRFC_HOURLY_STAGE4_REJECTED = 64
+    CNRFC_SIX_HOUR_CONSTRAINED = 128
+    CNRFC_TIMING_FALLBACK = 256
 
 
 @dataclass(frozen=True)
@@ -86,7 +93,8 @@ def open_precipitation_candidate(
         normalized = field.where(field >= 0).rename("precipitation_depth")
         normalized.attrs["units"] = "kg m-2"
     selected_valid_time = np.asarray(field.time.values).reshape(-1)[0].astype("datetime64[ns]")
-    start_time = selected_valid_time - np.timedelta64(1, "h")
+    accumulation_hours = 6 if product == "stage4_06h" else 1
+    start_time = selected_valid_time - np.timedelta64(accumulation_hours, "h")
     dataset = normalized.to_dataset()
     dataset = dataset.assign_coords(
         time_bounds=(("time", "bounds"), np.array([[start_time, selected_valid_time]]))
@@ -95,7 +103,7 @@ def open_precipitation_candidate(
         {
             "source_product": product,
             "source_file": str(path),
-            "accumulation_interval": "(T-1h,T]",
+            "accumulation_interval": f"(T-{accumulation_hours}h,T]",
             "valid_time": np.datetime_as_string(selected_valid_time, unit="s"),
         }
     )
@@ -108,6 +116,7 @@ def composite_precipitation(
     mrms_quality: np.ndarray | None = None,
     mrms_quality_threshold: float = 0.5,
     stage4_override: np.ndarray | None = None,
+    stage4_exclusion: np.ndarray | None = None,
     extreme_depth: float = 300.0,
 ) -> CompositePrecipitation:
     """Select one auditable source per cell without averaging precipitation features."""
@@ -131,6 +140,11 @@ def composite_precipitation(
         if stage4_override is None
         else np.broadcast_to(np.asarray(stage4_override, dtype=bool), shape)
     )
+    exclusion = (
+        np.zeros(shape, dtype=bool)
+        if stage4_exclusion is None
+        else np.broadcast_to(np.asarray(stage4_exclusion, dtype=bool), shape)
+    )
     arrays = {
         name: np.broadcast_to(np.asarray(values, dtype=np.float64), shape)
         for name, values in candidates.items()
@@ -148,8 +162,19 @@ def composite_precipitation(
     stage_products = (
         "stage4_archive" if "stage4_archive" in arrays else "stage4_realtime"
     )
+    stage4_present = np.zeros(shape, dtype=bool)
+    for product in ("stage4_archive", "stage4_realtime"):
+        if product in arrays:
+            stage4_present |= np.isfinite(arrays[product]) & (arrays[product] >= 0)
+    qc[exclusion & stage4_present] |= np.uint16(
+        PrecipitationQC.CNRFC_HOURLY_STAGE4_REJECTED
+    )
     if stage_products in arrays:
-        choose(stage_products, override, 0.85 if stage_products == "stage4_archive" else 0.75)
+        choose(
+            stage_products,
+            override & ~exclusion,
+            0.85 if stage_products == "stage4_archive" else 0.75,
+        )
         qc[(source_id == SOURCE_IDS[stage_products]) & override] |= np.uint16(
             PrecipitationQC.STAGE4_OVERRIDE
         )
@@ -158,8 +183,8 @@ def composite_precipitation(
     choose("mrms_pass1", acceptable_mrms, np.nan_to_num(quality, nan=0.0) * 0.9)
     low_quality = np.isfinite(quality) & ~acceptable_mrms
     qc[low_quality] |= np.uint16(PrecipitationQC.MRMS_LOW_QUALITY)
-    choose("stage4_archive", np.ones(shape, dtype=bool), 0.8)
-    choose("stage4_realtime", np.ones(shape, dtype=bool), 0.7)
+    choose("stage4_archive", ~exclusion, 0.8)
+    choose("stage4_realtime", ~exclusion, 0.7)
     choose("nldas2", np.ones(shape, dtype=bool), 0.4)
     choose("hrrr", np.ones(shape, dtype=bool), 0.2)
     fallback_ids = np.array([3, 4, 5, 6], dtype=np.uint8)

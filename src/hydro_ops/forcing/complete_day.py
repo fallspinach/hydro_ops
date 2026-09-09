@@ -19,9 +19,11 @@ from hydro_ops.forcing.assemble import add_precipitation_to_ldasin, assemble_sev
 from hydro_ops.forcing.operations import (
     OperationalLayout,
     discover_precipitation_candidates,
+    discover_stage4_six_hour,
     valid_complete_hour,
 )
 from hydro_ops.forcing.physics import lambert_grid_x_angle, rotate_grid_to_earth
+from hydro_ops.forcing.precipitation import CNRFC_STAGE4_POLICY_START
 from hydro_ops.forcing.precipitation_day import process_precipitation_day
 from hydro_ops.forcing.radiation_wind_hour import _write_output as write_radiation_output
 from hydro_ops.forcing.source_selection import SelectedSource, select_hourly_source
@@ -102,6 +104,10 @@ def _assemble_hour(task: _AssemblyTask) -> dict:
         force=True,
     )
     add_precipitation_to_ldasin(seven, task.precipitation, task.staged_output, force=True)
+    with xr.open_dataset(task.precipitation, decode_times=False) as precipitation_metadata:
+        six_hour_constraint = precipitation_metadata.attrs.get(
+            "stage4_six_hour_constraint_file"
+        )
     summary = {
         "valid_time": task.selected.valid_time.isoformat(),
         "status": "produced",
@@ -112,6 +118,8 @@ def _assemble_hour(task: _AssemblyTask) -> dict:
         "remap_mode": "daily_batch",
         "assembly_seconds": round(time.perf_counter() - started, 3),
     }
+    if six_hour_constraint is not None:
+        summary["stage4_six_hour_constraint"] = six_hour_constraint
     manifest = task.staged_output.with_suffix(f"{task.staged_output.suffix}.manifest.json")
     manifest.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     return summary
@@ -269,8 +277,15 @@ def produce_complete_day(
         "hrrr": (layout.hrrr_elevation, "HGT_surface", layout.hrrr_bilinear),
     }
     source_elevation_path, elevation_variable, bilinear_weights = static[product]
+    cnrfc_policy_start = CNRFC_STAGE4_POLICY_START
+    precipitation_times = valid_times
+    if valid_times[-1] >= cnrfc_policy_start:
+        day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        precipitation_times = [
+            day_start - timedelta(hours=5) + timedelta(hours=index) for index in range(30)
+        ]
     candidates_and_quality = [
-        discover_precipitation_candidates(valid, layout) for valid in valid_times
+        discover_precipitation_candidates(valid, layout) for valid in precipitation_times
     ]
     candidate_hours = [item[0] for item in candidates_and_quality]
     quality_hours = [item[1] for item in candidates_and_quality]
@@ -328,8 +343,8 @@ def produce_complete_day(
                 flush=True,
             )
             stage_started = time.perf_counter()
-            precipitation = process_precipitation_day(
-                valid_times,
+            precipitation_all = process_precipitation_day(
+                precipitation_times,
                 candidate_hours,
                 quality_hours,
                 precipitation_weights,
@@ -343,7 +358,17 @@ def produce_complete_day(
                 remap_workers=precipitation_remap_workers,
                 work_directory=temporary,
                 force=True,
+                stage4_six_hour_paths={
+                    valid: path
+                    for valid in precipitation_times
+                    if (path := discover_stage4_six_hour(valid, layout)) is not None
+                },
+                stage4_six_hour_weights=layout.stage4_conservative,
+                cnrfc_mask_path=layout.cnrfc_nwm_mask,
+                cnrfc_policy_start=cnrfc_policy_start,
             )
+            precipitation_by_time = dict(zip(precipitation_times, precipitation_all, strict=True))
+            precipitation = [precipitation_by_time[valid] for valid in valid_times]
             print(
                 json.dumps(
                     {

@@ -222,6 +222,8 @@ def add_precipitation_to_ldasin(
                 "precip_confidence": ("f4", None),
                 "precip_qc_flags": ("u2", None),
             }
+            if "precip_timing_source_id" in precipitation.variables:
+                definitions["precip_timing_source_id"] = ("u1", None)
             variables = {}
             for name, (dtype, fill_value) in definitions.items():
                 keyword = {} if fill_value is None else {"fill_value": fill_value}
@@ -241,6 +243,13 @@ def add_precipitation_to_ldasin(
             output.setncattr("title", "Complete hourly NWM LDASIN forcing")
             output.setncattr("precipitation_status", "present")
             output.setncattr("precipitation_component", str(precipitation_path))
+            for attribute in (
+                "cnrfc_stage4_policy",
+                "stage4_six_hour_constraint_file",
+                "stage4_six_hour_constraint_end",
+            ):
+                if attribute in precipitation.ncattrs():
+                    output.setncattr(attribute, precipitation.getncattr(attribute))
             output.setncattr(
                 "history",
                 f"{datetime.now(UTC).isoformat()} precipitation added; "

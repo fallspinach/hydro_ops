@@ -41,6 +41,20 @@ def test_compositor_leaves_missing_and_flags_extreme() -> None:
     assert np.isnan(result.depth[0, 1])
 
 
+def test_cnrf_exclusion_rejects_hourly_stage4_and_uses_next_source() -> None:
+    result = composite_precipitation(
+        {
+            "stage4_archive": np.array([[9.0, 9.0]]),
+            "nldas2": np.array([[2.0, 2.0]]),
+        },
+        stage4_exclusion=np.array([[True, False]]),
+    )
+    np.testing.assert_array_equal(result.source_id, [[5, 3]])
+    np.testing.assert_allclose(result.depth, [[2.0, 9.0]])
+    assert result.qc_flags[0, 0] & PrecipitationQC.CNRFC_HOURLY_STAGE4_REJECTED
+    assert not result.qc_flags[0, 1] & PrecipitationQC.CNRFC_HOURLY_STAGE4_REJECTED
+
+
 def test_mrms_adapter_masks_negative_no_coverage_and_sets_bounds(tmp_path: Path) -> None:
     path = tmp_path / "mrms.nc"
     with Dataset(path, "w") as data:
@@ -65,3 +79,20 @@ def test_mrms_adapter_masks_negative_no_coverage_and_sets_bounds(tmp_path: Path)
         assert (
             candidate.time_bounds[0, 1] - candidate.time_bounds[0, 0]
         ) == np.timedelta64(1, "h")
+
+
+def test_stage4_six_hour_adapter_sets_six_hour_bounds(tmp_path: Path) -> None:
+    path = tmp_path / "stage4.nc"
+    with Dataset(path, "w") as data:
+        data.createDimension("time", 1)
+        data.createDimension("y", 1)
+        data.createDimension("x", 1)
+        time = data.createVariable("time", "f8", ("time",))
+        time.units = "seconds since 1970-01-01 00:00:00"
+        time[:] = [21600]
+        data.createVariable("APCP_surface", "f4", ("time", "y", "x"))[:] = 6
+    with open_precipitation_candidate(path, "stage4_06h") as candidate:
+        assert candidate.attrs["accumulation_interval"] == "(T-6h,T]"
+        assert (
+            candidate.time_bounds[0, 1] - candidate.time_bounds[0, 0]
+        ) == np.timedelta64(6, "h")

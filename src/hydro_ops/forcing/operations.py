@@ -40,6 +40,7 @@ class OperationalLayout:
     mrms_conservative: Path
     mrms_quality_bilinear: Path
     stage4_conservative: Path
+    cnrfc_nwm_mask: Path
 
     @classmethod
     def project_defaults(cls, root: Path = Path(".")) -> OperationalLayout:
@@ -65,6 +66,7 @@ class OperationalLayout:
             remap / "mrms_conservative.nc",
             remap / "mrms_quality_bilinear.nc",
             remap / "stage4_conservative.nc",
+            static / "noaa/stage4/nwm_conus_1km_cnrfcmask.nc",
         )
 
 
@@ -129,6 +131,29 @@ def discover_precipitation_candidates(
     return {name: path for name, path in candidates.items() if path.is_file()}, (
         quality if quality.is_file() else None
     )
+
+
+def discover_stage4_six_hour(valid_time: datetime, layout: OperationalLayout) -> Path | None:
+    """Return the best available six-hour Stage-IV field ending at a six-hour boundary."""
+    valid_time = valid_time.astimezone(UTC)
+    if valid_time.hour % 6:
+        return None
+    directory = valid_time.strftime("%Y/%m/%d")
+    for stream in ("archive", "realtime"):
+        daily = (
+            layout.stage4_root / stream / valid_time.strftime("%Y/%m")
+            / f"stage4_{stream}_06h.{valid_time:%Y%m%d}.nc"
+        )
+        if daily.is_file():
+            return daily
+        for suffix in ("grb2.nc", "grib1.nc"):
+            path = (
+                layout.stage4_root / stream / directory
+                / f"st4_conus.{valid_time:%Y%m%d%H}.06h.{suffix}"
+            )
+            if path.is_file():
+                return path
+    return None
 
 
 def valid_complete_hour(path: Path, valid_time: datetime) -> bool:
