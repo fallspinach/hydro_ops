@@ -470,7 +470,128 @@ extremes.
 
 ## Output, provenance, and publication
 
+### Final spatial-domain repair and publication gate
+
+Spatial repair is the final scientific transformation of every published NWM forcing day. The
+ordering is fixed: assemble the source fields (including the post-2020 CNRFC Stage-IV hourly/
+six-hourly correction), apply the applicable PRISM constraint, materialize the 00-23 UTC daily
+collection, repair missing active-land cells inside the hard NLDAS-2 rectangle, preserve existing
+inactive-cell values inside it, mask cells outside it, and then run the publication audit.
+No later transformation may overwrite these fields.
+
+The hard forcing boundary is 25-53 degrees north and 125-67 degrees west. Missing active values
+inside that rectangle are filled from the nearest valid donor inside the same rectangle; values
+outside it are never used as donors. The operational NWM land mask comes from
+`nwm/static/operational/nwm.v3.1.6/domain/wrfinput_CONUS_NLDAS2.nc`. Publication requires every
+hour of all eight forcing variables to be nonmissing over active (`XLAND == 1`) model cells and
+missing outside the rectangle. All 10,315,371 active cells lie inside it. Existing values on the
+3,414,803 inactive in-domain cells are preserved, including inland lakes/rivers and any missing
+values. The fill operation does not create new values on inactive cells. Donors may be any
+valid in-domain cell; the hard geographic boundary applies to both donors and fill targets.
+
+Baseline production and final daily/monthly PRISM publication now use
+`repair_nwm_forcing_domain.py --active-gaps-only`, policy
+`nldas2_active_gaps_preserve_inactive_v3` (also the CLI default). Every run audits all records,
+requires zero missing active values and zero valid outside-domain values, and verifies that
+inactive in-domain values are byte-identical before and after spatial repair. Missing inactive
+values are intentional and do not fail validation. `--preserve-active` additionally rejects
+active gaps rather than filling them; complete active fields are compared by SHA-256 as well.
+The grid, run mask, and coordinate/provenance variables are not changed.
+
+**Approved historical static-envelope cleanup (2026-09-12).** Previously overfilled
+NLDAS-2-based retro files now have a separate, versioned final clipping policy,
+`nldas2_seven_met_static_envelope_v4`. Its mask is
+`forcing/static/coverage/conus/nldas2_seven_met_static_envelope_v4.nc`: the NLDAS-2
+rectangle intersected with the union of active NWM cells and sampled coverage of
+the seven non-precipitation meteorological fields. The same mask is applied to all
+eight fields; extra modern precipitation-only coverage is intentionally discarded.
+It retains 10,860,309 cells, including all 10,315,371 active cells, and does not fill
+inactive holes. Active completeness and unchanged retained values are required.
+This avoids full reconstruction while accepting that retained old inactive donor
+values cannot be distinguished from original coverage.
+
+Campaign 4519428 applies this policy to all 8,766 retro files in 1979–2002, with
+eight concurrent 12-CPU workers, 120 GB scratch per task, full read-back validation,
+atomic replacement and resumable manifest/audit publication. Baseline leftovers
+are not included. The post-2020-10-14 CNRFC rebuild remains separate and unchanged;
+its envelope cleanup must be coordinated after reconstruction. The v3 generation
+default above is deliberately unchanged during these running jobs. Do not apply
+legacy rectangle-wide filling after v4 clipping. Full policy, mask provenance,
+pilot results, scope, timing and recovery details are in
+[the static-mask study and rollout record](forcing_mask_stability_study.md).
+
+An opt-in [GFS northern-gap experiment](gfs_nrt_northern_gap.md) now implements
+short-forecast extraction, correct hourly accumulation/mean decoding, cached
+native-HRRR coverage and GFS interpolation weights, and elevation-adjusted sparse
+fallback fields. January and July 2026 week tests also passed with conservative
+precipitation weights. Paired NLDAS/HRRR diagnostics and an opt-in daily-copy
+writer with GFS provenance are implemented. A complete August 24 daily-copy test
+passed all-field completeness, preservation and transfer checks (4519800), and
+archived delayed-cycle selection passed (4519850). This is **not enabled in scheduled
+NRT production or cron**. CONUS model-read tests passed for 23 hours (4519888)
+and a full midnight-to-midnight day (4520067), including the repaired NLDAS-2/PRISM
+endpoint after GFS/HRRR forcing. Seam/cycle-boundary assessment, automatic source
+replacement, mixed-source-day handling and refresh coordination remain gates.
+The isolated native-donor pilot resolves the August 25 coastal remapping gap
+without modifying retro data; its explicit 40 km cap is not an operational default.
+Sparse experimental patches are not LDASIN
+files and must not be passed directly to WRF-Hydro.
+
+The blanket inactive masking policy `nldas2_rectangle_nwm_active_land_v2` is retired because
+it also removed inland-water forcing. Jobs 4517940 and 4517941 were canceled; 41 published
+days in January-April 1979 had already been filtered. Such files are explicitly rejected by
+the v3 repair utility until their inactive values have been reconstructed from source data.
+Job 4518020 reconstructs the four affected months after pilot 4518019 succeeds, reapplies
+monthly PRISM with the existing acceptance thresholds, and restores only inactive in-domain
+cells through `bin/restore_inactive_forcing_values.py`. Active forcing must remain byte-identical;
+backups and reconstructed candidate data are retained under `forcing/work/restore-water-v3/`.
+Reconstruction is not a claim of bit-for-bit recovery of erased inactive values.
+
+For legacy v1 files, inactive values added by earlier rectangle-wide filling cannot be
+distinguished from original valid values using the stored aggregate fill counts. Rule v3
+preserves those existing values; removing only past synthetic inactive fills requires source
+reconstruction. The v3 metadata certifies the present repair operation, not the absence of
+historical inactive-cell filling. It also does not certify CNRFC recovery, which is recorded
+separately by `forcing_recovery_policy`. No broad v3 archive sweep is scheduled while restoring
+the v2-affected files and testing the new policy.
+
+The `forcing_domain_policy` NetCDF attribute records provenance but is never accepted as proof of
+completeness. `bin/repair_nwm_forcing_domain.py` rereads and audits file contents even when that
+attribute is present, repairs any remaining gaps, and validates the temporary output before its
+atomic replacement of the published file. Stable-baseline cleanup is fail-closed: it may proceed
+only after the final file carries both the current domain-policy attribute and the versioned
+`forcing_domain_content_audit` certificate written after the complete content audit. For dates
+on or after 2020-07-01, production must also carry the CNRFC six-hour Stage-IV policy provenance
+before final domain repair. This ordering prevents a later PRISM or precipitation transformation
+from preserving stale repair metadata while reintroducing missing forcing values.
+
+For existing files from 2020-10-14 onward, use
+`bin/submit_post2020_forcing_rebuild.py` to rebuild the source baseline, reapply PRISM, and
+perform final domain repair as one operation. It inventories existing retro and NRT files,
+checks that both required PRISM windows exist, and submits a wet-day pilot (2026-04-12).
+The remaining seven-day batches depend on successful completion of that pilot. Each worker
+reserves 64 CPUs and 240 GB of scratch; eight simultaneous workers reserve 512 CPUs total.
+Workers regenerate baseline halo days privately, retain all current publications until the
+replacement batch passes PRISM acceptance and spatial audits, then replace calendar files
+atomically. Rebuilt NRT baselines are retained for subsequent retrospective production;
+temporary retro baselines remain on job scratch. A `forcing_recovery_policy` attribute and
+per-day JSON log record identify successful publications. A failed task leaves any unpublished
+days at their previous version; task failures must be resolved before declaring recovery complete.
+
+This is a reconstruction using currently available source data, including revised PRISM inputs;
+it does not recreate the exact source availability at the historical NRT issue time. The NRT and
+retro directories remain separate. Missing six-hour Stage-IV data uses the non-Stage-IV
+precipitation hierarchy inside CNRFC and still records the hourly Stage-IV exclusion policy.
+
 ### Compression and archive layout
+
+Domain-repair array logs are written to `forcing/logs/domain-repair-%A_%a.out`, and the
+backlog submitter writes `forcing/logs/domain-repair-backlog-%j.out`. Historical root-level
+`slurm-*.out` files can be consolidated with `python bin/archive_root_slurm_logs.py --apply`.
+The utility excludes queued/running jobs and tracked files, verifies each archived file with
+SHA-256, and removes only unchanged originals after the compressed archive is complete.
+Archives and per-file checksum manifests live in `logs/archive/`; individual logs remain
+recoverable with `tar -xzf ARCHIVE -C DESTINATION LOG_NAME`.
 
 HRRR and Stage-IV GRIB conversions are stored as NetCDF4 using shuffle and DEFLATE level 2;
 MRMS uses level 4 because its spatially sparse precipitation and quality fields gain materially

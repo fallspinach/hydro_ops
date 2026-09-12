@@ -53,7 +53,12 @@ def _validate_inputs(
             if dimensions is None:
                 dimensions, variables = current_dimensions, current_variables
             elif dimensions != current_dimensions or variables != current_variables:
-                raise ValueError(f"Hourly NetCDF schema differs: {path}")
+                raise ValueError(
+                    f"Hourly NetCDF schema differs: {path}; "
+                    f"missing_variables={sorted(set(variables) - set(current_variables))}; "
+                    f"extra_variables={sorted(set(current_variables) - set(variables))}; "
+                    f"dimensions={current_dimensions}; expected_dimensions={dimensions}"
+                )
             if "time" not in dataset.dimensions or not (
                 0 <= source_index < len(dataset.dimensions["time"])
             ):
