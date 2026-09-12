@@ -411,6 +411,12 @@ def process_precipitation_day(
                 )
                 with Dataset(outputs[index], "a") as output:
                     output.setncattr("precipitation_remap_mode", "daily_batch")
+                    if cnrfc_mask is not None and valid_time >= cnrfc_policy_start:
+                        output.setncattr(
+                            "cnrfc_stage4_policy",
+                            "hourly Stage-IV rejected; six-hour totals used where available; "
+                            "otherwise retain non-Stage-IV composite",
+                        )
             if constraints:
                 assert cnrfc_mask is not None
                 index_by_time = {valid: index for index, valid in enumerate(valid_times)}

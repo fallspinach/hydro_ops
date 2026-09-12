@@ -21,6 +21,23 @@ if configured_python and Path(sys.executable).resolve() != Path(configured_pytho
 from hydro_ops.forcing.daily_archive import verified_daily_archive
 
 
+def domain_repaired(path: Path, day: date) -> bool:
+    if not path.is_file():
+        return False
+    from netCDF4 import Dataset
+
+    with Dataset(path) as data:
+        validated = (
+            str(getattr(data, "forcing_domain_policy", ""))
+            == "nldas2_active_gaps_preserve_inactive_v3"
+            and str(getattr(data, "forcing_domain_content_audit", ""))
+            == "all_records_active_complete_outside_masked_inactive_preserved_v3"
+        )
+        if day >= date(2020, 7, 1):
+            validated = validated and bool(getattr(data, "cnrfc_stage4_policy", ""))
+        return validated
+
+
 def main() -> int:
     index = int(os.environ["SLURM_ARRAY_TASK_ID"])
     if task_file := os.environ.get("HYDRO_OPS_FORCING_DAY_TASK_FILE"):
@@ -34,8 +51,11 @@ def main() -> int:
         daily = Path(output_root) / day.strftime("%Y/%m") / f"{day:%Y%m%d}.LDASIN_DOMAIN1"
         legacy_daily = daily.with_suffix(f"{daily.suffix}.nc")
         if os.environ.get("HYDRO_OPS_FORCE") != "1" and (
-            verified_daily_archive(daily, day)
-            or verified_daily_archive(legacy_daily, day)
+            (verified_daily_archive(daily, day) and domain_repaired(daily, day))
+            or (
+                verified_daily_archive(legacy_daily, day)
+                and domain_repaired(legacy_daily, day)
+            )
         ):
             print(f"SKIP verified daily archive {daily}", flush=True)
             return 0
@@ -85,7 +105,21 @@ def main() -> int:
         archive.append("--force")
     if start_hour:
         archive.extend(["--start-hour", start_hour])
-    return subprocess.run(archive, check=False).returncode
+    archived = subprocess.run(archive, check=False)
+    if archived.returncode:
+        return archived.returncode
+    daily = Path(output_root) / day.strftime("%Y/%m") / f"{day:%Y%m%d}.LDASIN_DOMAIN1"
+    return subprocess.run(
+        [
+            python,
+            "bin/repair_nwm_forcing_domain.py",
+            str(daily),
+            "--in-place",
+            "--work-directory",
+            scratch,
+        ],
+        check=False,
+    ).returncode
 
 
 if __name__ == "__main__":

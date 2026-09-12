@@ -17,6 +17,14 @@ initial states, reservoir configuration, cycling, forcing, and assimilation are 
 
 ## Upstream requirements
 
+New CONUS spin-up and benchmark submissions explicitly set `PCP_PARTITION_OPTION = 1`
+in the generated `namelist.hrldas`. This selects Noah-MP's Jordan (1991) temperature-based
+rain/snow partition for our eight-field forcing, which does not supply separate frozen
+precipitation components. The downloaded NOAA template retains option 4. Previously submitted
+spin-up jobs retain their original configuration through SLURM's saved batch scripts; running
+namelists and existing restarts are not changed. Future operational run preparation should use
+option 1 as well. This is a namelist change and requires no recompilation.
+
 WRF-Hydro 5.4.0 documents these minimums:
 
 | Component | Minimum |

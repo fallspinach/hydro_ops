@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.ndimage import distance_transform_edt
 
 
 @dataclass(frozen=True)
@@ -12,6 +13,66 @@ class FillResult:
     values: np.ndarray
     repaired: np.ndarray
     distance: np.ndarray
+
+
+@dataclass(frozen=True)
+class GeographicFillResult:
+    values: np.ndarray
+    repaired: np.ndarray
+    distance: np.ndarray
+
+
+def geographic_domain_mask(
+    latitude: np.ndarray,
+    longitude: np.ndarray,
+    *,
+    south: float = 25.0,
+    north: float = 53.0,
+    west: float = -125.0,
+    east: float = -67.0,
+) -> np.ndarray:
+    """Return the inclusive NLDAS-2 geographic forcing domain.
+
+    Longitudes in either ``[-180, 180]`` or ``[0, 360]`` convention are accepted.
+    """
+    if latitude.shape != longitude.shape:
+        raise ValueError("latitude and longitude must have identical shapes")
+    normalized_longitude = np.where(longitude > 180.0, longitude - 360.0, longitude)
+    return (
+        np.isfinite(latitude)
+        & np.isfinite(normalized_longitude)
+        & (latitude >= south)
+        & (latitude <= north)
+        & (normalized_longitude >= west)
+        & (normalized_longitude <= east)
+    )
+
+
+def fill_geographic_domain_gaps(
+    values: np.ndarray,
+    *,
+    missing: np.ndarray,
+    domain: np.ndarray,
+) -> GeographicFillResult:
+    """Fill every missing target inside a hard domain from its nearest valid donor.
+
+    Both targets and donors are restricted to ``domain``. Values outside it are never
+    changed and can never be selected as donors. Distance is Euclidean grid-cell distance.
+    """
+    if values.shape != missing.shape or values.shape != domain.shape:
+        raise ValueError("values, missing, and domain must have identical shapes")
+    targets = missing & domain
+    donors = ~missing & domain
+    if np.any(targets) and not np.any(donors):
+        raise ValueError("geographic domain contains missing targets but no valid donor")
+    output = values.copy()
+    distances = np.zeros(values.shape, dtype=np.float32)
+    if not np.any(targets):
+        return GeographicFillResult(output, targets, distances)
+    distance, indices = distance_transform_edt(~donors, return_indices=True)
+    output[targets] = values[indices[0][targets], indices[1][targets]]
+    distances[targets] = distance[targets]
+    return GeographicFillResult(output, targets, distances)
 
 
 def persistent_gap_mask(missing: np.ndarray) -> np.ndarray:

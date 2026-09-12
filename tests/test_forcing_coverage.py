@@ -1,7 +1,12 @@
 import numpy as np
 import pytest
 
-from hydro_ops.forcing.coverage import fill_persistent_gaps, persistent_gap_mask
+from hydro_ops.forcing.coverage import (
+    fill_geographic_domain_gaps,
+    fill_persistent_gaps,
+    geographic_domain_mask,
+    persistent_gap_mask,
+)
 
 
 def test_persistent_gap_mask_excludes_transient_missing() -> None:
@@ -41,3 +46,19 @@ def test_fill_rejects_transient_and_distant_gaps() -> None:
         fill_persistent_gaps(
             values, missing=missing, active_land=land, allowed=land, max_distance=1
         )
+
+
+def test_geographic_fill_uses_only_inside_donors_and_preserves_outside() -> None:
+    values = np.array([[99.0, -999.0, 7.0, -999.0]])
+    missing = values == -999.0
+    domain = np.array([[False, True, True, False]])
+    result = fill_geographic_domain_gaps(values, missing=missing, domain=domain)
+    assert result.values.tolist() == [[99.0, 7.0, 7.0, -999.0]]
+    assert result.repaired.tolist() == [[False, True, False, False]]
+    assert result.distance[0, 1] == 1.0
+
+
+def test_nldas_geographic_mask_normalizes_longitude() -> None:
+    latitude = np.array([[25.0, 53.0, 24.9]])
+    longitude = np.array([[235.0, -67.0, -100.0]])
+    assert geographic_domain_mask(latitude, longitude).tolist() == [[True, True, False]]

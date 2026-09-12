@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import calendar
 import shutil
+import subprocess
+import sys
 import tempfile
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -418,6 +420,11 @@ def main() -> int:
                         "monthly_constraint_created": created,
                     }
                 )
+            subprocess.run(
+                [sys.executable, str(settings.project_root / "bin/repair_nwm_forcing_domain.py"),
+                 str(staged), "--in-place", "--active-gaps-only"],
+                cwd=settings.project_root, check=True,
+            )
             destination.parent.mkdir(parents=True, exist_ok=True)
             partial = destination.with_name(f"{destination.name}.part")
             partial.unlink(missing_ok=True)

@@ -40,7 +40,13 @@ def validate_publication(path: Path, day: date) -> None:
             and str(getattr(data, "archive_granularity", "")) == "utc_calendar_day"
             and str(getattr(data, "prism_reconciliation_accepted", "false")).lower()
             == "true"
+            and str(getattr(data, "forcing_domain_policy", ""))
+            == "nldas2_active_gaps_preserve_inactive_v3"
+            and str(getattr(data, "forcing_domain_content_audit", ""))
+            == "all_records_active_complete_outside_masked_inactive_preserved_v3"
         )
+        if day >= date(2020, 7, 1):
+            valid = valid and bool(getattr(data, "cnrfc_stage4_policy", ""))
     if not valid:
         raise ValueError(f"Refusing baseline cleanup after invalid publication: {path}")
 
@@ -110,6 +116,18 @@ def main() -> int:
             project,
         )
         publication = destination / day.strftime("%Y/%m") / f"{day:%Y%m%d}.LDASIN_DOMAIN1"
+        run(
+            [
+                python,
+                str(project / "bin/repair_nwm_forcing_domain.py"),
+                str(publication),
+                "--in-place",
+                "--active-gaps-only",
+                "--work-directory",
+                str(scratch),
+            ],
+            project,
+        )
         validate_publication(publication, day)
         stamp = day.strftime("%Y%m%d")
         for path in (staging / day.strftime("%Y/%m")).glob(f"{stamp}.*"):
