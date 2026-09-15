@@ -167,6 +167,37 @@ def main() -> int:
     history = state.setdefault("convergence_attempts", [])
     state["continuation_job_id"] = os.environ.get("SLURM_JOB_ID")
 
+    if state["stream"] == "nrt" and state.get("recent_nrt_gfs_active"):
+        # Run the recent source-aware tail before legacy older-window convergence.
+        # This serializes their boundary baseline access; retro jobs never enter here.
+        command = ["sbatch", f"--partition={state['partition']}", "--nodes=1", "--ntasks=1",
+                   "--cpus-per-task=64", "--tmp=240000", "--time=48:00:00",
+                   f"--job-name=nwm-cycle-{state['cycle']}-recent-nrt-gfs",
+                   f"--output={project}/forcing/logs/recent-nrt-gfs-%j.out",
+                   (f"--export=ALL,HYDRO_OPS_PROJECT_ROOT={project},"
+                    f"NRT_START={state['recent_nrt_start']},NRT_END={state['recent_nrt_end']},"
+                    f"NRT_REQUESTED_AT={state['created']}"),
+                   "--wrap", f"{python} {project}/slurm/run_recent_nrt.py"]
+        if state.get("account"):
+            command.insert(1, f"--account={state['account']}")
+        submitted = submit_with_quota_retry(command, project)
+        recent_id = submitted_job_id(submitted)
+        state["recent_nrt_job_id"] = recent_id
+        write_state(manifest, state)
+        if submitted.returncode or not recent_id:
+            raise RuntimeError("Recent NRT worker was not submitted")
+        wait_for_job(recent_id, project)
+        recent = json.loads((project / "forcing/status/nrt-gfs/latest.json").read_text())
+        if (recent.get("status") != "passed" or recent.get("start") != state["recent_nrt_start"]
+                or recent.get("end") != state["recent_nrt_end"] or recent.get("job_id") != recent_id):
+            state["status"] = "blocked_recent_nrt"
+            write_state(manifest, state)
+            return 2
+        end = date.fromisoformat(state["recent_nrt_start"]) - timedelta(days=1)
+        # Downstream submission helpers use state['end']; retain the full cycle end separately.
+        state["full_cycle_end"] = state["end"]
+        state["end"] = end.isoformat()
+
     for attempt in range(1, maximum + 1):
         missing = unresolved_days(output_root, start, end, state["stream"])
         if not missing:

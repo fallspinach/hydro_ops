@@ -7,6 +7,9 @@ CRON_TZ=UTC
 
 # Coordinated NRT cycles. The 08 UTC slot is the deeper daily convergence pass, so the ordinary
 # six-hourly entry deliberately omits hour 08.
+# The same coordinator reads config/nrt_gfs.toml. Its recent seven-day source-aware
+# tail is gated by forcing/status/nrt-gfs/activation.json; older windows and retro
+# are unchanged. Sources refresh first; GFS is acquired only for selected HRRR hours.
 0 2,14,20 * * * cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --no-capture-output --name hydro-ops python bin/update_nwm_forcing.py --cycle six-hourly >> forcing/logs/nwm-cycle-six-hourly.log 2>&1
 0 8 * * * cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --no-capture-output --name hydro-ops python bin/update_nwm_forcing.py --cycle daily >> forcing/logs/nwm-cycle-daily.log 2>&1
 

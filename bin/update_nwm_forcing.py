@@ -13,6 +13,7 @@ import sys
 from datetime import UTC, date, datetime, timedelta
 
 from hydro_ops.config import load_settings
+from hydro_ops.forcing.nrt_cycle import activation, configuration
 from hydro_ops.forcing.streams import forcing_stream_root
 
 
@@ -28,6 +29,7 @@ def cycle_window(cycle: str, today: date) -> tuple[str, date, date, int, int]:
 
 
 def main() -> int:
+    launched_at = datetime.now(UTC).isoformat()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cycle", required=True, choices=("six-hourly", "daily", "monthly-retro"))
     parser.add_argument("--start", type=date.fromisoformat)
@@ -84,7 +86,7 @@ def main() -> int:
             print(f"SKIP active coordinated {stream} workflow ({coordinator_prefix})")
             return 0
         plan = {
-            "created": datetime.now(UTC).isoformat(),
+            "created": launched_at,
             "cycle": args.cycle,
             "stream": stream,
             "start": start.isoformat(),
@@ -97,6 +99,14 @@ def main() -> int:
             "maximum_attempts": 4,
             "initial_dependency": args.dependency,
         }
+        if stream == "nrt":
+            config = configuration(settings.project_root)
+            plan["recent_nrt_gfs_requested"] = bool(config.get("enabled"))
+            plan["recent_nrt_gfs_active"] = activation(settings.project_root)
+            if plan["recent_nrt_gfs_active"]:
+                recent_start = max(start, end - timedelta(days=config["lookback_days"] - 1))
+                plan["recent_nrt_start"] = recent_start.isoformat()
+                plan["recent_nrt_end"] = end.isoformat()
         print(json.dumps(plan, indent=2))
         if args.dry_run:
             return 0
@@ -142,6 +152,8 @@ def main() -> int:
             source_ids = []
         plan["source_job_ids"] = source_ids
         baseline_start, baseline_end = start - timedelta(days=1), end + timedelta(days=1)
+        if plan.get("recent_nrt_gfs_active"):
+            baseline_end = recent_start  # Halo for the older PRISM window only.
         baseline_command = [
             sys.executable,
             "bin/submit_forcing_days.py",

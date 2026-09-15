@@ -1,0 +1,361 @@
+"""Source-aware, isolated recent-NRT updates; never used by retrospective repairs."""
+
+from __future__ import annotations
+
+import fcntl
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import tomllib
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+
+import numpy as np
+from netCDF4 import Dataset, num2date
+
+from hydro_ops.download.gfs import GfsDownloader
+from hydro_ops.forcing.complete_day import produce_complete_day, utc_hours
+from hydro_ops.forcing.daily_archive import create_daily_archive
+from hydro_ops.forcing.gfs_publication import _atomic_json, publish_gfs_day
+from hydro_ops.forcing.native_donor import FIELDS, NativeDonorRepair
+from hydro_ops.forcing.operational_strategy import latency
+from hydro_ops.forcing.operations import (
+    OperationalLayout,
+    discover_precipitation_candidates,
+    discover_stage4_six_hour,
+)
+from hydro_ops.forcing.source_selection import select_hourly_source
+
+POLICY = "source_aware_recent_nrt_v1"
+
+
+def configuration(root):
+    path = root / "config/nrt_gfs.toml"
+    return tomllib.loads(path.read_text()) if path.exists() else {"enabled": False}
+
+
+def activation(root):
+    config = configuration(root)
+    receipt = read_json(root / config.get("activation_receipt", "forcing/status/nrt-gfs/activation.json"))
+    return bool(config.get("enabled") and receipt.get("status") == "passed" and receipt.get("policy") == POLICY)
+
+
+def identity(path):
+    path = Path(path)
+    if not path.is_file():
+        return {"path": str(path.resolve()), "missing": True}
+    stat = path.stat()
+    return {"path": str(path.resolve()), "bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
+def fingerprint(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+def source_runs(selections):
+    """Contiguous runs retain batch remapping, including a mid-day source change."""
+    first = 0
+    for index in range(1, len(selections) + 1):
+        if index == len(selections) or selections[index].product != selections[first].product:
+            yield first, index - 1
+            first = index
+
+
+def baseline_plan(day, layout, config):
+    selections = [select_hourly_source(t, layout.nldas2_root, layout.hrrr_root) for t in utc_hours(day)]
+    paths = {s.path for s in selections}
+    start = utc_hours(day)[0] - timedelta(hours=5)
+    for index in range(30):
+        candidates, quality = discover_precipitation_candidates(start + timedelta(hours=index), layout)
+        paths.update(candidates.values())
+        if quality:
+            paths.add(quality)
+        six = discover_stage4_six_hour(start + timedelta(hours=index), layout)
+        if six:
+            paths.add(six)
+    record = {"policy": POLICY, "day": str(day), "configuration": config,
+              "hourly_primary_sources": [s.product for s in selections],
+              "files": [identity(p) for p in sorted(paths)]}
+    return selections, record
+
+
+def up_to_date(path, receipt, expected):
+    try:
+        return (receipt["status"] == "passed" and receipt["input_fingerprint"] == expected
+                and receipt["published_identity"] == identity(path)
+                and not receipt.get("retry_preferred_gfs_cycle", False))
+    except KeyError:
+        return False
+
+
+def read_json(path):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def day_path(root, day):
+    return root / f"{day:%Y/%m/%Y%m%d}.LDASIN_DOMAIN1"
+
+
+def replacement_backlog(output, layout, before):
+    """Keep old fallback days discoverable even after they age out of the lookback."""
+    ready = []
+    for path in output.glob("*/*/*.nrt-receipt.json"):
+        record = read_json(path)
+        if not record.get("gfs_hours"):
+            continue
+        day = date.fromisoformat(record["day"])
+        if day >= before:
+            continue
+        for hour, old in enumerate(record.get("hourly_primary_sources", [])):
+            if old == "hrrr":
+                try:
+                    selection = select_hourly_source(utc_hours(day)[hour], layout.nldas2_root, layout.hrrr_root)
+                except FileNotFoundError:
+                    continue
+                if selection.product == "nldas2":
+                    ready.append(day)
+                    break
+    return sorted(set(ready))
+
+
+def transfer(source, destination):
+    """Check a complete private candidate before replacing a permanent file."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_name(destination.name + ".nrt.part")
+    shutil.copyfile(source, partial)
+    with source.open("rb") as a, partial.open("rb") as b:
+        checksum = hashlib.file_digest(a, "sha256").hexdigest()
+        if hashlib.file_digest(b, "sha256").hexdigest() != checksum:
+            raise ValueError("NRT publication transfer checksum differs")
+    os.replace(partial, destination)
+    return checksum
+
+
+class RecentNrt:
+    def __init__(self, root, work, as_of, *, output_root=None, baseline_root=None):
+        if as_of.tzinfo is None:
+            raise ValueError("NRT source selection requires an aware as-of time")
+        self.root, self.work, self.as_of = root.resolve(), work, as_of
+        self.config = configuration(root)
+        self.layout = OperationalLayout.project_defaults(root)
+        self.output = output_root or root / "forcing/outputs/conus/nrt"
+        self.baseline = baseline_root or root / "forcing/outputs/conus/baseline"
+        self.envelope = root / self.config["envelope"]
+        self.geometry = root / self.config["geometry"]
+        self.conservative = root / self.config["conservative_weights"]
+        self.cache = root / self.config["cache"]
+        self.work.mkdir(parents=True, exist_ok=True)
+        with np.load(self.geometry) as data:
+            self.gap = np.zeros(tuple(data["shape"]), dtype=bool)
+            self.gap.ravel()[data["indices"]] = True
+        self.repair = NativeDonorRepair(self.layout, self.envelope,
+            root / self.config["model_terrain"], maximum_km=self.config["maximum_native_donor_km"])
+        # Changes to fixed assets must invalidate old acceptance receipts too.
+        self.assets = [identity(p) for p in (self.envelope, self.geometry, self.conservative,
+                      self.layout.target_grid, self.layout.remap_grid, self.layout.target_elevation,
+                      self.layout.nldas2_elevation, self.layout.hrrr_elevation,
+                      root / self.config["model_terrain"], self.layout.nldas2_bilinear,
+                      self.layout.hrrr_bilinear, self.layout.nldas2_conservative,
+                      self.layout.hrrr_conservative, self.layout.mrms_conservative,
+                      self.layout.mrms_quality_bilinear, self.layout.stage4_conservative,
+                      self.layout.cnrfc_nwm_mask)]
+
+    def baseline_day(self, day):
+        selections, inputs = baseline_plan(day, self.layout, self.config)
+        inputs["assets"] = self.assets
+        downloader = GfsDownloader(self.cache, self.work)
+        bundles = []
+        for selection in selections:
+            if selection.product == "hrrr":
+                bundle = downloader.hour(selection.valid_time, as_of=self.as_of)
+                bundles.append({k: bundle.attrs.get(k) for k in
+                                ("valid_time", "cycle", "lead", "url", "remote_etag", "remote_last_modified")})
+        inputs["gfs_bundles"] = bundles
+        expected = fingerprint(inputs)
+        destination = day_path(self.baseline, day)
+        receipt_path = destination.with_name(destination.name + ".nrt-receipt.json")
+        receipt = read_json(receipt_path)
+        if up_to_date(destination, receipt, expected):
+            return destination, receipt
+        old_modes = receipt.get("hourly_primary_sources", [])
+        if len(old_modes) == 24 and any(old == "nldas2" and new.product != "nldas2"
+                                       for old, new in zip(old_modes, selections, strict=True)):
+            raise RuntimeError("Refusing to downgrade a retained NLDAS-2 baseline during a source outage")
+        with tempfile.TemporaryDirectory(prefix=f"nrt-baseline-{day:%Y%m%d}-", dir=self.work) as tmp:
+            tmp = Path(tmp)
+            hourly = tmp / "hourly"
+            for first, last in source_runs(selections):
+                produce_complete_day(day, self.layout, hourly, work_directory=tmp,
+                    start_hour=first, end_hour=last, assembly_workers=self.config["assembly_workers"])
+            paths, repairs = [], []
+            for selection in selections:
+                path = hourly / selection.valid_time.strftime("%Y/%m/%d/%Y%m%d%H.LDASIN_DOMAIN1")
+                repairs.append(self.repair.repair(path, selection,
+                    deferred_mask=self.gap if selection.product == "hrrr" else None))
+                paths.append(path)
+            assembled, corrected = tmp / "assembled.nc", tmp / "corrected.nc"
+            create_daily_archive(paths, assembled, day, work_directory=tmp)
+            report = publish_gfs_day(assembled, corrected, self.envelope, self.geometry,
+                self.conservative, self.cache, tmp, nldas_available=False, as_of=self.as_of,
+                allow_mixed=True, require_native_repair=True)
+            if report["status"] != "passed":
+                raise ValueError(f"NRT baseline not accepted: {report}")
+            _, current = baseline_plan(day, self.layout, self.config)
+            current["assets"] = self.assets
+            current["gfs_bundles"] = bundles
+            if fingerprint(current) != expected:
+                raise ValueError("Native inputs changed during build; retain previous publication")
+            with Dataset(corrected, "r+") as data:
+                data.forcing_stream = "baseline"
+                data.archive_granularity = "utc_calendar_day"
+                data.nrt_production_policy = POLICY
+                data.gfs_publication_status = "operational_nrt_baseline"
+            checksum = transfer(corrected, destination)
+        receipt = {"status": "passed", "day": str(day), "input_fingerprint": expected,
+                   "inputs": inputs, "published_identity": identity(destination), "sha256": checksum,
+                   "as_of": self.as_of.isoformat(), "gfs_hours": report["gfs_hours"],
+                   "hourly_primary_sources": inputs["hourly_primary_sources"], "gfs_hourly": report["hours"],
+                   "retry_preferred_gfs_cycle": any(h["lead"] > 6 for h in report["hours"]),
+                   "native_repairs": repairs}
+        _atomic_json(receipt_path, receipt)
+        _atomic_json(destination.with_name(destination.name + ".manifest.json"), {
+            "daily_file": str(destination), "verified": True, "forcing_stream": "baseline",
+            "verification": POLICY, "nrt_receipt": str(receipt_path), "source_files": inputs["files"]})
+        return destination, receipt
+
+    def prism_paths(self, day):
+        root = self.root / "forcing/inputs/oregon_state/prism/an/4km/daily"
+        return [root / variable / f"{d:%Y/%m}/prism_{variable}_us_25m_{d:%Y%m%d}.nc"
+                for d in (day, day + timedelta(days=1)) for variable in ("ppt", "tmin", "tmax")]
+
+    def produce_day(self, day):
+        prism = self.prism_paths(day)
+        constrained = all(p.is_file() for p in prism)
+        required = [day + timedelta(days=i) for i in (-1, 0, 1)] if constrained else [day]
+        baselines = [self.baseline_day(d) for d in required]
+        inputs = {"baseline_fingerprints": [r["input_fingerprint"] for _, r in baselines],
+                  "baseline_sha256": [r["sha256"] for _, r in baselines],
+                  "prism": [identity(p) for p in prism], "policy": POLICY}
+        expected = fingerprint(inputs)
+        destination = day_path(self.output, day)
+        receipt_path = destination.with_name(destination.name + ".nrt-receipt.json")
+        old = read_json(receipt_path)
+        if old.get("prism_constrained") and not constrained:
+            raise RuntimeError("Retain existing PRISM-constrained NRT while its inputs are missing")
+        if up_to_date(destination, old, expected):
+            return {"day": str(day), "status": "unchanged", "gfs_hours": old["gfs_hours"],
+                    "prism_constrained": old["prism_constrained"]}
+        with tempfile.TemporaryDirectory(prefix="nrt-final-", dir=self.work) as tmp:
+            tmp = Path(tmp)
+            def run(*args):
+                subprocess.run([sys.executable, *map(str, args)], cwd=self.root, check=True)
+            if constrained:
+                windows = tmp / "windows/nrt"
+                for d in (day, day + timedelta(days=1)):
+                    run(self.root / "bin/produce_prism_constrained_daily.py", "--day", d,
+                        "--complete-root", self.baseline, "--output-root", windows,
+                        "--revision", "early" if (self.as_of.date() - d).days < 30 else "provisional",
+                        "--stream", "nrt", "--work-directory", tmp,
+                        "--archive-access", "direct", "--allow-legacy-12utc-output")
+                run(self.root / "bin/materialize_calendar_forcing.py", "--input-root", windows,
+                    "--output-root", tmp / "final", "--start", day, "--days", 1, "--stream", "nrt",
+                    "--require-accepted-prism-windows", "--hierarchical", "--work-directory", tmp)
+                candidate = day_path(tmp / "final", day)
+            else:
+                candidate = tmp / "unconstrained.nc"
+                shutil.copyfile(baselines[0][0], candidate)
+            self.audit_final(candidate, day, constrained)
+            if [identity(p) for p in prism] != inputs["prism"]:
+                raise ValueError("PRISM changed during reconciliation; retain previous publication")
+            checksum = transfer(candidate, destination)
+        receipt = {"status": "passed", "day": str(day), "input_fingerprint": expected,
+                   "inputs": inputs, "published_identity": identity(destination), "sha256": checksum,
+                   "as_of": self.as_of.isoformat(), "prism_constrained": constrained,
+                   "gfs_hours": next(r["gfs_hours"] for p, r in baselines if r["day"] == str(day)),
+                   "hourly_primary_sources": next(r["hourly_primary_sources"] for p, r in baselines if r["day"] == str(day))}
+        _atomic_json(receipt_path, receipt)
+        _atomic_json(destination.with_name(destination.name + ".manifest.json"), {
+            "daily_file": str(destination), "verified": True, "forcing_stream": "nrt",
+            "verification": POLICY, "nrt_receipt": str(receipt_path), **receipt})
+        return {"day": str(day), "status": "published", "gfs_hours": receipt["gfs_hours"],
+                "prism_constrained": constrained}
+
+    def audit_final(self, path, day, constrained):
+        with Dataset(path, "r+") as data:
+            times = num2date(data["time"][:], data["time"].units, only_use_cftime_datetimes=False)
+            if [(t.date(), t.hour, t.minute, t.second) for t in times] != [(day, h, 0, 0) for h in range(24)]:
+                raise ValueError("NRT output is not 00–23 UTC")
+            if not getattr(data, "cnrfc_stage4_policy", ""):
+                raise ValueError("NRT output lost CNRFC exclusion provenance")
+            if constrained and str(getattr(data, "prism_reconciliation_accepted", "false")).lower() != "true":
+                raise ValueError("NRT output lacks accepted PRISM reconciliation")
+            for index in range(24):
+                for name in FIELDS:
+                    values = np.ma.filled(data[name][index], np.nan)
+                    if not np.isfinite(values[self.repair.active]).all():
+                        raise ValueError(f"Final NRT active holes: {index} {name}")
+                    values[~self.repair.keep] = np.nan
+                    data[name][index] = np.where(np.isfinite(values), values, data[name]._FillValue)
+            data.forcing_stream = "nrt"
+            data.archive_granularity = "utc_calendar_day"
+            data.nrt_production_policy = POLICY
+            data.prism_constraint_status = "applied" if constrained else "awaiting_complete_daily_inputs"
+            if not constrained:
+                data.prism_reconciliation_accepted = "false"
+            data.forcing_domain_policy = "nrt_native_gfs_static_envelope_v1"
+        with Dataset(path) as data:
+            for index in range(24):
+                for name in FIELDS:
+                    values = np.ma.filled(data[name][index], np.nan)
+                    if not np.isfinite(values[self.repair.active]).all() or np.isfinite(values[~self.repair.keep]).any():
+                        raise ValueError(f"NRT readback failed: {index} {name}")
+
+
+def run_cycle(root, work, start, end, as_of, *, output_root=None, baseline_root=None,
+              requested_at=None):
+    """An exclusive recent-NRT writer; failures retain the previous daily files."""
+    worker_started = datetime.now(UTC)
+    state_root = root / "forcing/status/nrt-gfs"
+    state_root.mkdir(parents=True, exist_ok=True)
+    report = {"policy": POLICY, "start": str(start), "end": str(end), "as_of": as_of.isoformat(),
+              "status": "running", "job_id": os.environ.get("SLURM_JOB_ID"), "days": [], "errors": []}
+    report["worker_started_utc"] = worker_started.isoformat()
+    report["requested_at"] = requested_at
+    with (state_root / "cycle.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _atomic_json(state_root / "latest.json", report)
+        try:
+            engine = RecentNrt(root, work, as_of, output_root=output_root, baseline_root=baseline_root)
+        except (OSError, ValueError, RuntimeError, AssertionError) as error:
+            report.update(status="failed", errors=[{"stage": "initialization", "error": str(error)}])
+            _atomic_json(state_root / "latest.json", report)
+            return report
+        backlog = replacement_backlog(engine.output, engine.layout, start)
+        report["replacement_backlog_days"] = [str(d) for d in backlog]
+        days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+        days += backlog[:engine.config.get("maximum_old_replacement_days", 2)]
+        for day in days:
+            day_started = time.monotonic()
+            try:
+                result = engine.produce_day(day)
+                result["worker_seconds"] = time.monotonic() - day_started
+                report["days"].append(result)
+            except (OSError, ValueError, RuntimeError, AssertionError, subprocess.CalledProcessError) as error:
+                report["errors"].append({"day": str(day), "error": str(error),
+                                         "worker_seconds": time.monotonic() - day_started})
+            _atomic_json(state_root / "latest.json", report)
+        report["status"] = "failed" if report["errors"] else "passed"
+        report["finished_utc"] = datetime.now(UTC).isoformat()
+        report["latency"] = (latency(requested_at, worker_started, report["finished_utc"])
+                             if requested_at else {"latency_status": "launch_time_unknown"})
+        _atomic_json(state_root / "latest.json", report)
+        _atomic_json(state_root / f"cycle-{os.environ.get('SLURM_JOB_ID', as_of.strftime('%Y%m%dT%H%M%S'))}.json", report)
+    return report

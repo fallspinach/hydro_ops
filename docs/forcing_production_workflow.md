@@ -537,6 +537,13 @@ without modifying retro data; its explicit 40 km cap is not an operational defau
 Sparse experimental patches are not LDASIN
 files and must not be passed directly to WRF-Hydro.
 
+Subsequent integration: the [source-aware recent-NRT production path](nrt_gfs_operations.md)
+now connects acquisition, hourly selection, automatic NLDAS replacement and status
+reporting to the existing coordinator. It is gated by real-data acceptance job
+4520199; no scheduled activation is claimed before that test passes. Current repair
+campaigns do not use this path. See that operational record for configuration,
+full-day latency, seven-day lookback, replacement backlog and atomic publication.
+
 The blanket inactive masking policy `nldas2_rectangle_nwm_active_land_v2` is retired because
 it also removed inland-water forcing. Jobs 4517940 and 4517941 were canceled; 41 published
 days in January-April 1979 had already been filtered. Such files are explicitly rejected by
@@ -582,6 +589,66 @@ This is a reconstruction using currently available source data, including revise
 it does not recreate the exact source availability at the historical NRT issue time. The NRT and
 retro directories remain separate. Missing six-hour Stage-IV data uses the non-Stage-IV
 precipitation hierarchy inside CNRFC and still records the hourly Stage-IV exclusion policy.
+
+#### Post-2020 retry and static-envelope rollout (2026-09-12)
+
+Campaign 4517005 had 36 successful seven-day batches (252 published days), nine
+failed batches, eight running and 255 pending at the retry checkpoint. Six failures
+were hourly schema mismatches; three older failures were final publication-gate
+rejections. The latter logs show accepted PRISM constraints and completed spatial
+audits, but their scratch candidates are gone and the old exception did not name
+the failed attribute. Their exact metadata failure is therefore not established.
+Keep acceptance thresholds unchanged and verify through a gated real-data retry.
+
+`precip_timing_source_id` is now always present in new precipitation outputs. It
+is zero when there is no separate six-hour timing provenance. The daily archive
+command also normalizes owned hourly staging files from already-running workers;
+existing timing IDs and all physical fields are preserved. No published daily
+file is edited by this normalization. All other schema differences remain errors.
+Final calendar validation checks every timestamp against 00–23 UTC and logs named
+failed checks plus their actual attributes. Missing CNRFC-policy metadata still
+fails closed, including dry days without a six-hour constraint.
+
+New rebuild submissions set `HYDRO_OPS_REBUILD_STATIC_ENVELOPE=1`. Their order is:
+
+1. Rebuild source baseline with CNRFC hourly exclusion/six-hour reconciliation.
+2. Apply accepted PRISM windows and publish a scratch 00–23 UTC candidate.
+3. Repair active gaps, audit every record, and validate PRISM/CNRFC metadata.
+4. Clip the candidate using the approved
+   `forcing/static/coverage/conus/nldas2_seven_met_static_envelope_v4.nc`.
+5. Verify all eight fields: active cells complete, all retained values unchanged,
+   and no valid values outside the envelope. Verify the permanent-copy checksum
+   before replacement and update the manifest with its permanent file identity.
+
+Mask hash: `d7ff57e87c3dfe709d3f165abfd289bc2761dc262f1be7379927a9fc1aafb4b5`.
+Clipping adds no donors and performs no remapping or PRISM calculation. It still
+requires a compressed rewrite and full readback; real-data canaries will measure
+the extra time. The staged entry point does not extend the historical in-place
+1979–2002 sweep: post-2020 candidates must be beneath the supplied job work root.
+The clipper currently requires NLDAS-2-based input; HRRR-only/mixed NRT cases remain
+separate and must not be relabeled to bypass this guard. Retained NRT baselines
+remain pre-constraint v3 data; the final constrained outputs receive v4.
+
+`bin/retry_post2020_forcing_campaign.py` snapshots accounting, cancels **pending
+tasks only**, and excludes running/completed tasks from replacement. Its default
+is a read-only plan; `--apply` records a frozen inventory and submits:
+
+- **4520188**, two canaries: original indices 8 (2020-12-09–15, containing the
+  December 13 publication rejection) and 45 (2021-08-25–31, containing the
+  August 28 schema failure). Both started; successful completion is not yet claimed.
+- **4520189**, the other 262 failed/pending batches, with `afterok:4520188` and
+  at most eight concurrent workers. If a canary fails, these tasks stay blocked.
+
+Each new task reserves 64 CPUs, 240 GB scratch and 48 hours. The two canaries
+temporarily add 128 CPUs while the original eight workers finish. No healthy
+running worker was canceled and no completed output was deleted. The 255 pending
+original tasks were canceled to prevent duplicate publication. Existing completed
+and still-running original batches are not retroactively v4-certified; their
+outputs need a separately coordinated clipping-only pass, not another CNRFC/PRISM
+rebuild. Persistent candidate audits are in
+`forcing/work/post2020-static-envelope-audits/`; the retry inventory and commands
+are in `forcing/work/post2020-retry-20260912T233610449730/submission.json`.
+Regression verification: 242 tests passed, Ruff clean.
 
 ### Compression and archive layout
 
@@ -1010,6 +1077,10 @@ against SLURM's `MaxSubmitJobsPerAccount` limit, so the controller records each 
 the cycle manifest and retries later shards as quota becomes available. Submission is therefore
 resumable after partial acceptance, and convergence is released only after every baseline shard
 has been submitted and finished.
+
+The next, not-yet-activated scheduling design and its under-one-hour acceptance
+criteria are documented in [incremental NRT operations](incremental_nrt_operations.md).
+The following remains the existing schedule until that rollout passes real-data tests.
 
 - Run a 10-day NRT scan every six hours. This covers Stage-IV regeneration during its first day
   and at approximately 1, 3, 5, and 7 days, plus the usual 3-4-day NLDAS-2 latency and PRISM's

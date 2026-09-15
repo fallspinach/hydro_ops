@@ -1,0 +1,9 @@
+[
+  {"day": "2026-08-25", "stream": "nrt", "changes": ["new_hours"], "scenario": "six_new_hours"},
+  {"day": "2026-08-24", "stream": "nrt", "changes": [], "scenario": "unchanged"},
+  {"day": "2026-08-24", "stream": "nrt", "changes": ["stage4"], "scenario": "stage4_revision"},
+  {"day": "2026-08-23", "stream": "nrt", "changes": ["prism_ppt"], "scenario": "prism_only"},
+  {"day": "2026-08-22", "stream": "nrt", "changes": ["nldas2"], "scenario": "nldas_arrival"},
+  {"day": "2026-08-10", "stream": "nrt", "changes": ["prism_ppt"], "scenario": "older_revision"},
+  {"day": "2026-02-01", "stream": "retro", "changes": ["missing_output"], "prism_stable": true, "scenario": "stable_promotion"}
+]

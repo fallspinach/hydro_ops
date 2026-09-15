@@ -61,7 +61,8 @@ def fill_active_holes(values, missing, active, keep, gap, cache):
 
 
 def publish_gfs_day(source_path, output_path, envelope_path, geometry_path, conservative_path,
-                    cache_path, work, *, nldas_available, as_of=None, historical_test=False):
+                    cache_path, work, *, nldas_available, as_of=None, historical_test=False,
+                    allow_mixed=False, require_native_repair=False):
     if source_path.resolve() == output_path.resolve() or output_path.exists():
         raise ValueError("Opt-in writer requires a new, separate destination")
     if not historical_test and as_of is None:
@@ -73,7 +74,7 @@ def publish_gfs_day(source_path, output_path, envelope_path, geometry_path, cons
     # Historical replay may bypass current archive availability, never cell provenance.
     with Dataset(source_path) as source:
         modes = [classify_hour(source["forcing_source_id"][i]) for i in range(len(source.dimensions["time"]))]
-    if any(mode != "hrrr" for mode in modes):
+    if any(mode not in ({"nldas2", "hrrr"} if allow_mixed else {"hrrr"}) for mode in modes):
         return {"status": "rebuild_with_nldas2", "reason": "Non-HRRR hourly/cell provenance protected; route through native-source repair",
                 "hourly_sources": modes}
     with Dataset(envelope_path) as envelope:
@@ -127,25 +128,36 @@ def publish_gfs_day(source_path, output_path, envelope_path, geometry_path, cons
             dst["precip_source_id"].flag_meanings = "missing mrms_pass2 mrms_pass1 stage4_archive stage4_realtime nldas2 hrrr stage4_06h_constrained gfs_short_forecast"
             for index, stamp in enumerate(times):
                 valid = stamp.replace(tzinfo=UTC)
-                gfs = downloader.hour(valid, as_of=as_of)
-                fallback, rh_clipped = remap_hour(gfs, geometry, precipitation_remapper=conservative, return_quality=True)
-                cycle[index] = date2num(datetime.fromisoformat(gfs.attrs["cycle"]), cycle.units)
-                leads[index] = gfs.attrs["lead"]
+                use_gfs = modes[index] == "hrrr"
+                if use_gfs:
+                    gfs = downloader.hour(valid, as_of=as_of)
+                    fallback, rh_clipped = remap_hour(gfs, geometry, precipitation_remapper=conservative, return_quality=True)
+                    cycle[index] = date2num(datetime.fromisoformat(gfs.attrs["cycle"]), cycle.units)
+                    leads[index] = gfs.attrs["lead"]
+                    attributes = gfs.attrs
+                else:
+                    fallback = {}
+                    cycle[index] = np.ma.masked
+                    leads[index] = 0
+                    attributes = {"cycle": None, "lead": 0, "url": None,
+                                  "retrieved_utc": None, "remote_last_modified": ""}
                 usage = np.zeros(keep.shape, dtype=np.uint8)
-                usage[gap] = 1
-                usage.ravel()[indices[geometry["terrain_fallback"]]] |= 4
-                usage.ravel()[indices[rh_clipped]] |= 8
-                if any(json.loads(gfs.attrs["negative_roundoff_clipped"]).values()):
-                    usage[gap] |= 16
+                if use_gfs:
+                    usage[gap] = 1
+                    usage.ravel()[indices[geometry["terrain_fallback"]]] |= 4
+                    usage.ravel()[indices[rh_clipped]] |= 8
+                    if any(json.loads(gfs.attrs["negative_roundoff_clipped"]).values()):
+                        usage[gap] |= 16
                 rain_ids = np.asarray(dst["precip_source_id"][index])
                 rain_qc = np.asarray(dst["precip_qc_flags"][index], dtype=np.uint16)
                 rain_values = np.ma.filled(dst["RAINRATE"][index], np.nan)
                 supported = precipitation_supported(rain_ids, rain_values, rain_qc)
-                rain_targets = gap & ~supported
+                rain_targets = gap & ~supported & use_gfs
                 usage[rain_targets] |= 2
-                report = {"valid_time": valid.isoformat(), "cycle": gfs.attrs["cycle"], "lead": int(gfs.attrs["lead"]),
-                          "as_of": as_of.isoformat() if as_of else None, "source_url": gfs.attrs["url"],
-                          "retrieved_utc": gfs.attrs["retrieved_utc"], "remote_last_modified": gfs.attrs.get("remote_last_modified", ""),
+                report = {"valid_time": valid.isoformat(), "primary_source": modes[index],
+                          "cycle": attributes["cycle"], "lead": int(attributes["lead"]),
+                          "as_of": as_of.isoformat() if as_of else None, "source_url": attributes["url"],
+                          "retrieved_utc": attributes["retrieved_utc"], "remote_last_modified": attributes.get("remote_last_modified", ""),
                           "gfs_rain_cells": int(rain_targets.sum()), "preserved_precipitation_cells_in_gap": int((gap & supported).sum()),
                           "active_repairs": {}, "repair_max_distance_cells": {}}
                 for name in (*MET_FIELDS, "RAINRATE"):
@@ -153,11 +165,14 @@ def publish_gfs_day(source_path, output_path, envelope_path, geometry_path, cons
                     stored = var[index]
                     values = np.asarray(np.ma.getdata(stored)).copy()
                     missing = np.ma.getmaskarray(stored) | ~np.isfinite(values)
-                    targets = gap if name != "RAINRATE" else rain_targets
+                    targets = (gap & use_gfs) if name != "RAINRATE" else rain_targets
                     unchanged = keep & ~targets & ~missing
                     before_hash = sha(values[unchanged])
                     sparse_targets = np.ones(len(indices), bool) if name != "RAINRATE" else rain_targets.ravel()[indices]
-                    values.ravel()[indices[sparse_targets]] = fallback[name][sparse_targets]
+                    if use_gfs:
+                        values.ravel()[indices[sparse_targets]] = fallback[name][sparse_targets]
+                    if require_native_repair and np.any(missing & active & ~gap):
+                        raise ValueError("Native primary repair incomplete; refusing unbounded target-grid filling")
                     values, repaired, maximum = fill_active_holes(values, missing, active, keep, gap, donor_cache)
                     usage[repaired] |= 32
                     report["active_repairs"][name] = int(repaired.sum())
@@ -169,10 +184,13 @@ def publish_gfs_day(source_path, output_path, envelope_path, geometry_path, cons
                     var[index] = values
                 flags[index] = usage
                 met_ids = np.asarray(dst["forcing_source_id"][index])
-                met_ids[gap], met_ids[~keep] = GFS_MET_SOURCE_ID, 0
+                if use_gfs:
+                    met_ids[gap] = GFS_MET_SOURCE_ID
+                met_ids[~keep] = 0
                 dst["forcing_source_id"][index] = met_ids
                 met_qc = np.asarray(dst["forcing_qc_flags"][index], dtype=np.uint32)
-                met_qc[gap] = 0  # Old HRRR missing-data flags do not describe the new GFS bundle.
+                if use_gfs:
+                    met_qc[gap] = 0  # Old HRRR missing-data flags do not describe the new GFS bundle.
                 dst["forcing_qc_flags"][index] = met_qc
                 rain_ids[rain_targets], rain_ids[~keep] = GFS_PRECIP_SOURCE_ID, 0
                 dst["precip_source_id"][index] = rain_ids
@@ -183,7 +201,8 @@ def publish_gfs_day(source_path, output_path, envelope_path, geometry_path, cons
                 dst["precip_confidence"][index] = confidence
                 audit["hours"].append(report)
                 print(json.dumps(report), flush=True)
-            dst.setncatts({"forcing_source": "hrrr_gfs_nrt", "forcing_domain_policy": POLICY,
+            source_label = "nldas2" if set(modes) == {"nldas2"} else "hrrr_gfs_nrt" if set(modes) == {"hrrr"} else "mixed_nldas2_hrrr_gfs_nrt"
+            dst.setncatts({"forcing_source": source_label, "forcing_domain_policy": POLICY,
                 "forcing_static_mask_sha256": sha(keep), "gfs_conservative_weights": str(conservative_path.resolve()),
                 "gfs_publication_status": "historical_test" if historical_test else "opt_in_nrt",
                 "gfs_precipitation_confidence": "0.15 is a provisional uncalibrated heuristic",
@@ -211,6 +230,7 @@ def publish_gfs_day(source_path, output_path, envelope_path, geometry_path, cons
                 raise ValueError("Publication transfer checksum differs")
         os.replace(partial, output_path)
     audit.update(status="passed", source_unchanged=True, published_sha256=checksum,
+                 gfs_hours=sum(mode == "hrrr" for mode in modes), hourly_primary_sources=modes,
                  all_original_valid_unselected_values_inside_envelope_unchanged=True, missing_active_values=0,
                  valid_outside_envelope=0)
     _atomic_json(output_path.with_name(output_path.name + ".gfs-audit.json"), audit)

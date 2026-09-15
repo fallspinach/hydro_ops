@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from hydro_ops.config import Settings
+from hydro_ops.forcing.nrt_cycle import activation, configuration, read_json
 from hydro_ops.forcing_status import forcing_coverage
 
 SCHEMA_VERSION = "1.0"
@@ -203,6 +204,9 @@ def build_status(
             issues.append(f"{stream}: {item['partial_files']} partial file(s)")
         if item["duplicate_days"]:
             issues.append(f"{stream}: {len(item['duplicate_days'])} duplicate day(s)")
+    recent = read_json(settings.project_root / "forcing/status/nrt-gfs/latest.json")
+    if recent.get("status") == "failed":
+        issues.append("recent NRT GFS cycle failed; previous accepted daily files retained")
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at_utc": generated.isoformat(),
@@ -212,6 +216,12 @@ def build_status(
         "production_streams": production,
         "slurm": slurm_inventory() if include_slurm else {"available": False, "skipped": True},
         "coordinators": coordinator_inventory(settings.work_root),
+        "recent_nrt_gfs": {
+            "configured": configuration(settings.project_root).get("enabled", False),
+            "activated": activation(settings.project_root),
+            "latest_cycle": recent,
+            "acceptance": read_json(settings.project_root / "forcing/status/nrt-gfs/activation.json"),
+        },
         "scan": {"mode": "metadata", "netcdf_contents_validated": False},
     }
 
@@ -234,6 +244,9 @@ def format_text(report: dict[str, Any]) -> str:
         f"{'Product':<25} {'Latest valid UTC':<25} {'Age':>10} {'Files':>10}",
         "-" * 74,
     ]
+    recent = report.get("recent_nrt_gfs", {})
+    lines.insert(2, f"Recent NRT GFS: {'active' if recent.get('activated') else 'not activated'}; "
+                    f"last cycle: {recent.get('latest_cycle', {}).get('status', 'not run')}")
     for row in report["external_sources"]:
         age = "-" if row["age_hours"] is None else f"{row['age_hours']:.1f} h"
         lines.append(

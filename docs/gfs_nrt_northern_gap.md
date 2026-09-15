@@ -1,7 +1,9 @@
 # Experimental GFS fallback for the northern NRT gap
 
-Status, 2026-09-12: opt-in exploration and reusable implementation, **not enabled
-in production or cron**. Existing NLDAS-2/HRRR processing and active repair jobs
+Status, 2026-09-12: the experiments below informed the new
+[source-aware recent-NRT integration](nrt_gfs_operations.md). Production/cron use
+is now wired to an acceptance gate, **not yet activated** while job 4520199 tests
+mixed-hour selection, NLDAS replacement and PRISM end-to-end. Existing repair jobs
 are unchanged. This is a short-forecast fallback, not an hourly GFS analysis.
 
 ## Selection policy
@@ -380,8 +382,13 @@ The isolated pilot now uses `ensure_precipitation_timing` from
 where absent; zero denotes no separate within-block timing provenance. Existing
 timing IDs and all physical fields are preserved. The pilot normalizes staged
 hourly files before aggregation and its completed neighboring daily archives
-before PRISM windows are assembled. No production or retro caller invokes this
-helper. Schema validation remains strict, with improved missing/extra-variable
+before PRISM windows are assembled. Initially this was pilot-only. Following the
+same failure in campaign 4517005, the helper was promoted to
+`precipitation_schema.py` for production-owned hourly staging; `pilot_schema.py`
+retains a compatibility import. The precipitation writer now always creates the
+timing field, and the hourly-to-daily command normalizes older staged hours before
+aggregation. Published daily archives are not modified by this normalization.
+Schema validation remains strict, with improved missing/extra-variable
 diagnostics. The targeted regression suite passes **41 tests**, including a
 reproduction of mixed reconciled/unreconciled hours and exact rainfall preservation.
 

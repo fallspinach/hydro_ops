@@ -63,7 +63,8 @@ def test_misleading_global_hrrr_label_cannot_override_nldas(tmp_path):
 
 
 @pytest.mark.parametrize("outage", [False, True])
-def test_full_day_publication_preserves_input_and_supported_rain(tmp_path, monkeypatch, outage):
+@pytest.mark.parametrize("mixed", [False, True])
+def test_full_day_publication_preserves_input_and_supported_rain(tmp_path, monkeypatch, outage, mixed):
     keep = np.array([[True, True], [True, False]])
     lat = np.array([[50., 51.], [50., 51.]], dtype=np.float32)
     lon = np.array([[-110., -110.], [-109., -109.]], dtype=np.float32)
@@ -98,6 +99,11 @@ def test_full_day_publication_preserves_input_and_supported_rain(tmp_path, monke
         data["forcing_source_id"][:, 0, 0] = 2
         data["precip_source_id"][:, 0, 1] = 3
         data["precip_source_id"][1, 0, 1] = 6
+        if mixed:
+            data["forcing_source_id"][:12, 0, 0] = 1
+            for name in names:
+                if name != "RAINRATE":
+                    data[name][:12, 0, 1] = 7
     before = source.read_bytes()
 
     class Downloader:
@@ -105,7 +111,9 @@ def test_full_day_publication_preserves_input_and_supported_rain(tmp_path, monke
             pass
 
         def hour(self, valid, **kwargs):
-            if outage and valid.hour == 2:
+            if mixed and valid.hour < 12:
+                raise AssertionError("GFS must never be acquired for a NLDAS-2 hour")
+            if outage and valid.hour == (14 if mixed else 2):
                 raise RuntimeError("No complete GFS bundle")
             return SimpleNamespace(attrs={"cycle": (valid-timedelta(hours=1)).isoformat(), "lead": 1,
                 "negative_roundoff_clipped": "{}", "url": "synthetic", "retrieved_utc": valid.isoformat()})
@@ -117,23 +125,24 @@ def test_full_day_publication_preserves_input_and_supported_rain(tmp_path, monke
     if outage:
         with pytest.raises(RuntimeError, match="No complete GFS bundle"):
             publish_gfs_day(source, output, envelope, geometry, tmp_path / "weights", tmp_path,
-                            tmp_path, nldas_available=False, historical_test=True)
+                            tmp_path, nldas_available=False, historical_test=True, allow_mixed=mixed)
         assert not output.exists()
         assert source.read_bytes() == before
         return
     report = publish_gfs_day(source, output, envelope, geometry, tmp_path / "weights", tmp_path,
-                             tmp_path, nldas_available=False, historical_test=True)
+                             tmp_path, nldas_available=False, historical_test=True, allow_mixed=mixed)
     assert report["status"] == "passed"
     assert source.read_bytes() == before
     with Dataset(output) as data:
         assert np.all(data["T2D"][:, 0, 0] == 10)
-        assert np.all(data["T2D"][:, 0, 1] == 20)
+        np.testing.assert_array_equal(data["T2D"][:, 0, 1], [7] * 12 + [20] * 12 if mixed else [20] * 24)
         assert np.all(data["T2D"][:, 1, 0] == 10)
         assert np.ma.getmaskarray(data["T2D"][:, 1, 1]).all()
         assert data["RAINRATE"][0, 0, 1] == 5
-        assert data["RAINRATE"][1, 0, 1] == 20
+        assert data["RAINRATE"][1, 0, 1] == (5 if mixed else 20)
         assert data["precip_source_id"][0, 0, 1] == 3
-        assert data["precip_source_id"][1, 0, 1] == 8
+        assert data["precip_source_id"][1, 0, 1] == (6 if mixed else 8)
+    assert report["gfs_hours"] == (12 if mixed else 24)
     manifest = json.loads(output.with_name(output.name + ".manifest.json").read_text())
     assert manifest["verified"] and len(manifest["source_files"]) == 24
 

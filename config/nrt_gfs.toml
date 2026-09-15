@@ -1,0 +1,12 @@
+# Recent NRT only. Existing retrospective rebuild submissions do not read this file.
+enabled = true
+lookback_days = 7
+maximum_old_replacement_days = 2
+assembly_workers = 4
+maximum_native_donor_km = 40
+activation_receipt = "forcing/status/nrt-gfs/activation.json"
+envelope = "forcing/static/coverage/conus/nldas2_seven_met_static_envelope_v4.nc"
+geometry = "forcing/static/remapping/nwm_conus_1km/gfs_hrrr_gap_weights_v1.npz"
+conservative_weights = "forcing/static/remapping/nwm_conus_1km/gfs_gap_conservative_v1.nc"
+cache = "forcing/inputs/noaa/gfs/surface_025"
+model_terrain = "nwm/static/operational/nwm.v3.1.6/domain/wrfinput_CONUS_NLDAS2.nc"

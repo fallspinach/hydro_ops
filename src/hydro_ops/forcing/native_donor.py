@@ -94,7 +94,8 @@ class NativeDonorRepair:
         self.model_height_used = ~np.isfinite(self.height) & self.active
         self.height = np.where(self.model_height_used, model_height, self.height)
 
-    def repair(self, path, selection):
+    def repair(self, path, selection, *, deferred_mask=None):
+        required = self.active if deferred_mask is None else self.active & ~np.asarray(deferred_mask, bool)
         with open_normalized_forcing(selection.path, selection.product, valid_time=selection.valid_time) as source:
             native = {name: np.asarray(source[key].squeeze().values) for name, key in FIELDS.items()}
             native["RAINRATE"] = native["RAINRATE"] / 3600.0
@@ -113,11 +114,11 @@ class NativeDonorRepair:
             np.testing.assert_allclose(data["lon"][:], self.lon, atol=1e-5, rtol=0)
             primary = {name: np.ma.filled(data[name][0], np.nan) for name in FIELDS}
             result, flags, distances, report = repair_arrays(primary, native, height, slat, slon,
-                self.height, self.lat, self.lon, self.active, maximum_km=self.maximum_km)
+                self.height, self.lat, self.lon, required, maximum_km=self.maximum_km)
             flags[self.model_height_used & ((flags & 1) != 0)] |= 16
             for name, values in result.items():
                 values[~self.keep] = np.nan
-                if not np.isfinite(values[self.active]).all():
+                if not np.isfinite(values[required]).all():
                     raise ValueError(f"Unrepaired active {name}")
                 data[name][0] = np.where(np.isfinite(values), values, data[name]._FillValue)
             dims = data["T2D"].dimensions
@@ -150,6 +151,6 @@ class NativeDonorRepair:
         with Dataset(path) as data:
             for name in FIELDS:
                 values = np.ma.filled(data[name][0], np.nan)
-                if not np.isfinite(values[self.active]).all() or np.isfinite(values[~self.keep]).any():
+                if not np.isfinite(values[required]).all() or np.isfinite(values[~self.keep]).any():
                     raise ValueError(f"Native repair readback failed: {name}")
         return report
