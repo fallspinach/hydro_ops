@@ -14,7 +14,7 @@ pilot = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(pilot)
 
 
-def fixture_files(tmp_path):
+def fixture_files(tmp_path, chunksizes=None):
     source, mask = tmp_path / "source.nc", tmp_path / "mask.nc"
     keep = np.array([[True, True], [False, False]])
     active = np.array([[True, False], [False, False]])
@@ -34,7 +34,7 @@ def fixture_files(tmp_path):
                 data.createVariable("time", "i4", ("time",))[:] = [0, 1]
                 for name in pilot.FIELDS:
                     var = data.createVariable(name, "f4", ("time", "y", "x"), fill_value=-9999,
-                                              zlib=True, complevel=2)
+                                              zlib=True, complevel=2, chunksizes=chunksizes)
                     var[:] = [[[1, -9999], [3, 4]], [[5, 6], [7, 8]]]
     return source, mask
 
@@ -87,12 +87,13 @@ def test_grid_mismatch_refused(tmp_path):
         pilot.run(source, mask, tmp_path / "output.nc", tmp_path / "work")
 
 
-def test_production_publish_resume_and_manifest_recovery(tmp_path, monkeypatch):
+@pytest.mark.parametrize('fast', [False, True])
+def test_production_publish_resume_and_manifest_recovery(tmp_path, monkeypatch, fast):
     monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "bin"))
     monkeypatch.setitem(sys.modules, "test_static_forcing_mask", pilot)
     import apply_static_forcing_mask as production
 
-    original, mask = fixture_files(tmp_path)
+    original, mask = fixture_files(tmp_path, chunksizes=(1, 1, 1))
     root = tmp_path / "retro"
     source = root / "1979/05/19790515.LDASIN_DOMAIN1"
     source.parent.mkdir(parents=True)
@@ -104,11 +105,13 @@ def test_production_publish_resume_and_manifest_recovery(tmp_path, monkeypatch):
         data.status = "operational_historical_archive"
     state = tmp_path / "state"
     args = (source, mask, root, state, tmp_path / "work")
-    assert production.publish(*args)["status"] == "published"
+    assert production.publish(*args, fast=fast)["status"] == "published"
     assert production.publish(*args)["status"] == "already_verified"
     assert json.loads(manifest.read_text())["source_provenance"] == "preserve-me"
     journal = state / "19790515.json"
     report = json.loads(journal.read_text())
+    if fast:
+        assert report['full_readback']  # Unknown input audit must fall back.
     report["status"] = "ready_to_publish"
     journal.write_text(json.dumps(report))
     manifest.unlink()
@@ -116,3 +119,67 @@ def test_production_publish_resume_and_manifest_recovery(tmp_path, monkeypatch):
     assert json.loads(manifest.read_text())["source_provenance"] == "preserve-me"
     with pytest.raises(ValueError):
         production.publish(source, mask, tmp_path / "different-root", state, tmp_path / "work")
+
+
+def test_post2020_clipping_requires_explicit_owned_staging(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "bin"))
+    monkeypatch.setitem(sys.modules, "test_static_forcing_mask", pilot)
+    import apply_static_forcing_mask as production
+
+    original, mask = fixture_files(tmp_path)
+    work = tmp_path / "scratch"
+    root = work / "candidate/retro"
+    source = root / "2020/12/20201213.LDASIN_DOMAIN1"
+    source.parent.mkdir(parents=True)
+    original.rename(source)
+    with Dataset(mask, "r+") as data:
+        data.policy, data.status = production.POLICY, "operational_historical_archive"
+    args = (source, mask, root, tmp_path / "state", work)
+    with pytest.raises(ValueError, match="authorized"):
+        production.publish(*args)
+    with pytest.raises(ValueError, match="provenance"):
+        production.publish(*args, staged_rebuild=True)
+    with Dataset(source, "r+") as data:
+        data.archive_granularity = "utc_calendar_day"
+        data.prism_reconciliation_accepted = "true"
+        data.cnrfc_stage4_policy = "hourly Stage-IV rejected"
+    with pytest.raises(ValueError):
+        production.publish(source, mask, root, tmp_path / "state", tmp_path / "other",
+                           staged_rebuild=True)
+    assert production.publish(*args, staged_rebuild=True)["status"] == "published"
+    with Dataset(source) as data:
+        assert data.forcing_domain_policy == production.POLICY
+        assert data.forcing_domain_content_audit == production.AUDIT
+        np.testing.assert_array_equal(data["T2D"][:, 0, 0], [1, 5])
+        assert np.ma.getmaskarray(data["T2D"][:])[:, 1, :].all()
+
+
+def test_new_campaign_staging_and_final_transfer(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "bin"))
+    monkeypatch.setitem(sys.modules, "test_static_forcing_mask", pilot)
+    import apply_static_forcing_mask as production
+
+    original, mask = fixture_files(tmp_path)
+    work = tmp_path / "scratch"
+    root = work / "calendar/retro"
+    source = root / "2003/07/20030701.LDASIN_DOMAIN1"
+    source.parent.mkdir(parents=True)
+    original.rename(source)
+    with Dataset(mask, "r+") as data:
+        data.policy, data.status = production.POLICY, "operational_historical_archive"
+    with Dataset(source, "r+") as data:
+        data.archive_granularity = "utc_calendar_day"
+        data.prism_reconciliation_accepted = "true"
+    state = tmp_path / "state"
+    args = (source, mask, root, state, work)
+    with pytest.raises(ValueError, match="authorized"):
+        production.publish(*args)
+    with pytest.raises(ValueError):
+        production.publish(source, mask, root, state, tmp_path / "other", staged_production=True)
+    assert production.publish(*args, staged_production=True)["status"] == "published"
+    final = tmp_path / "permanent/2003/07" / source.name
+    production.transfer_publication(source, final, state)
+    manifest = json.loads(final.with_name(final.name + ".manifest.json").read_text())
+    assert manifest["daily_file"] == str(final)
+    assert manifest["static_envelope"]["published_identity"] == production.identity(final)
+    assert production.file_hash(final) == production.file_hash(source)

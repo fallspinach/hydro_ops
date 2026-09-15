@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -142,6 +143,7 @@ def main() -> int:
             work_directory=args.work_directory,
             source_time_indices=indices,
             verification="targeted",
+            chunk_copy=os.environ.get('HYDRO_OPS_ARCHIVE_CHUNKS') == '1',
             global_attributes={
                 "calendar_day_materialization": "true",
                 "calendar_day_source_root": str(args.input_root.resolve()),

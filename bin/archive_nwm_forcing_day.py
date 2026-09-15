@@ -10,6 +10,7 @@ from pathlib import Path
 
 from hydro_ops.config import load_settings
 from hydro_ops.forcing.daily_archive import create_daily_archive
+from hydro_ops.forcing.precipitation_schema import ensure_precipitation_timing
 from hydro_ops.work import temporary_work_root
 
 
@@ -54,6 +55,10 @@ def main() -> int:
         raise FileExistsError(f"Output exists; use --force to replace it: {destination}")
     settings = load_settings()
     work = args.work_directory or temporary_work_root(settings, f"nwm-daily-{args.day:%Y%m%d}")
+    # Owned hourly staging only; no physical field or existing timing ID changes.
+    # Also handles hours from workers started before the precipitation writer fix.
+    for path in paths:
+        ensure_precipitation_timing(path)
     create_daily_archive(
         paths,
         destination,

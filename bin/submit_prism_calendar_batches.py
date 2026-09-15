@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import UTC, date, datetime, timedelta
@@ -22,6 +23,23 @@ from hydro_ops.forcing.streams import (
 PRISM_STABLE_AGE_DAYS = 183
 
 
+def writer_exports(stream: str, environ) -> dict[str, str]:
+    """Freeze the validated writer profile when new campaign tasks are submitted.
+
+    Resolving here also reaches controllers already waiting for baseline jobs.
+    Existing workers and unrelated NRT/historical repair submissions are untouched.
+    """
+    if stream != "retro" or environ.get("HYDRO_OPS_RETRO_NEW_PRODUCTION") != "1":
+        return {}
+    profile = environ.get("HYDRO_OPS_RETRO_WRITER_PROFILE", "validated_chunks_v1")
+    if profile not in {"validated_chunks_v1", "reference"}:
+        raise ValueError(f"Unknown retro writer profile: {profile}")
+    enabled = "1" if profile == "validated_chunks_v1" else "0"
+    return {"HYDRO_OPS_RETRO_WRITER_PROFILE": profile,
+            "HYDRO_OPS_ARCHIVE_CHUNKS": enabled,
+            "HYDRO_OPS_BENCH_FAST_MASK": enabled}
+
+
 def revision_for_day(day: date, today: date, stream: str) -> str | None:
     age = (today - day).days
     if stream == "retro":
@@ -32,6 +50,10 @@ def revision_for_day(day: date, today: date, stream: str) -> str | None:
 
 
 def valid_output(path: Path, day: date) -> bool:
+    if os.environ.get("HYDRO_OPS_RETRO_NEW_PRODUCTION") == "1":
+        from hydro_ops.forcing.retro_publication import complete
+        if not complete(path):
+            return False
     try:
         with Dataset(path) as data:
             time = data["time"]
@@ -87,6 +109,7 @@ def main() -> int:
     ):
         parser.error("invalid date range or non-positive resource setting")
     settings = load_settings()
+    writers = writer_exports(args.stream, os.environ)
     baseline = (args.baseline_root or baseline_root(settings.project_root)).resolve()
     output = validate_stream_output_root(
         args.output_root or forcing_stream_root(settings.project_root, args.stream), args.stream
@@ -133,6 +156,7 @@ def main() -> int:
         json.dumps(
             {
                 "eligible_days": len(days),
+                "writer_profile": writers.get("HYDRO_OPS_RETRO_WRITER_PROFILE", "inherited"),
                 "batches": len(batches),
                 "first": days[0][0].isoformat() if days else None,
                 "last": days[-1][0].isoformat() if days else None,
@@ -161,6 +185,7 @@ def main() -> int:
             "revision": revision,
             "baseline_root": str(baseline),
             "output_root": str(output),
+            **({"writer_profile": writers["HYDRO_OPS_RETRO_WRITER_PROFILE"]} if writers else {}),
         }
         for first, last, revision in batches
     ]
@@ -179,6 +204,7 @@ def main() -> int:
             f"HYDRO_OPS_PYTHON={sys.executable},"
             f"HYDRO_OPS_PROJECT_ROOT={settings.project_root},"
             f"HYDRO_OPS_PRISM_CALENDAR_TASK_FILE={task_file.resolve()}"
+            + "".join(f",{key}={value}" for key, value in writers.items())
         ),
         f"--output={settings.log_root}/prism-calendar-batch-%A_%a.out",
         "slurm/produce_prism_calendar_batch.py",

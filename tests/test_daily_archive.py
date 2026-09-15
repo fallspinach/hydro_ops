@@ -2,6 +2,7 @@ from datetime import date
 from pathlib import Path
 
 import numpy as np
+import pytest
 from netCDF4 import Dataset
 
 from hydro_ops.forcing.daily_archive import (
@@ -10,6 +11,30 @@ from hydro_ops.forcing.daily_archive import (
     daily_archive_is_current,
     verified_daily_archive,
 )
+
+
+@pytest.mark.parametrize("legacy_first", [True, False])
+def test_optional_timing_schema_preserves_existing_and_marks_unknown(tmp_path, legacy_first):
+    paths = [tmp_path / f"{h}.nc" for h in range(2)]
+    for hour, path in enumerate(paths):
+        with Dataset(path, "w") as data:
+            data.createDimension("time", 1)
+            data.createDimension("x", 2)
+            time = data.createVariable("time", "f8", ("time",))
+            time.units = "hours since 2003-01-01"
+            time[:] = hour
+            data.createVariable("precip_source_id", "u1", ("time", "x"))[:] = [[3, 7]]
+            if (hour == 1) == legacy_first:
+                data.createVariable("precip_timing_source_id", "u1", ("time", "x"))[:] = [[5, 6]]
+    with pytest.raises(ValueError, match="schema differs"):
+        create_daily_archive(paths, tmp_path / "reject.nc", date(2003, 1, 1), expected_hours=2)
+    output = tmp_path / "normalized.nc"
+    create_daily_archive(paths, output, date(2003, 1, 1), expected_hours=2,
+                         normalize_precipitation_timing=True)
+    with Dataset(output) as data:
+        expected = [[0, 0], [5, 6]] if legacy_first else [[5, 6], [0, 0]]
+        np.testing.assert_array_equal(data["precip_timing_source_id"][:], expected)
+        np.testing.assert_array_equal(data["precip_source_id"][:], [[3, 7], [3, 7]])
 
 
 def test_digest_ignores_storage_beneath_mask() -> None:

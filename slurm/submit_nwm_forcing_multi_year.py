@@ -60,7 +60,7 @@ def baseline_command(python: str, state: dict[str, Any], index: int) -> list[str
         "--cpus-per-task",
         "12",
         "--tmp-mb",
-        "120000",
+        str(state.get("scratch_mb", 120000)),
         "--job-name",
         f"nwm-retro-{state['start'][:4]}-{state['end'][:4]}-baseline-shard-{index + 1}",
     ]

@@ -8,6 +8,7 @@ import shutil
 import tempfile
 from datetime import UTC, date, datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import numpy as np
@@ -36,7 +37,8 @@ def _digest(values) -> str:
 
 
 def _validate_inputs(
-    paths: list[Path], expected_hours: int, source_time_indices: list[int]
+    paths: list[Path], expected_hours: int, source_time_indices: list[int],
+    normalize_precipitation_timing: bool = False,
 ) -> tuple[dict[str, int], list[str]]:
     if len(paths) != expected_hours:
         raise ValueError(f"Expected {expected_hours} hourly files, found {len(paths)}")
@@ -50,6 +52,8 @@ def _validate_inputs(
                 name: len(value) for name, value in dataset.dimensions.items() if name != "time"
             }
             current_variables = sorted(dataset.variables)
+            if normalize_precipitation_timing and "precip_source_id" in current_variables:
+                current_variables = sorted(set(current_variables) | {"precip_timing_source_id"})
             if dimensions is None:
                 dimensions, variables = current_dimensions, current_variables
             elif dimensions != current_dimensions or variables != current_variables:
@@ -74,6 +78,25 @@ def _validate_inputs(
     return dimensions, variables
 
 
+class _UnknownTiming:
+    """Virtual legacy timing field: zero explicitly means unavailable, not a donor ID."""
+
+    def __init__(self, reference):
+        self.reference = reference
+
+    def __getattr__(self, name):
+        return getattr(self.reference, name)
+
+    def __getitem__(self, key):
+        return np.zeros(np.shape(self.reference[key]), dtype="u1")
+
+
+def _source_variable(dataset, name):
+    if name == "precip_timing_source_id" and name not in dataset.variables:
+        return _UnknownTiming(dataset["precip_source_id"])
+    return dataset[name]
+
+
 def create_daily_archive(
     paths: list[Path],
     destination: Path,
@@ -87,14 +110,19 @@ def create_daily_archive(
     verification: str = "full",
     fully_verified_overrides: set[str] | None = None,
     source_time_indices: list[int] | None = None,
+    chunk_copy: bool = False,
+    normalize_precipitation_timing: bool = False,
 ) -> Path:
     """Combine ordered hourly NetCDF files and verify every stored value."""
+    archive_started = perf_counter()
     paths = list(paths)
     explicit_indices = source_time_indices is not None
     indices = [0] * len(paths) if source_time_indices is None else list(source_time_indices)
     if len(indices) != len(paths):
         raise ValueError("source_time_indices must match paths")
-    dimensions, variable_names = _validate_inputs(paths, expected_hours, indices)
+    dimensions, variable_names = _validate_inputs(
+        paths, expected_hours, indices, normalize_precipitation_timing
+    )
     overrides = {} if time_variable_overrides is None else time_variable_overrides
     verify_overrides = set(overrides) if fully_verified_overrides is None else fully_verified_overrides
     if not verify_overrides <= set(overrides):
@@ -104,6 +132,36 @@ def create_daily_archive(
     unknown = set(overrides) - set(variable_names)
     if unknown:
         raise ValueError(f"Override variables are absent from hourly inputs: {sorted(unknown)}")
+    if chunk_copy and compression_level == 2 and not destination.exists():
+        from hydro_ops.forcing.chunk_archive import UnsupportedArchive, assemble
+        try:
+            timing = assemble(paths, indices, destination, day,
+                              destination.parent if work_directory is None else work_directory,
+                              expected_hours=expected_hours, overrides=overrides,
+                              global_attributes=global_attributes,
+                              normalize_precipitation_timing=normalize_precipitation_timing)
+        except UnsupportedArchive as error:
+            import logging
+            logging.getLogger(__name__).warning('Chunk archive fallback: %s', error)
+        else:
+            manifest = {
+                'created': datetime.now(UTC).isoformat(), 'day': day.isoformat(),
+                'daily_file': str(destination),
+                'compression': {'filter': 'deflate', 'level': compression_level, 'shuffle': True},
+                'source_files': [{'path': str(p), **({'time_index': i} if explicit_indices else {}),
+                                  'bytes': p.stat().st_size, 'mtime': p.stat().st_mtime}
+                                 for p, i in zip(paths, indices, strict=True)],
+                'verified': True, 'verification': verification,
+                'overridden_time_variables': sorted(overrides),
+                'fully_verified_overrides': sorted(overrides),
+                'archive_writer': 'compressed_chunks', 'chunk_integrity_verified': True,
+                'timing': timing,
+            }
+            manifest_path = destination.with_suffix(destination.suffix+'.manifest.json')
+            part = manifest_path.with_suffix(manifest_path.suffix+'.part')
+            part.write_text(json.dumps(manifest, indent=2, sort_keys=True)+'\n')
+            part.replace(manifest_path)
+            return destination
     destination.parent.mkdir(parents=True, exist_ok=True)
     publishing = destination.with_name(f"{destination.name}.part")
     publishing.unlink(missing_ok=True)
@@ -129,7 +187,7 @@ def create_daily_archive(
                     }
                 )
                 for name in variable_names:
-                    source = first[name]
+                    source = _source_variable(first, name)
                     fill_value = (
                         source.getncattr("_FillValue") if "_FillValue" in source.ncattrs() else None
                     )
@@ -146,6 +204,9 @@ def create_daily_archive(
                         options["fill_value"] = fill_value
                     target = output.createVariable(name, source.dtype, source.dimensions, **options)
                     target.setncatts(_attributes(source))
+                    if name == "precip_timing_source_id" and normalize_precipitation_timing:
+                        target.long_name = "source supplying the within-block hourly timing pattern"
+                        target.comment = "Zero means no separate within-block timing provenance (not reconciled or unavailable); legacy missing fields normalized to zero."
                     if "time" not in source.dimensions:
                         target[...] = source[...]
             with Dataset(partial, "a") as output:
@@ -154,7 +215,7 @@ def create_daily_archive(
                 ):
                     with Dataset(path) as source:
                         for name in variable_names:
-                            variable = source[name]
+                            variable = _source_variable(source, name)
                             if "time" not in variable.dimensions:
                                 verify_static = verification == "full" or index == expected_hours - 1
                                 if verify_static and _digest(variable[...]) != _digest(
@@ -199,13 +260,14 @@ def create_daily_archive(
                         variable.setncattr("vmin", np.asarray(values.min()).item())
                     if "vmax" in extrema:
                         variable.setncattr("vmax", np.asarray(values.max()).item())
+            archive_written = perf_counter()
             with Dataset(partial) as output:
                 for index, (path, source_index) in enumerate(
                     zip(paths, indices, strict=True)
                 ):
                     with Dataset(path) as source:
                         for name in variable_names:
-                            variable = source[name]
+                            variable = _source_variable(source, name)
                             if "time" not in variable.dimensions:
                                 continue
                             if (
@@ -233,6 +295,7 @@ def create_daily_archive(
                                 raise RuntimeError(
                                     f"Daily archive verification failed: {path}:{name}"
                                 )
+            archive_verified = perf_counter()
             shutil.copyfile(partial, publishing)
             if publishing.stat().st_size != partial.stat().st_size:
                 raise RuntimeError(f"Daily archive publication copy failed: {destination}")
@@ -262,6 +325,11 @@ def create_daily_archive(
         "overridden_time_variables": sorted(overrides),
         "verification": verification,
         "fully_verified_overrides": sorted(verify_overrides),
+        "timing": {
+            "write_seconds": archive_written - archive_started,
+            "integrity_seconds": archive_verified - archive_written,
+            "total_seconds": perf_counter() - archive_started,
+        },
     }
     manifest_path = destination.with_suffix(destination.suffix + ".manifest.json")
     manifest_partial = manifest_path.with_suffix(manifest_path.suffix + ".part")

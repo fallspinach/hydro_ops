@@ -19,6 +19,7 @@ from hydro_ops.forcing.precipitation import (
     composite_precipitation,
     open_precipitation_candidate,
 )
+from hydro_ops.forcing.precipitation_schema import ensure_precipitation_timing
 from hydro_ops.forcing.thermodynamic_hour import build_remap_command
 from hydro_ops.forcing.weights import validate_weight_manifest
 
@@ -132,6 +133,7 @@ def write_precipitation_output(
                 }
             )
             qc[0] = np.where(active, composite.qc_flags, np.uint16(8))
+        ensure_precipitation_timing(partial)
         partial.replace(output_path)
     except Exception:
         partial.unlink(missing_ok=True)

@@ -34,6 +34,7 @@ def main():
     config = {"root": str(root), "mask": str(args.mask.resolve()), "files": len(paths),
               "years": dict(sorted(Counter(Path(p).parent.parent.name for p in paths).items())),
               "tasks": len(batches), "concurrency": args.concurrency,
+              "fast": True, "writers": 2,
               "scope": "retro only, 1979-01-01 through 2002-12-31; baseline and post-2020 excluded"}
     print(json.dumps(config, indent=2), flush=True)
     if args.dry_run:

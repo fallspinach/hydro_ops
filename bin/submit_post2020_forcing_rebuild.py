@@ -74,7 +74,8 @@ def main() -> int:
                    f"--job-name=nwm-cnrfc-prism-domain-{label}-20201014-onward",
                    f"--output={settings.log_root}/post2020-rebuild-%A_%a.out",
                    (f"--export=ALL,HYDRO_OPS_PROJECT_ROOT={settings.project_root},"
-                    f"HYDRO_OPS_PYTHON={sys.executable},HYDRO_OPS_REBUILD_TASK_FILE={task_file}"),
+                    f"HYDRO_OPS_PYTHON={sys.executable},HYDRO_OPS_REBUILD_TASK_FILE={task_file},"
+                    "HYDRO_OPS_REBUILD_STATIC_ENVELOPE=1"),
                    "slurm/rebuild_post2020_forcing.py"]
         if dependency:
             command.insert(1, f"--dependency=afterok:{dependency}")

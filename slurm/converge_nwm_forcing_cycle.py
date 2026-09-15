@@ -17,6 +17,10 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
+configured_python = os.environ.get("HYDRO_OPS_PYTHON")
+if configured_python and Path(sys.executable).resolve() != Path(configured_python).resolve():
+    os.execv(configured_python, [configured_python, *sys.argv])
+
 from netCDF4 import Dataset
 
 JOB_ID = re.compile(r"Submitted batch job (\d+)")
@@ -67,6 +71,10 @@ def forcing_path(root: Path, day: date) -> Path:
 
 
 def accepted_output(path: Path, stream: str) -> bool:
+    if os.environ.get("HYDRO_OPS_RETRO_NEW_PRODUCTION") == "1":
+        from hydro_ops.forcing.retro_publication import complete
+        if not complete(path):
+            return False
     try:
         with Dataset(path) as data:
             if len(data.dimensions.get("time", ())) != 24:
@@ -123,7 +131,7 @@ def baseline_command(
         "--cpus-per-task",
         "12",
         "--tmp-mb",
-        "120000",
+        str(state.get("scratch_mb", 120000)),
         "--job-name",
         f"nwm-converge-baseline-{state['start'].replace('-', '')}-{state['end'].replace('-', '')}",
     ]
@@ -144,7 +152,7 @@ def prism_command(python: str, project: Path, state: dict[str, Any]) -> list[str
         "--cpus-per-task",
         "12",
         "--tmp-mb",
-        "120000",
+        str(state.get("scratch_mb", 120000)),
     ]
 
 

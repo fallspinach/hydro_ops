@@ -1,5 +1,13 @@
 # NLDAS-2-based forcing-mask stability study (2026-09-12)
 
+Rollout update: the same approved v4 mask is now enabled for new post-2020
+CNRFC/PRISM rebuild submissions, after both corrections and active-cell repair.
+Canary job 4520188 gates replacement campaign 4520189. The original 1979–2002
+archive sweep remains unchanged; previously completed post-2020 outputs need a
+separate clipping-only pass. See the
+[post-2020 retry record](forcing_production_workflow.md#post-2020-retry-and-static-envelope-rollout-2026-09-12)
+for scope, acceptance gates and job coordination.
+
 ## Purpose and scope
 
 Explore a static clipping mask for previously overfilled forcing, without rerunning

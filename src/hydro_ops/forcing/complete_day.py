@@ -10,6 +10,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -246,7 +247,9 @@ def produce_complete_day(
     assembly_workers: int = 4,
     precipitation_remap_workers: int = 1,
     start_hour: int = 0,
+    end_hour: int = 23,
     force: bool = False,
+    precipitation_cache: Path | None = None,
 ) -> list[dict]:
     """Remap all available variables in one UTC-day batch."""
     if assembly_workers <= 0:
@@ -255,7 +258,9 @@ def produce_complete_day(
         raise ValueError("precipitation_remap_workers must be positive")
     if not 0 <= start_hour <= 23:
         raise ValueError("start_hour must be between 0 and 23")
-    valid_times = utc_hours(day)[start_hour:]
+    if not start_hour <= end_hour <= 23:
+        raise ValueError("end_hour must be between start_hour and 23")
+    valid_times = utc_hours(day)[start_hour:end_hour + 1]
     outputs = [
         output_root / valid.strftime("%Y/%m/%d/%Y%m%d%H.LDASIN_DOMAIN1")
         for valid in valid_times
@@ -343,7 +348,11 @@ def produce_complete_day(
                 flush=True,
             )
             stage_started = time.perf_counter()
-            precipitation_all = process_precipitation_day(
+            precipitation_processor = process_precipitation_day
+            if precipitation_cache is not None:
+                from hydro_ops.forcing.precipitation_cache import reuse
+                precipitation_processor = partial(reuse, precipitation_cache)
+            precipitation_all = precipitation_processor(
                 precipitation_times,
                 candidate_hours,
                 quality_hours,

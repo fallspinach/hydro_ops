@@ -63,6 +63,8 @@ def main() -> int:
         f"/scratch/{os.environ['SLURM_JOB_USER']}/job_{os.environ['SLURM_JOB_ID']}"
         f"/forcing-day-{day:%Y%m%d}"
     )
+    from hydro_ops.forcing.retro_publication import check_scratch
+    check_scratch(scratch)
     command = [
         python,
         "bin/produce_forcing_day.py",
@@ -78,6 +80,8 @@ def main() -> int:
         os.environ.get("HYDRO_OPS_PRECIPITATION_REMAP_WORKERS", "1"),
     ]
     start_hour = os.environ.get("HYDRO_OPS_START_HOUR")
+    if cache := os.environ.get('HYDRO_OPS_PRECIPITATION_CACHE'):
+        command.extend(['--precipitation-cache', cache])
     if start_hour:
         command.extend(["--start-hour", start_hour])
     if output_root:

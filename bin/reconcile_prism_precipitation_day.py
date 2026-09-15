@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -118,6 +119,7 @@ def main() -> int:
             args.daily_output,
             args.day,
             compression_level=2,
+            normalize_precipitation_timing=os.environ.get("HYDRO_OPS_RETRO_NEW_PRODUCTION") == "1",
             work_directory=args.work_directory,
             time_variable_overrides=overrides,
             global_attributes={
@@ -137,6 +139,7 @@ def main() -> int:
                 ),
             },
             verification="targeted",
+            chunk_copy=os.environ.get('HYDRO_OPS_ARCHIVE_CHUNKS') == '1',
             fully_verified_overrides={"RAINRATE"},
             source_time_indices=hour_indices,
         )

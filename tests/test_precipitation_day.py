@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import xarray as xr
 from netCDF4 import Dataset
 
@@ -57,8 +58,9 @@ def test_six_hour_reconciliation_conserves_total_and_records_timing(tmp_path: Pa
     np.testing.assert_allclose(total[0, 2], 24.0, rtol=2e-6)
 
 
+@pytest.mark.parametrize("exclude_cnrfc", [False, True])
 def test_daily_batch_applies_one_remap_and_writes_each_hour(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, exclude_cnrfc
 ) -> None:
     start = datetime(2026, 1, 1, 0, tzinfo=UTC)
     valid_times = [start, start + timedelta(hours=1)]
@@ -79,6 +81,7 @@ def test_daily_batch_applies_one_remap_and_writes_each_hour(
         data.createVariable("active_domain", "i1", ("y", "x"))[:] = 1
         data.createVariable("lat", "f4", ("y", "x"))[:] = 40
         data.createVariable("lon", "f4", ("y", "x"))[:] = -110
+        data.createVariable("cnrfc_mask", "u1", ("y", "x"))[:] = 1
     remap_grid = tmp_path / "target.scrip.nc"
     remap_grid.touch()
     weights = tmp_path / "weights.nc"
@@ -101,9 +104,13 @@ def test_daily_batch_applies_one_remap_and_writes_each_hour(
         remap_grid,
         tmp_path / "output",
         validate_weights=False,
+        cnrfc_mask_path=target if exclude_cnrfc else None,
     )
     assert len(calls) == 1
     assert len(outputs) == 2
     with Dataset(outputs[1]) as data:
         np.testing.assert_allclose(data["RAINRATE"][0], np.array([[2, 3, 4], [5, 6, 7]]) / 3600)
         assert data.getncattr("precipitation_remap_mode") == "daily_batch"
+        np.testing.assert_array_equal(data["precip_timing_source_id"][:], 0)
+        if exclude_cnrfc:
+            assert "otherwise retain non-Stage-IV composite" in data.cnrfc_stage4_policy

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -20,6 +21,23 @@ from netCDF4 import Dataset, num2date
 POLICY = "cnrfc_prism_domain_rebuild_v1"
 
 
+def finalize_static_manifest(source: Path, destination: Path) -> None:
+    """Carry the validated candidate audit across the permanent-copy transaction."""
+    manifest = source.with_name(source.name + ".manifest.json")
+    record = json.loads(manifest.read_text())
+    envelope = record["static_envelope"]
+    # Caller checksum-verifies the permanent partial before its atomic rename.
+    stat = destination.stat()
+    envelope["staged_identity"] = envelope.pop("published_identity")
+    envelope["published_identity"] = {"inode": stat.st_ino, "bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+    envelope["audit_scope"] = "full staged-candidate content audit; permanent transfer checksum verified"
+    record["daily_file"] = str(destination)
+    target = destination.with_name(destination.name + ".manifest.json")
+    temporary = target.with_name(target.name + ".part")
+    temporary.write_text(json.dumps(record, indent=2) + "\n")
+    os.replace(temporary, target)
+
+
 def dates(start: date, end: date):
     for offset in range((end - start).days + 1):
         yield start + timedelta(days=offset)
@@ -30,6 +48,10 @@ def main() -> int:
     python = os.environ["HYDRO_OPS_PYTHON"]
     index = int(os.environ["SLURM_ARRAY_TASK_ID"])
     task = json.loads(Path(os.environ["HYDRO_OPS_REBUILD_TASK_FILE"]).read_text().splitlines()[index])
+    if any(os.environ.get(k) == '1' for k in ('HYDRO_OPS_BENCH_MULTIDAY', 'HYDRO_OPS_BENCH_FAST_MASK', 'HYDRO_OPS_ARCHIVE_CHUNKS')):
+        Path(task['output_root']).resolve().relative_to((project/'forcing/work').resolve())
+        if task['stream'] != 'retro':
+            raise ValueError('Benchmark must not publish operational NRT baselines')
     start, end = date.fromisoformat(task["start"]), date.fromisoformat(task["end"])
     scratch = Path(f"/scratch/{os.environ['SLURM_JOB_USER']}/job_{os.environ['SLURM_JOB_ID']}")
     baseline = scratch / "rebuild_baseline"
@@ -44,6 +66,12 @@ def main() -> int:
     day_file = scratch / "baseline_days.txt"
     day_file.write_text("".join(f"{day}\n" for day in baseline_days))
     for number, day in enumerate(baseline_days):
+        if env.get('HYDRO_OPS_BENCH_MULTIDAY') == '1' and number % 3 == 0:
+            cache = scratch / f'precipitation-cache-{number}'
+            run(['bin/prepare_precipitation_cache.py', '--start', str(day),
+                 '--days', str(min(3, len(baseline_days)-number)), '--output', str(cache),
+                 '--work', str(scratch)])
+            env['HYDRO_OPS_PRECIPITATION_CACHE'] = str(cache)
         run(["slurm/produce_forcing_day.py"], {
             "SLURM_ARRAY_TASK_ID": str(number),
             "HYDRO_OPS_FORCING_DAY_TASK_FILE": str(day_file),
@@ -56,6 +84,10 @@ def main() -> int:
         with Dataset(path) as data:
             if not str(getattr(data, "cnrfc_stage4_policy", "")):
                 raise ValueError(f"Baseline lacks CNRFC correction: {path}")
+        if env.get('HYDRO_OPS_BENCH_MULTIDAY') == '1' and (number % 3 == 2 or number == len(baseline_days)-1):
+            owned = Path(env.pop('HYDRO_OPS_PRECIPITATION_CACHE'))
+            owned.relative_to(scratch)
+            shutil.rmtree(owned)
 
     calendar_task = scratch / "calendar_task.jsonl"
     calendar_task.write_text(json.dumps({
@@ -70,7 +102,8 @@ def main() -> int:
     for day in dates(start, end):
         relative = Path(day.strftime("%Y/%m/%Y%m%d.LDASIN_DOMAIN1"))
         source = candidate / relative
-        with Dataset(source, "r+") as data:
+        static_envelope = os.environ.get("HYDRO_OPS_REBUILD_STATIC_ENVELOPE") == "1"
+        with Dataset(source, "r" if static_envelope else "r+") as data:
             t = data["time"]
             stamps = num2date(t[:], t.units, getattr(t, "calendar", "standard"))
             if [(v.year, v.month, v.day, v.hour) for v in stamps] != [
@@ -79,11 +112,23 @@ def main() -> int:
                 raise ValueError(f"Invalid calendar-day timestamps: {source}")
             if not str(getattr(data, "cnrfc_stage4_policy", "")):
                 raise ValueError(f"Final publication lost CNRFC policy: {source}")
-            data.setncattr("forcing_recovery_policy", POLICY)
+            if static_envelope:
+                if (getattr(data, "forcing_recovery_policy", "") != POLICY
+                        or getattr(data, "forcing_domain_policy", "") != "nldas2_seven_met_static_envelope_v4"
+                        or getattr(data, "forcing_domain_content_audit", "") != "all_records_active_retained_unchanged_outside_envelope_missing_v4"):
+                    raise ValueError(f"Final candidate lacks static-envelope acceptance: {source}")
+            else:
+                data.setncattr("forcing_recovery_policy", POLICY)
         destination = Path(task["output_root"]) / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         partial = destination.with_name(destination.name + f".rebuild-{os.environ['SLURM_JOB_ID']}.part")
         shutil.copy2(source, partial)
+        if static_envelope:
+            # Verify bytes before replacing the existing published daily file.
+            record = json.loads(source.with_name(source.name + ".manifest.json").read_text())
+            with partial.open("rb") as handle:
+                if hashlib.file_digest(handle, "sha256").hexdigest() != record["static_envelope"]["file_sha256"]:
+                    raise ValueError(f"Static-envelope transfer checksum differs: {partial}")
         os.replace(partial, destination)
         manifest = source.with_suffix(source.suffix + ".manifest.json")
         if manifest.is_file():
@@ -91,6 +136,8 @@ def main() -> int:
             partial = target.with_suffix(target.suffix + ".part")
             shutil.copy2(manifest, partial)
             os.replace(partial, target)
+        if static_envelope:
+            finalize_static_manifest(source, destination)
         # Keep corrected NRT baselines for subsequent stable PRISM processing.
         if task["stream"] == "nrt":
             target = project / "forcing/outputs/conus/baseline" / relative
