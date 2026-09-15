@@ -1,5 +1,8 @@
 # NWM 3.1 operational inputs
 
+For the completed project-owned spin-up, retained 1986 restart, and accepted local
+channel-routing limitation, see [CONUS spin-up status](conus_spinup_status.md).
+
 ## Authoritative public package
 
 NCEP/NCO publishes the current operational implementation package as `nwm.v3.1.6`. This is the
