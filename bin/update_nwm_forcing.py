@@ -13,7 +13,7 @@ import sys
 from datetime import UTC, date, datetime, timedelta
 
 from hydro_ops.config import load_settings
-from hydro_ops.forcing.nrt_cycle import activation, configuration
+from hydro_ops.forcing.nrt_cycle import activation, configuration, require_operational_gfs
 from hydro_ops.forcing.streams import forcing_stream_root
 
 
@@ -100,6 +100,7 @@ def main() -> int:
             "initial_dependency": args.dependency,
         }
         if stream == "nrt":
+            require_operational_gfs(settings.project_root)
             config = configuration(settings.project_root)
             plan["recent_nrt_gfs_requested"] = bool(config.get("enabled"))
             plan["recent_nrt_gfs_active"] = activation(settings.project_root)

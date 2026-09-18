@@ -75,6 +75,13 @@ def activation(root):
     return bool(config.get("enabled") and receipt.get("status") == "passed" and receipt.get("policy") == POLICY)
 
 
+def require_operational_gfs(root):
+    """Fail closed; an unaccepted/disabled fallback is not a legacy-mode switch."""
+    if not activation(root):
+        raise RuntimeError("NRT requires validated GFS northern fallback: enable config/nrt_gfs.toml "
+                           "and restore a passed activation receipt. Legacy NRT fallback is forbidden.")
+
+
 def identity(path):
     path = Path(path)
     if not path.is_file():

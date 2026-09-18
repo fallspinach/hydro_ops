@@ -167,6 +167,17 @@ def main() -> int:
     history = state.setdefault("convergence_attempts", [])
     state["continuation_job_id"] = os.environ.get("SLURM_JOB_ID")
 
+    if state["stream"] == "nrt":
+        from hydro_ops.forcing.nrt_cycle import require_operational_gfs
+        try:
+            require_operational_gfs(project)
+            if not state.get("recent_nrt_gfs_active"):
+                raise RuntimeError("NRT plan lacks required northern fallback; resubmit the cycle")
+        except RuntimeError as error:
+            state.update(status="failed", error=str(error))
+            write_state(manifest, state)
+            raise
+
     if state["stream"] == "nrt" and state.get("recent_nrt_gfs_active"):
         # Run the recent source-aware tail before legacy older-window convergence.
         # This serializes their boundary baseline access; retro jobs never enter here.

@@ -199,6 +199,8 @@ def build_status(
         for stream in ("baseline", "nrt", "retro")
     }
     issues = []
+    if not activation(settings.project_root):
+        issues.append("required NRT GFS northern fallback is inactive; NRT scheduling blocked")
     for stream, item in production.items():
         if item["partial_files"]:
             issues.append(f"{stream}: {item['partial_files']} partial file(s)")
@@ -217,6 +219,7 @@ def build_status(
         "slurm": slurm_inventory() if include_slurm else {"available": False, "skipped": True},
         "coordinators": coordinator_inventory(settings.work_root),
         "recent_nrt_gfs": {
+            "required": True,
             "configured": configuration(settings.project_root).get("enabled", False),
             "activated": activation(settings.project_root),
             "latest_cycle": recent,

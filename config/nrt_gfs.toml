@@ -1,4 +1,5 @@
 # Recent NRT only. Existing retrospective rebuild submissions do not read this file.
+# Required for operational NRT: disabling blocks scheduling, not a legacy-mode switch.
 enabled = true
 # Validated by paired benchmark 4555698; "reference" restores previous writers.
 reconciliation_writer_profile = "validated_chunks_reuse_v1"

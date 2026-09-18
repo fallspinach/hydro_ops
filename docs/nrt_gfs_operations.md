@@ -31,9 +31,27 @@ Every staged baseline and final file undergoes all-eight-field readback checks.
 On success, the test atomically writes
 `forcing/status/nrt-gfs/activation.json`. The coordinator then enables this path
 automatically on its next scheduled NRT cycle. Failure leaves the gate closed.
-Set `enabled = false` in the TOML file to disable new use without changing already
-published data. Review `forcing/status/nrt-gfs/latest.json` and the activation
+GFS northern fallback is mandatory for operational NRT. Setting `enabled = false`,
+removing the acceptance receipt, or failing activation blocks NRT scheduling;
+none of these selects the legacy HRRR-only path. The convergence controller also
+rejects older NRT plans that omit the required recent path. Missing GFS bundles
+fail the affected update while preserving previously accepted files. NLDAS-only
+hours still do not download or use GFS. Retro processing is unchanged.
+Review `forcing/status/nrt-gfs/latest.json` and the activation
 receipt rather than assuming configuration alone means the integration is live.
+
+## NRT baseline to retro storage handoff
+
+`tests/test_nrt_retro_handoff.py` exercises three retained-baseline layouts:
+source-preserved NRT chunks, ordinary older chunks, and mixed generations. It runs
+the actual precipitation reconciliation CLI with stable PRISM fixture data, then
+the calendar publication CLI in retro mode. Checks cover the corrected rain rate,
+unchanged other variables and times, stable revision provenance, and unchanged
+baseline input bytes. Mixed encodings must safely fall back to ordinary copying.
+This is a small-grid integration test, not a CONUS throughput, coupled-temperature,
+source-replacement, or cleanup acceptance test. Baseline cleanup remains gated by
+the existing retro publication audits and neighboring-day dependency protections.
+No historical files need rechunking solely for this handoff.
 
 ## Scheduling and scope
 

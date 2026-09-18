@@ -49,6 +49,19 @@ def test_scheduled_activation_requires_real_acceptance(tmp_path):
     assert activation(tmp_path)
 
 
+@pytest.mark.parametrize('enabled,status', [(False, 'passed'), (True, 'failed'), (True, 'passed')])
+def test_operational_gfs_cannot_silently_opt_out(tmp_path, enabled, status):
+    (tmp_path / 'config').mkdir()
+    (tmp_path / 'config/nrt_gfs.toml').write_text(
+        f'enabled = {str(enabled).lower()}\nactivation_receipt = "acceptance.json"\n')
+    (tmp_path / 'acceptance.json').write_text(json.dumps({'status': status, 'policy': nrt_cycle.POLICY}))
+    if enabled and status == 'passed':
+        nrt_cycle.require_operational_gfs(tmp_path)
+    else:
+        with pytest.raises(RuntimeError, match='NRT requires'):
+            nrt_cycle.require_operational_gfs(tmp_path)
+
+
 def test_isolated_cycle_repeat_and_lock(tmp_path, monkeypatch):
     published = set()
 
