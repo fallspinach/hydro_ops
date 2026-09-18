@@ -1,5 +1,7 @@
 # Recent NRT only. Existing retrospective rebuild submissions do not read this file.
 enabled = true
+# Validated by paired benchmark 4555698; "reference" restores previous writers.
+reconciliation_writer_profile = "validated_chunks_reuse_v1"
 lookback_days = 7
 maximum_old_replacement_days = 2
 assembly_workers = 4

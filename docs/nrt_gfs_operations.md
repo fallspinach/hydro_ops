@@ -171,3 +171,69 @@ and cron installation remain subsequent rollout checks, not claims of this test.
 The focused 40-test suite also exercises isolated status, overlapping-cycle lock
 rejection, failure reporting, fingerprints, source/PRISM changes and GFS outage
 publication guards. Mocked failure tests are not evidence of a real cluster outage.
+
+### Results and optimization experiments
+
+Job 4553105 passed functional acceptance: September 14–15 each used GFS for 24
+hours and received PRISM constraints. Cold processing took 191 minutes; including
+refresh and waiting, 202 minutes. The unchanged repeat took 46 seconds and did not
+rewrite outputs. These results do not meet the changed-cycle one-hour target.
+
+The Stage-IV source job failed on an unpublished stable archive (September 9).
+Rolling refresh now passes the existing `--allow-missing` option for Stage-IV only,
+logging unpublished days while continuing; network/conversion errors remain fatal.
+Retry job **4555696** completed in 3:36. The missing archive had become available,
+so this retry did not exercise the skip; regression tests cover the option wiring.
+
+Paired benchmark **4555698** followed that refresh and compared reference writing
+with chunk-aware PRISM/calendar writing and opt-in intra-worker PRISM window reuse
+(`HYDRO_OPS_NRT_REUSE_WINDOWS=1`). The shared window is keyed by both baseline
+checksums, PRISM identities, revision and writer mode, plus its own file identity.
+It is stored on the worker's scratch. The validated profile is now adopted as
+described below; the scientific algorithms and acceptance checks are unchanged.
+
+The benchmark first warms private baseline copies after refresh, outside measured
+arms. It then invalidates only private final receipts to replay a PRISM revision
+notification without changing source values. Both arms reconcile the same dates,
+repeat unchanged, and undergo decoded-byte/variable-attribute/policy comparisons.
+Any baseline rewrite after preparation rejects timing comparability. This is a
+controlled reconciliation replay, not a physical rainfall-value revision or an
+NLDAS-arrival experiment. Results live in
+`forcing/work/nrt-reconciliation-benchmark-20260917T223802/`.
+
+Job **4555699**, after that benchmark, profiles a separate cold September 15 cycle
+under `forcing/work/nrt-cold-profile-20260917T2238/`. Python profiles and subprocess
+timings separate remapping, GFS publication, PRISM, validation and I/O costs.
+Its instrumented runtime and deliberate dependency wait are not clean throughput
+measurements. Initial benchmark 4555697 was canceled after 33 seconds to place the
+replacement behind source refresh; its private artifacts are not accepted results.
+The focused regression suite passed 34 tests before these experiments.
+
+### Adopted reconciliation checkpoint
+
+Benchmark 4555698 passed exact decoded-field, variable-attribute and selected
+policy-metadata comparisons for both days. At the same 64 CPUs, two-day
+reconciliation fell from **49:36 to 29:28** (40.6% less time); unchanged repeats
+took 44 and 41 seconds. Neither measured arm rebuilt baselines. Reusing the shared
+PRISM window reduced window calculations from four to three; calendar assembly
+fell from 7:54 to 1:49. The separate baseline preparation cost was excluded from
+these timings. This is not evidence that a full source-change cycle fits one hour.
+
+`config/nrt_gfs.toml` now selects
+`reconciliation_writer_profile = "validated_chunks_reuse_v1"`. The NRT engine
+sets chunk-aware writing only for its PRISM/calendar subprocesses and uses the
+dependency-keyed scratch window cache. Baseline writers and validation are
+unchanged. The new setting is excluded from baseline fingerprints so enabling it
+does not trigger pointless baseline rebuilding; existing accepted final files
+also remain reusable. Future necessary reconciliations use the new profile.
+
+Rollback: set the profile to `"reference"`. Explicit
+`HYDRO_OPS_ARCHIVE_CHUNKS=0` and `HYDRO_OPS_NRT_REUSE_WINDOWS=0` overrides are
+also retained for paired benchmarks. No cron installation, new production jobs,
+or historical-output rewrite is part of this adoption.
+
+Cold profile 4555699 passed, but took roughly 129 minutes for one final day and
+three supporting baseline days. Baseline work accounted for about 105 minutes:
+42 minutes initial generation, 29 daily aggregation, 17 native repair, and 15 GFS
+publication (rounded, profiled measurements). The next optimization phase should
+target baseline aggregation and repeated field I/O, not relax scientific checks.

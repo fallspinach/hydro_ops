@@ -98,3 +98,40 @@ def test_cycle_reports_failure_and_preserves_existing_output(tmp_path, monkeypat
     assert report["status"] == "failed"
     assert report["errors"][0]["error"] == "Missing source bundle"
     assert output.read_bytes() == b"previous accepted data"
+
+
+def test_window_reuse_tracks_only_its_dependencies(tmp_path):
+    day = date(2026, 9, 15)
+    prism = tmp_path / "prism_ppt_us_25m_20260915.nc"
+    prism.write_bytes(b"initial")
+    records = [(None, {"day": f"2026-09-{d}", "sha256": str(d)}) for d in (13, 14, 15, 16)]
+    def signature(items=records, chunks="0"):
+        return nrt_cycle.window_signature(day, items, [prism], "early", chunks)
+    original = signature()
+    assert signature(records[1:]) == original
+    assert signature(records[:-1]) == original
+    assert signature(chunks="1") != original
+    records[1][1]["sha256"] = "changed"
+    assert signature() != original
+    records[1][1]["sha256"] = "14"
+    prism.write_bytes(b"updated input")
+    assert signature() != original
+    with pytest.raises(ValueError):
+        signature(records[2:])
+
+
+def test_validated_profile_is_scoped_to_reconciliation():
+    old = {"enabled": True, "assembly_workers": 4}
+    config = {**old, "reconciliation_writer_profile": "validated_chunks_reuse_v1"}
+    assert nrt_cycle.baseline_configuration(config) == old
+    env = {}
+    resolved = nrt_cycle.reconciliation_environment(config, env)
+    assert resolved["HYDRO_OPS_ARCHIVE_CHUNKS"] == "1"
+    assert resolved["HYDRO_OPS_NRT_REUSE_WINDOWS"] == "1"
+    assert env == {}
+    overrides = {"HYDRO_OPS_ARCHIVE_CHUNKS": "0", "HYDRO_OPS_NRT_REUSE_WINDOWS": "0"}
+    assert nrt_cycle.reconciliation_environment(config, overrides) == overrides
+    reference = nrt_cycle.reconciliation_environment({"reconciliation_writer_profile": "reference"}, {})
+    assert reference == overrides
+    with pytest.raises(ValueError):
+        nrt_cycle.reconciliation_environment({"reconciliation_writer_profile": "unknown"}, {})

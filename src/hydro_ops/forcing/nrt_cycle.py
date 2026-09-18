@@ -39,6 +39,24 @@ def configuration(root):
     return tomllib.loads(path.read_text()) if path.exists() else {"enabled": False}
 
 
+def baseline_configuration(config):
+    """Reconciliation-only tuning must not invalidate accepted native baselines."""
+    return {k: v for k, v in config.items() if k != "reconciliation_writer_profile"}
+
+
+def reconciliation_environment(config, environ):
+    profile = config.get("reconciliation_writer_profile", "reference")
+    if profile not in {"reference", "validated_chunks_reuse_v1"}:
+        raise ValueError(f"Unknown NRT reconciliation writer profile: {profile}")
+    env = dict(environ)
+    enabled = "1" if profile == "validated_chunks_reuse_v1" else "0"
+    for key in ("HYDRO_OPS_ARCHIVE_CHUNKS", "HYDRO_OPS_NRT_REUSE_WINDOWS"):
+        env.setdefault(key, enabled)  # Explicit benchmark/reference overrides win.
+        if env[key] not in {"0", "1"}:
+            raise ValueError(f"Invalid writer override: {key}={env[key]}")
+    return env
+
+
 def activation(root):
     config = configuration(root)
     receipt = read_json(root / config.get("activation_receipt", "forcing/status/nrt-gfs/activation.json"))
@@ -55,6 +73,16 @@ def identity(path):
 
 def fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+def window_signature(day, baselines, prism, revision, chunks):
+    required = {str(day - timedelta(days=1)), str(day)}
+    records = {r["day"]: r["sha256"] for _, r in baselines if r["day"] in required}
+    if set(records) != required:
+        raise ValueError("Incomplete PRISM-window baseline dependencies")
+    return fingerprint({"baselines": records,
+                        "prism": [identity(p) for p in prism if f"{day:%Y%m%d}" in p.name],
+                        "revision": revision, "chunks": chunks})
 
 
 def source_runs(selections):
@@ -78,7 +106,7 @@ def baseline_plan(day, layout, config):
         six = discover_stage4_six_hour(start + timedelta(hours=index), layout)
         if six:
             paths.add(six)
-    record = {"policy": POLICY, "day": str(day), "configuration": config,
+    record = {"policy": POLICY, "day": str(day), "configuration": baseline_configuration(config),
               "hourly_primary_sources": [s.product for s in selections],
               "files": [identity(p) for p in sorted(paths)]}
     return selections, record
@@ -255,16 +283,31 @@ class RecentNrt:
                     "prism_constrained": old["prism_constrained"]}
         with tempfile.TemporaryDirectory(prefix="nrt-final-", dir=self.work) as tmp:
             tmp = Path(tmp)
+            writer_env = reconciliation_environment(self.config, os.environ)
             def run(*args):
-                subprocess.run([sys.executable, *map(str, args)], cwd=self.root, check=True)
+                subprocess.run([sys.executable, *map(str, args)], cwd=self.root, env=writer_env, check=True)
             if constrained:
-                windows = tmp / "windows/nrt"
+                # Share only dependency-keyed PRISM windows
+                # within this worker's scratch, never across production workers.
+                reuse = writer_env["HYDRO_OPS_NRT_REUSE_WINDOWS"] == "1"
+                windows = self.work / "nrt-prism-windows/nrt" if reuse else tmp / "windows/nrt"
                 for d in (day, day + timedelta(days=1)):
+                    signature = window_signature(d, baselines, prism,
+                        "early" if (self.as_of.date() - d).days < 30 else "provisional",
+                        writer_env["HYDRO_OPS_ARCHIVE_CHUNKS"])
+                    window = day_path(windows, d)
+                    marker = window.with_name(window.name + ".reuse.json")
+                    cached = read_json(marker) if reuse else {}
+                    if cached.get("signature") == signature and cached.get("identity") == identity(window):
+                        print(json.dumps({"stage": "reuse_prism_window", "day": str(d)}), flush=True)
+                        continue
                     run(self.root / "bin/produce_prism_constrained_daily.py", "--day", d,
                         "--complete-root", self.baseline, "--output-root", windows,
                         "--revision", "early" if (self.as_of.date() - d).days < 30 else "provisional",
                         "--stream", "nrt", "--work-directory", tmp,
-                        "--archive-access", "direct", "--allow-legacy-12utc-output")
+                        "--archive-access", "direct", "--allow-legacy-12utc-output", "--force")
+                    if reuse:
+                        _atomic_json(marker, {"signature": signature, "identity": identity(window)})
                 run(self.root / "bin/materialize_calendar_forcing.py", "--input-root", windows,
                     "--output-root", tmp / "final", "--start", day, "--days", 1, "--stream", "nrt",
                     "--require-accepted-prism-windows", "--hierarchical", "--work-directory", tmp)
