@@ -237,3 +237,98 @@ three supporting baseline days. Baseline work accounted for about 105 minutes:
 42 minutes initial generation, 29 daily aggregation, 17 native repair, and 15 GFS
 publication (rounded, profiled measurements). The next optimization phase should
 target baseline aggregation and repeated field I/O, not relax scientific checks.
+
+### Baseline aggregation experiment
+
+Job **4556540** runs `bin/benchmark_nrt_baseline.py` on September 10 (all NLDAS-2)
+and September 15 (all HRRR, with GFS gap publication), after checking actual hourly
+source selection. Results are isolated under
+`forcing/work/nrt-baseline-archive-benchmark-20260918T060130/`.
+
+The worker generates and repairs each hourly input set only once, then runs the
+reference and compressed-chunk daily writers on identical files. Writer order is
+reversed on the second day. It requires the chunk path to execute (fallback is not
+counted as optimization), checks every decoded variable and its attributes plus
+selected policy attributes, and rejects any input identity change. After equality
+passes, the optimized archive proceeds through the unchanged GFS/domain publication
+checks into the private baseline directory. Scratch reference archives disappear
+with the normal temporary-directory cleanup; timings and accepted private final
+baselines remain available.
+
+The job reserves 64 CPUs and 240000 MB scratch, with a 24-hour limit. Eighteen focused
+archive tests passed before submission. Individual writer timings are comparable;
+whole-job timing includes two writers and extra comparison reads, so is not a
+production throughput measurement. This experiment does not change production
+baseline settings or scientific/validation policy. Baseline aggregation adoption
+requires reviewing its results first.
+
+The first attempt (4556540) failed safely after 33 minutes: hourly meteorology
+uses `(1,120,288)` chunks, whereas the archive writer requested `(1,256,256)`.
+Native-donor diagnostics also have automatically chosen, larger spatial chunks.
+No valid speedup was measured and the HRRR case was not reached.
+
+Rerun **4556629** opts into `preserve_source_chunks=True` in the chunk archive
+API. Multidimensional variables retain each first input's chunk shape; raw copying
+still requires matching encodings across inputs and one-record time chunks. Small
+one-dimensional coordinates are decoded/copied, handling automatic unlimited-time
+chunks larger than the daily destination. Filter/metadata checks, compressed-byte
+integrity verification, source-identity checks and publication checksums remain.
+Incompatible layouts still fall back safely; the benchmark rejects any such fallback.
+
+Results and input-encoding diagnostics are saved under
+`forcing/work/nrt-baseline-source-chunks-20260918T064744/`. The benchmark retains the
+same two dates, reversed writer order, 64 CPUs and 240000 MB scratch. Twenty-five
+focused tests passed before submission. This is an opt-in experiment: existing
+archive callers and operational NRT baseline production retain their defaults.
+
+### Adopted baseline aggregation checkpoint
+
+Job **4556629** passed both paired cases and downstream baseline publication
+checks. NLDAS-2 aggregation fell from **587.6 to 62.4 seconds**; HRRR aggregation
+fell from **576.4 to 61.9 seconds** (about 9.4x faster and 89% less aggregation
+time). All decoded variables and variable attributes matched exactly, as did the
+checked policy metadata. Writer order was reversed between days. Aggregated files
+were about 1% larger. Total benchmark runtime (1:11:45) includes both writers,
+extra comparisons, input generation and downstream processing, so is not a normal
+production-cycle runtime.
+
+`config/nrt_gfs.toml` now selects
+`baseline_writer_profile = "validated_source_chunks_v1"`. New or legitimately
+invalidated baselines in `RecentNrt` use compressed-chunk assembly while preserving
+compatible source chunk shapes. Unsupported encodings retain the existing
+value-based fallback. GFS publication, active-cell checks and transfer checksums
+are unchanged. Receipts record the requested profile, actual archive writer and
+archive timing, allowing fallback to be detected in production.
+
+This writer-only setting is excluded from source fingerprints; adoption or rollback
+does not invalidate existing accepted baselines or force historical rewrites.
+Set `baseline_writer_profile = "reference"` to roll back. Other archive callers,
+retrospective campaigns, hourly encodings, CPU allocations and cron installation
+are unchanged. The paired benchmark explicitly selects both arms regardless of
+the production setting. Full-cycle latency with both adopted optimizations still
+needs measurement; the aggregation result alone does not establish a sub-hour SLA.
+
+### Combined operational acceptance gate
+
+Before pushing this checkpoint, the isolated two-day cold update and unchanged
+repeat must exercise both adopted profiles. Baseline receipts now expose the actual
+archive writer; final receipts also expose both PRISM-window writers and the calendar
+writer. The acceptance runner's `require_optimized_writers` plan flag rejects silent
+fallback at any of those stages and checks that neither baselines nor final outputs
+are rewritten during the unchanged repeat.
+
+Source-chunk preservation must propagate through the NRT PRISM and calendar
+subprocesses as well as baseline aggregation. The NRT reconciliation environment now
+sets `HYDRO_OPS_ARCHIVE_PRESERVE_SOURCE_CHUNKS` consistently with chunk-aware writing;
+other callers retain the previous default unless explicitly opted in. Window-cache
+keys include this setting. Regression coverage exercises value overrides followed
+by daily reassembly on nonstandard source chunk shapes. This combined path still
+requires the full operational run; it is not claimed validated solely from unit tests.
+
+The authorized checkpoint workflow uses a dependent finalization job. It records
+the measured outcome and pushes only after the combined writer/reuse test passes,
+the repository remains at the tested checkpoint on `main`, and tracked/index changes
+are absent. It stages only its dedicated acceptance summary. Failed validation,
+repository changes or Git authentication failure leave a `finalization.json` record
+and withhold the push. Missing the performance target alone is documented rather
+than misrepresented as a correctness failure.

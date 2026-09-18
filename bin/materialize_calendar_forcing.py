@@ -144,6 +144,7 @@ def main() -> int:
             source_time_indices=indices,
             verification="targeted",
             chunk_copy=os.environ.get('HYDRO_OPS_ARCHIVE_CHUNKS') == '1',
+            preserve_source_chunks=os.environ.get('HYDRO_OPS_ARCHIVE_PRESERVE_SOURCE_CHUNKS') == '1',
             global_attributes={
                 "calendar_day_materialization": "true",
                 "calendar_day_source_root": str(args.input_root.resolve()),

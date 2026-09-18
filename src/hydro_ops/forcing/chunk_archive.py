@@ -37,7 +37,8 @@ def digest_file(path):
 
 
 def assemble(paths, indices, destination, day, work, *, expected_hours=24,
-             overrides=None, global_attributes=None, normalize_precipitation_timing=False):
+             overrides=None, global_attributes=None, normalize_precipitation_timing=False,
+             preserve_source_chunks=False):
     started = time.perf_counter()
     paths = list(map(Path, paths))
     destination = Path(destination)
@@ -70,6 +71,12 @@ def assemble(paths, indices, destination, day, work, *, expected_hours=24,
                 if '_FillValue' in src.ncattrs():
                     options['fill_value'] = src._FillValue
                 chunks = _chunks(src, {'time': expected_hours, **dims})
+                if preserve_source_chunks and src.ndim >= 2 and hasattr(src, 'chunking'):
+                    source_chunks = src.chunking()
+                    if isinstance(source_chunks, (tuple, list)):
+                        chunks = tuple(source_chunks)
+                        if 'time' in src.dimensions and chunks[src.dimensions.index('time')] != 1:
+                            raise UnsupportedArchive(f'Time chunks must contain one record: {name}')
                 if chunks:
                     options.update(zlib=True, complevel=2, shuffle=True, chunksizes=chunks)
                 var = out.createVariable(name, src.dtype, src.dimensions, **options)
@@ -111,10 +118,14 @@ def assemble(paths, indices, destination, day, work, *, expected_hours=24,
                     continue
                 for p in unique:
                     src = sources[p][name]
-                    if src.dtype != first.dtype or src.chunks != target.chunks:
-                        raise UnsupportedArchive(f'Incompatible dtype/chunks: {name}')
+                    # Small time coordinates may have automatic unlimited-dimension
+                    # chunks (e.g. 512), larger than the 24-record destination. They
+                    # use the existing decoded-copy path, not raw chunk transfer.
+                    decoded_coordinate = preserve_source_chunks and target.ndim == 1 and target.chunks is None
+                    if src.dtype != first.dtype or (not decoded_coordinate and src.chunks != target.chunks):
+                        raise UnsupportedArchive(f'Incompatible dtype/chunks: {name}; source={src.chunks}, target={target.chunks}')
                     a, b = src.id.get_create_plist(), target.id.get_create_plist()
-                    if [a.get_filter(i) for i in range(a.get_nfilters())] != [b.get_filter(i) for i in range(b.get_nfilters())]:
+                    if not decoded_coordinate and [a.get_filter(i) for i in range(a.get_nfilters())] != [b.get_filter(i) for i in range(b.get_nfilters())]:
                         raise UnsupportedArchive(f'Incompatible filters: {name}')
                     # Metadata differences must not be hidden by raw copying.
                     for key in ('_FillValue', 'scale_factor', 'add_offset', 'units'):
@@ -215,5 +226,5 @@ def assemble(paths, indices, destination, day, work, *, expected_hours=24,
             raise ValueError('Archive transfer checksum mismatch')
         publishing.replace(destination)
     return {'write_seconds': written, 'integrity_seconds': verified,
-            'normalized_variables': sorted(normalized),
+            'normalized_variables': sorted(normalized), 'preserve_source_chunks': preserve_source_chunks,
             'total_seconds': time.perf_counter()-started, 'status': 'passed'}

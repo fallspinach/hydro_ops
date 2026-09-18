@@ -111,6 +111,7 @@ def create_daily_archive(
     fully_verified_overrides: set[str] | None = None,
     source_time_indices: list[int] | None = None,
     chunk_copy: bool = False,
+    preserve_source_chunks: bool = False,
     normalize_precipitation_timing: bool = False,
 ) -> Path:
     """Combine ordered hourly NetCDF files and verify every stored value."""
@@ -139,7 +140,8 @@ def create_daily_archive(
                               destination.parent if work_directory is None else work_directory,
                               expected_hours=expected_hours, overrides=overrides,
                               global_attributes=global_attributes,
-                              normalize_precipitation_timing=normalize_precipitation_timing)
+                              normalize_precipitation_timing=normalize_precipitation_timing,
+                              preserve_source_chunks=preserve_source_chunks)
         except UnsupportedArchive as error:
             import logging
             logging.getLogger(__name__).warning('Chunk archive fallback: %s', error)

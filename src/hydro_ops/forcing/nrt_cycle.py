@@ -40,8 +40,17 @@ def configuration(root):
 
 
 def baseline_configuration(config):
-    """Reconciliation-only tuning must not invalidate accepted native baselines."""
-    return {k: v for k, v in config.items() if k != "reconciliation_writer_profile"}
+    """Lossless writer tuning must not invalidate accepted native baselines."""
+    return {k: v for k, v in config.items()
+            if k not in {"reconciliation_writer_profile", "baseline_writer_profile"}}
+
+
+def baseline_archive_options(config):
+    profile = config.get("baseline_writer_profile", "reference")
+    if profile not in {"reference", "validated_source_chunks_v1"}:
+        raise ValueError(f"Unknown NRT baseline writer profile: {profile}")
+    enabled = profile == "validated_source_chunks_v1"
+    return {"chunk_copy": enabled, "preserve_source_chunks": enabled}
 
 
 def reconciliation_environment(config, environ):
@@ -54,6 +63,9 @@ def reconciliation_environment(config, environ):
         env.setdefault(key, enabled)  # Explicit benchmark/reference overrides win.
         if env[key] not in {"0", "1"}:
             raise ValueError(f"Invalid writer override: {key}={env[key]}")
+    env.setdefault("HYDRO_OPS_ARCHIVE_PRESERVE_SOURCE_CHUNKS", env["HYDRO_OPS_ARCHIVE_CHUNKS"])
+    if env["HYDRO_OPS_ARCHIVE_PRESERVE_SOURCE_CHUNKS"] not in {"0", "1"}:
+        raise ValueError("Invalid source-chunk preservation override")
     return env
 
 
@@ -173,6 +185,7 @@ class RecentNrt:
             raise ValueError("NRT source selection requires an aware as-of time")
         self.root, self.work, self.as_of = root.resolve(), work, as_of
         self.config = configuration(root)
+        self.archive_options = baseline_archive_options(self.config)
         self.layout = OperationalLayout.project_defaults(root)
         self.output = output_root or root / "forcing/outputs/conus/nrt"
         self.baseline = baseline_root or root / "forcing/outputs/conus/baseline"
@@ -230,7 +243,8 @@ class RecentNrt:
                     deferred_mask=self.gap if selection.product == "hrrr" else None))
                 paths.append(path)
             assembled, corrected = tmp / "assembled.nc", tmp / "corrected.nc"
-            create_daily_archive(paths, assembled, day, work_directory=tmp)
+            create_daily_archive(paths, assembled, day, work_directory=tmp, **self.archive_options)
+            archive_record = json.loads(assembled.with_name(assembled.name + ".manifest.json").read_text())
             report = publish_gfs_day(assembled, corrected, self.envelope, self.geometry,
                 self.conservative, self.cache, tmp, nldas_available=False, as_of=self.as_of,
                 allow_mixed=True, require_native_repair=True)
@@ -248,6 +262,9 @@ class RecentNrt:
                 data.gfs_publication_status = "operational_nrt_baseline"
             checksum = transfer(corrected, destination)
         receipt = {"status": "passed", "day": str(day), "input_fingerprint": expected,
+                   "baseline_writer_profile": self.config.get("baseline_writer_profile", "reference"),
+                   "baseline_archive_writer": archive_record.get("archive_writer", "value_based"),
+                   "baseline_archive_timing": archive_record.get("timing"),
                    "inputs": inputs, "published_identity": identity(destination), "sha256": checksum,
                    "as_of": self.as_of.isoformat(), "gfs_hours": report["gfs_hours"],
                    "hourly_primary_sources": inputs["hourly_primary_sources"], "gfs_hourly": report["hours"],
@@ -284,6 +301,7 @@ class RecentNrt:
         with tempfile.TemporaryDirectory(prefix="nrt-final-", dir=self.work) as tmp:
             tmp = Path(tmp)
             writer_env = reconciliation_environment(self.config, os.environ)
+            window_writers = []
             def run(*args):
                 subprocess.run([sys.executable, *map(str, args)], cwd=self.root, env=writer_env, check=True)
             if constrained:
@@ -294,11 +312,12 @@ class RecentNrt:
                 for d in (day, day + timedelta(days=1)):
                     signature = window_signature(d, baselines, prism,
                         "early" if (self.as_of.date() - d).days < 30 else "provisional",
-                        writer_env["HYDRO_OPS_ARCHIVE_CHUNKS"])
+                        writer_env["HYDRO_OPS_ARCHIVE_CHUNKS"] + ":" + writer_env["HYDRO_OPS_ARCHIVE_PRESERVE_SOURCE_CHUNKS"])
                     window = day_path(windows, d)
                     marker = window.with_name(window.name + ".reuse.json")
                     cached = read_json(marker) if reuse else {}
                     if cached.get("signature") == signature and cached.get("identity") == identity(window):
+                        window_writers.append(read_json(window.with_name(window.name + ".manifest.json")).get("archive_writer", "value_based"))
                         print(json.dumps({"stage": "reuse_prism_window", "day": str(d)}), flush=True)
                         continue
                     run(self.root / "bin/produce_prism_constrained_daily.py", "--day", d,
@@ -306,6 +325,7 @@ class RecentNrt:
                         "--revision", "early" if (self.as_of.date() - d).days < 30 else "provisional",
                         "--stream", "nrt", "--work-directory", tmp,
                         "--archive-access", "direct", "--allow-legacy-12utc-output", "--force")
+                    window_writers.append(read_json(window.with_name(window.name + ".manifest.json")).get("archive_writer", "value_based"))
                     if reuse:
                         _atomic_json(marker, {"signature": signature, "identity": identity(window)})
                 run(self.root / "bin/materialize_calendar_forcing.py", "--input-root", windows,
@@ -316,11 +336,14 @@ class RecentNrt:
                 candidate = tmp / "unconstrained.nc"
                 shutil.copyfile(baselines[0][0], candidate)
             self.audit_final(candidate, day, constrained)
+            calendar_record = read_json(candidate.with_name(candidate.name + ".manifest.json"))
             if [identity(p) for p in prism] != inputs["prism"]:
                 raise ValueError("PRISM changed during reconciliation; retain previous publication")
             checksum = transfer(candidate, destination)
         receipt = {"status": "passed", "day": str(day), "input_fingerprint": expected,
                    "inputs": inputs, "published_identity": identity(destination), "sha256": checksum,
+                   "calendar_archive_writer": calendar_record.get("archive_writer", "value_based") if constrained else None,
+                   "prism_window_archive_writers": window_writers,
                    "as_of": self.as_of.isoformat(), "prism_constrained": constrained,
                    "gfs_hours": next(r["gfs_hours"] for p, r in baselines if r["day"] == str(day)),
                    "hourly_primary_sources": next(r["hourly_primary_sources"] for p, r in baselines if r["day"] == str(day))}

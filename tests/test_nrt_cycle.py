@@ -128,10 +128,25 @@ def test_validated_profile_is_scoped_to_reconciliation():
     resolved = nrt_cycle.reconciliation_environment(config, env)
     assert resolved["HYDRO_OPS_ARCHIVE_CHUNKS"] == "1"
     assert resolved["HYDRO_OPS_NRT_REUSE_WINDOWS"] == "1"
+    assert resolved["HYDRO_OPS_ARCHIVE_PRESERVE_SOURCE_CHUNKS"] == "1"
     assert env == {}
     overrides = {"HYDRO_OPS_ARCHIVE_CHUNKS": "0", "HYDRO_OPS_NRT_REUSE_WINDOWS": "0"}
-    assert nrt_cycle.reconciliation_environment(config, overrides) == overrides
+    expected = {**overrides, "HYDRO_OPS_ARCHIVE_PRESERVE_SOURCE_CHUNKS": "0"}
+    assert nrt_cycle.reconciliation_environment(config, overrides) == expected
     reference = nrt_cycle.reconciliation_environment({"reconciliation_writer_profile": "reference"}, {})
-    assert reference == overrides
+    assert reference == expected
     with pytest.raises(ValueError):
         nrt_cycle.reconciliation_environment({"reconciliation_writer_profile": "unknown"}, {})
+
+
+def test_baseline_writer_adoption_and_rollback_preserve_fingerprints():
+    old = {"enabled": True, "assembly_workers": 4}
+    for profile, enabled in (("reference", False), ("validated_source_chunks_v1", True)):
+        config = {**old, "baseline_writer_profile": profile,
+                  "reconciliation_writer_profile": "validated_chunks_reuse_v1"}
+        assert nrt_cycle.baseline_archive_options(config) == {
+            "chunk_copy": enabled, "preserve_source_chunks": enabled}
+        assert nrt_cycle.fingerprint(nrt_cycle.baseline_configuration(config)) == nrt_cycle.fingerprint(old)
+    assert not nrt_cycle.baseline_archive_options({})["chunk_copy"]
+    with pytest.raises(ValueError, match="Unknown NRT baseline"):
+        nrt_cycle.baseline_archive_options({"baseline_writer_profile": "typo"})
