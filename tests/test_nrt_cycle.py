@@ -1,8 +1,13 @@
 """Source-aware NRT decisions without cluster or network access."""
 
+import fcntl
 import json
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 
+import pytest
+
+from hydro_ops.forcing import nrt_cycle
 from hydro_ops.forcing.nrt_cycle import activation, fingerprint, identity, source_runs, up_to_date
 
 
@@ -42,3 +47,54 @@ def test_scheduled_activation_requires_real_acceptance(tmp_path):
     assert not activation(tmp_path)
     receipt.write_text(json.dumps({"status": "passed", "policy": "source_aware_recent_nrt_v1"}))
     assert activation(tmp_path)
+
+
+def test_isolated_cycle_repeat_and_lock(tmp_path, monkeypatch):
+    published = set()
+
+    class Engine:
+        def __init__(self, *args, **kwargs):
+            self.output, self.layout, self.config = tmp_path / "output", None, {}
+
+        def produce_day(self, day):
+            status = "unchanged" if day in published else "published"
+            published.add(day)
+            return {"day": str(day), "status": status, "gfs_hours": 24}
+
+    monkeypatch.setattr(nrt_cycle, "RecentNrt", Engine)
+    monkeypatch.setattr(nrt_cycle, "replacement_backlog", lambda *args: [])
+    state = tmp_path / "test-status"
+    day = date(2026, 9, 15)
+    args = (tmp_path, tmp_path / "scratch", day, day, datetime.now(UTC))
+    first = nrt_cycle.run_cycle(*args, state_root=state)
+    repeat = nrt_cycle.run_cycle(*args, state_root=state)
+    assert first["days"][0]["status"] == "published"
+    assert repeat["days"][0]["status"] == "unchanged"
+    assert not (tmp_path / "forcing/status/nrt-gfs").exists()
+    before = (state / "latest.json").read_bytes()
+    with (state / "cycle.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(BlockingIOError):
+            nrt_cycle.run_cycle(*args, state_root=state)
+    assert (state / "latest.json").read_bytes() == before
+
+
+def test_cycle_reports_failure_and_preserves_existing_output(tmp_path, monkeypatch):
+    output = tmp_path / "previous.nc"
+    output.write_bytes(b"previous accepted data")
+
+    class Engine:
+        def __init__(self, *args, **kwargs):
+            self.output, self.layout, self.config = tmp_path, None, {}
+
+        def produce_day(self, day):
+            raise RuntimeError("Missing source bundle")
+
+    monkeypatch.setattr(nrt_cycle, "RecentNrt", Engine)
+    monkeypatch.setattr(nrt_cycle, "replacement_backlog", lambda *args: [])
+    day = date(2026, 9, 15)
+    report = nrt_cycle.run_cycle(tmp_path, tmp_path / "scratch", day, day, datetime.now(UTC),
+                                 state_root=tmp_path / "status")
+    assert report["status"] == "failed"
+    assert report["errors"][0]["error"] == "Missing source bundle"
+    assert output.read_bytes() == b"previous accepted data"

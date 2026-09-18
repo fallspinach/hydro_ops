@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import xarray as xr
 from netCDF4 import Dataset
 
 from hydro_ops.forcing import gfs_publication
@@ -143,6 +144,17 @@ def test_full_day_publication_preserves_input_and_supported_rain(tmp_path, monke
         assert data["precip_source_id"][0, 0, 1] == 3
         assert data["precip_source_id"][1, 0, 1] == (6 if mixed else 8)
     assert report["gfs_hours"] == (12 if mixed else 24)
+    # PRISM opens every variable with CF decoding, including this optional time.
+    with xr.open_dataset(output) as decoded:
+        cycles = decoded.gfs_forecast_reference_time.values
+        assert np.isnat(cycles).sum() == (12 if mixed else 0)
+        assert decoded.time.size == 24
+    if mixed:
+        # Simulate replacement by NLDAS: no hour has a GFS cycle anymore.
+        with Dataset(output, "r+") as data:
+            data["gfs_forecast_reference_time"][:] = np.ma.masked
+        with xr.open_dataset(output) as decoded:
+            assert np.isnat(decoded.gfs_forecast_reference_time.values).all()
     manifest = json.loads(output.with_name(output.name + ".manifest.json").read_text())
     assert manifest["verified"] and len(manifest["source_files"]) == 24
 

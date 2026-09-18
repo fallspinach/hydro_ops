@@ -320,10 +320,10 @@ class RecentNrt:
 
 
 def run_cycle(root, work, start, end, as_of, *, output_root=None, baseline_root=None,
-              requested_at=None):
+              requested_at=None, state_root=None):
     """An exclusive recent-NRT writer; failures retain the previous daily files."""
     worker_started = datetime.now(UTC)
-    state_root = root / "forcing/status/nrt-gfs"
+    state_root = state_root or root / "forcing/status/nrt-gfs"
     state_root.mkdir(parents=True, exist_ok=True)
     report = {"policy": POLICY, "start": str(start), "end": str(end), "as_of": as_of.isoformat(),
               "status": "running", "job_id": os.environ.get("SLURM_JOB_ID"), "days": [], "errors": []}

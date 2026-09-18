@@ -3,13 +3,25 @@
 ## Rollout status
 
 The production integration is implemented and requested in `config/nrt_gfs.toml`.
-**Scheduled activation is gated on the real-data acceptance job 4520199**, which
-was submitted on 2026-09-12 and is not yet claimed successful. Until its acceptance
-receipt exists, the coordinator retains the previous workflow. No current repair
+**Integration acceptance rerun 4551871 passed** on 2026-09-17 in 3:56:02.
+Its activation receipt exists and the coordinator now enables the recent GFS path.
+Mixed-hour selection, NLDAS replacement, PRISM publication and unchanged repeat
+all passed. This does not establish the sub-hour operational latency target.
+No current repair
 job was canceled, resubmitted, or configured to use GFS as part of this integration.
 
+Original acceptance job 4520199 failed during PRISM temperature processing:
+non-GFS hours used implicit NetCDF fill in `gfs_forecast_reference_time`, without
+an explicit `_FillValue` attribute. Xarray interpreted that sentinel as an enormous
+date and overflowed. The writer now declares a NaN `_FillValue` and the calendar;
+the real-data test explicitly exercises CF decoding for both mixed-source and
+all-NLDAS replacement files. All 23 focused GFS/NRT tests passed before resubmission.
+The rerun uses 64 CPUs, 240000 MB scratch and a 48-hour limit; it rebuilds isolated
+test outputs from scratch, without modifying operational forcing. Failures now
+write a failed acceptance status and error rather than leaving a running status.
+
 The acceptance worker uses only isolated output/baseline directories under
-`forcing/work/nrt-gfs-cycle-validation/job_4520199/`. It deliberately selects
+`forcing/work/nrt-gfs-cycle-validation/job_4551871/`. It deliberately selects
 NLDAS-2 for August 25 hours 00–11 and HRRR for hours 12–23, then restores normal
 selection to simulate NLDAS-2 arrival. It checks 12 GFS hours followed by zero,
 applies PRISM daily constraints, and repeats an unchanged update to verify reuse.
@@ -25,8 +37,10 @@ receipt rather than assuming configuration alone means the integration is live.
 
 ## Scheduling and scope
 
-The installed crontab already invokes `bin/update_nwm_forcing.py` at 02, 08, 14
-and 20 UTC. Those commands need no replacement: the coordinator reads the new
+The repository cron template invokes `bin/update_nwm_forcing.py` at 02, 08, 14
+and 20 UTC. On the inspected host, `crontab -l` reported no crontab for mpan;
+installation on the intended scheduler host still needs verification. The template
+commands need no replacement: the coordinator reads the new
 configuration. The 08 UTC pass retains the existing deeper older-window refresh.
 The monthly retrospective cycle is unchanged.
 
@@ -122,5 +136,38 @@ Completed cycle reports are retained alongside `latest.json`.
 Unit/regression coverage includes mixed-hour selection, no GFS acquisition for
 NLDAS hours, input preservation, outage rejection without publication, source/PRISM
 fingerprint changes, delayed-cycle retry, exact UTC-day validation and activation
-gating. The pre-acceptance suite passes 248 tests. Operational throughput and the
-complete real-data replacement/PRISM chain still require job 4520199's result.
+gating. The real-data replacement/PRISM chain passed in job 4551871; operational
+throughput remains to be measured.
+
+## Real-availability operational test (2026-09-17)
+
+`bin/submit_nrt_operational_test.py` previews a two-day test, or submits it with
+`--submit`. It runs the normal external-source refresh with a 14-day completeness
+lookback and waits for newly submitted or already active source jobs. As in the
+production coordinator, dependencies use `afterany`: source availability is
+checked by the worker rather than assuming a downloader exit code implies coverage.
+GFS is acquired on demand only for actual HRRR-selected hours.
+
+Job **4553105** runs the first test after source-refresh jobs **4553100–4553104**
+(NLDAS-2, Stage-IV, PRISM, HRRR, MRMS respectively). Its campaign is
+`forcing/work/nrt-operational-test-20260917T173721/`.
+The first test targets September 14–15, matching the coordinator's current
+complete-day cutoff of UTC today minus two days. There are no source-selector
+overrides. Each test writes its own baseline, NRT, status, and acceptance files in
+`forcing/work/nrt-operational-test-<timestamp>/`, leaving production outputs,
+production status, retro repairs and activation receipts untouched. The explicit
+`state_root` override isolates both the status reports and cycle lock; production
+defaults are unchanged.
+
+One 64-CPU worker with 240000 MB scratch runs a cold two-day cycle and then repeats
+it immediately. Reports separately record refresh/dependency/queue time and worker
+time, compare both against the one-hour deadline, count actual GFS hours, and
+verify that unchanged final file identities remain identical. Functional success
+does not imply the latency goal was met. Actual source changes or preferred-GFS
+cycle arrivals during the repeat can legitimately invalidate reuse and must be
+distinguished from a regression. Full seven-day throughput, deeper daily refresh,
+and cron installation remain subsequent rollout checks, not claims of this test.
+
+The focused 40-test suite also exercises isolated status, overlapping-cycle lock
+rejection, failure reporting, fingerprints, source/PRISM changes and GFS outage
+publication guards. Mocked failure tests are not evidence of a real cluster outage.
