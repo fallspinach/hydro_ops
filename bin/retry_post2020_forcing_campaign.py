@@ -15,7 +15,7 @@ from hydro_ops.config import load_settings
 def snapshot(job: str) -> dict[int, str]:
     states = {}
     accounting = subprocess.check_output(
-        ["sacct", "-j", job, "-X", "-n", "-P", "--format=JobID,State"], text=True)
+        ["sacct", "--array", "-j", job, "-X", "-n", "-P", "--format=JobID,State"], text=True)
     for line in accounting.splitlines():
         jid, state, *_ = line.split("|")
         suffix = jid.removeprefix(job + "_")

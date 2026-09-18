@@ -21,7 +21,8 @@ def activate():
     destination = Path(location)
     destination.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
-    profile = cProfile.Profile()
+    timing_only = os.environ.get('HYDRO_OPS_PROFILE_TIMING_ONLY') == '1'
+    profile = None if timing_only else cProfile.Profile()
     calls = []
     original = subprocess.run
 
@@ -40,18 +41,21 @@ def activate():
                           'returncode': code})
 
     subprocess.run = timed_run
-    profile.enable()
+    if profile is not None:
+        profile.enable()
 
     def finish():
-        profile.disable()
         pid = os.getpid()
-        profile.dump_stats(str(destination/f'{pid}.pstats'))
-        stats = pstats.Stats(profile)
         rows = []
-        for (filename, line, function), (primitive, total, own, cumulative, callers) in stats.stats.items():
-            rows.append({'file': filename, 'line': line, 'function': function,
-                         'calls': total, 'self_seconds': own, 'cumulative_seconds': cumulative})
+        if profile is not None:
+            profile.disable()
+            profile.dump_stats(str(destination/f'{pid}.pstats'))
+            stats = pstats.Stats(profile)
+            for (filename, line, function), (primitive, total, own, cumulative, callers) in stats.stats.items():
+                rows.append({'file': filename, 'line': line, 'function': function,
+                             'calls': total, 'self_seconds': own, 'cumulative_seconds': cumulative})
         report = {'pid': pid, 'argv': sys.argv, 'wall_seconds': time.perf_counter()-started,
+                  'mode': 'timing_only' if timing_only else 'cprofile',
                   'subprocesses': calls,
                   'top_cumulative': sorted(rows, key=lambda r: r['cumulative_seconds'], reverse=True)[:100],
                   'top_self': sorted(rows, key=lambda r: r['self_seconds'], reverse=True)[:100]}

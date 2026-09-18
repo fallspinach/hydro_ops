@@ -114,3 +114,67 @@ Paired seven-day benchmark, September 1–7, 2021:
 
 No automatic campaign switch is configured. Combined repair/masking remains a
 later experiment. Concurrent storage load can affect the measured speedup.
+
+## Combined writer/mask follow-up (September 16)
+
+The archives-only pair finished in 5:43:33 (reference) and 5:41:19 (optimized),
+and audit 4523535 passed. This small end-to-end gain is why improvements measured
+on pre-existing 2003 baselines should not be extrapolated to full CNRFC rebuilds.
+
+`bin/benchmark_post2020_production.py --all-optimizations --parallel` repeats
+September 1–7, 2021 with nine freshly rebuilt support/baseline days in each arm.
+Reference retains conventional PRISM/calendar writers and full static masking;
+optimized enables chunk archive writing and fast static masking together.
+Both retain identical daily remapping, CNRFC policy, active-cell repair, PRISM
+science, scratch publication, and permanent-transfer checks. The multiday remap
+cache experiment is explicitly disabled. Month-start masking still receives a
+full read-back even in the optimized arm.
+
+Each arm requests 64 CPUs, 240 GB scratch and a 24-hour limit. Outputs remain
+under a new isolated `forcing/work/post2020-production-benchmark-*` directory.
+No task in 4520189 is cancelled or changed; no automatic production switch is
+scheduled. The comparison job waits for both arms and checks all variables,
+all 168 hourly records, variable metadata, CNRFC/policy metadata and permanent
+publication identities; it also verifies optimized calendar and mask execution.
+
+Both arms opt into the existing interpreter timing hook with
+`HYDRO_OPS_PROFILE_TIMING_ONLY=1`: subprocess and process wall times are recorded
+without enabling cProfile or writing pstats files. Per-script totals appear in
+`acceptance.json`; detailed records live under `timings/reference` and
+`timings/optimized`. Parent times include child time: never sum nested scripts.
+The top-level rebuild time includes final publication; the independent full
+comparison is outside the measured build interval. Timing instrumentation is
+absent from ordinary production environments.
+
+Submitted pair: reference **4546585**, optimized **4546586**, dependent full
+comparison **4546587**. Results directory:
+`forcing/work/post2020-production-benchmark-20260916T163951/`.
+Twenty-five focused tests passed before submission.
+# Production writer handoff (2026-09-16)
+
+The seven-day, all-three writer benchmark passed: reference `4546585`
+took 5:47:21; optimized `4546586` took 4:53:54; audit `4546587`
+confirmed bitwise-equal decoded fields, variable attributes, required policy
+metadata, and publication identities. This is 15.4% less elapsed time at the
+same resources, not a reduction in baseline remapping work.
+
+Replacement array **4549027** takes over only original pending indices
+178–307 from **4520189**. Its 103 retro batches use `validated_chunks_v1`
+(chunk-aware PRISM/calendar writing and fast static masking); its 27 NRT
+batches retain `reference`, because this benchmark covered retro only.
+Multiday precipitation remapping remains disabled. Month-start mask checks
+retain full validation and permanent publication retains checksum verification.
+
+Original running and completed batches were preserved. The replacement uses
+`afterany:4520189` (not `afterok`, because pending originals were canceled),
+eight workers, 64 CPUs and 240000 MB reserved scratch per worker, and 48-hour
+task limits. Maximum concurrent allocation remains 512 CPUs. It is normal for
+the new array to wait for the original workers to drain.
+
+The frozen inventory, benchmark acceptance, original/canceled task states,
+submission command, and replacement job ID are recorded in
+`forcing/work/post2020-writer-upgrade-20260917T014314249761/`.
+`bin/upgrade_pending_post2020.py` implements this pending-only handoff with a
+dry-run default and a journal-resume option. Scheduler accounting must expand
+array tasks (`sacct --array`), including compressed canceled ranges. A recorded
+submission attempt must be reconciled with SLURM before any resubmission.

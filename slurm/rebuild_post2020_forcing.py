@@ -21,6 +21,32 @@ from netCDF4 import Dataset, num2date
 POLICY = "cnrfc_prism_domain_rebuild_v1"
 
 
+def configure_writer(task: dict, project: Path, environ: dict) -> bool:
+    """Opt in only frozen, benchmark-approved operational tasks."""
+    receipt = task.get("writer_acceptance")
+    if receipt is None:
+        return False
+    proof = json.loads(Path(receipt).read_text())
+    if (proof.get("status") != "passed" or len(proof.get("days", [])) != 7
+            or not task.get("writer_all_optimizations")):
+        raise ValueError("Missing successful all-writer benchmark")
+    stream = task["stream"]
+    profile = task.get("writer_profile")
+    if stream not in {"retro", "nrt"} or profile != (
+            "validated_chunks_v1" if stream == "retro" else "reference"):
+        raise ValueError("Unvalidated stream/writer profile")
+    if Path(task["output_root"]).resolve() != (project / "forcing/outputs/conus" / stream).resolve():
+        raise ValueError("Unexpected production output root")
+    if environ.get("HYDRO_OPS_REBUILD_STATIC_ENVELOPE") != "1":
+        raise ValueError("Static envelope required")
+    enabled = "1" if stream == "retro" else "0"
+    environ.update(HYDRO_OPS_ARCHIVE_CHUNKS=enabled, HYDRO_OPS_BENCH_FAST_MASK=enabled,
+                   HYDRO_OPS_BENCH_MULTIDAY="0")
+    for key in ("HYDRO_OPS_RETRO_NEW_PRODUCTION", "HYDRO_OPS_PRECIPITATION_CACHE"):
+        environ.pop(key, None)
+    return True
+
+
 def finalize_static_manifest(source: Path, destination: Path) -> None:
     """Carry the validated candidate audit across the permanent-copy transaction."""
     manifest = source.with_name(source.name + ".manifest.json")
@@ -30,7 +56,7 @@ def finalize_static_manifest(source: Path, destination: Path) -> None:
     stat = destination.stat()
     envelope["staged_identity"] = envelope.pop("published_identity")
     envelope["published_identity"] = {"inode": stat.st_ino, "bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns}
-    envelope["audit_scope"] = "full staged-candidate content audit; permanent transfer checksum verified"
+    envelope["audit_scope"] = "staged-candidate validation recorded in mask audit; permanent transfer checksum verified"
     record["daily_file"] = str(destination)
     target = destination.with_name(destination.name + ".manifest.json")
     temporary = target.with_name(target.name + ".part")
@@ -48,7 +74,8 @@ def main() -> int:
     python = os.environ["HYDRO_OPS_PYTHON"]
     index = int(os.environ["SLURM_ARRAY_TASK_ID"])
     task = json.loads(Path(os.environ["HYDRO_OPS_REBUILD_TASK_FILE"]).read_text().splitlines()[index])
-    if any(os.environ.get(k) == '1' for k in ('HYDRO_OPS_BENCH_MULTIDAY', 'HYDRO_OPS_BENCH_FAST_MASK', 'HYDRO_OPS_ARCHIVE_CHUNKS')):
+    authorized = configure_writer(task, project, os.environ)
+    if not authorized and any(os.environ.get(k) == '1' for k in ('HYDRO_OPS_BENCH_MULTIDAY', 'HYDRO_OPS_BENCH_FAST_MASK', 'HYDRO_OPS_ARCHIVE_CHUNKS')):
         Path(task['output_root']).resolve().relative_to((project/'forcing/work').resolve())
         if task['stream'] != 'retro':
             raise ValueError('Benchmark must not publish operational NRT baselines')
