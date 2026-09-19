@@ -15,11 +15,13 @@ from hydro_ops.forcing.daily_archive import verified_daily_archive
 from hydro_ops.forcing.streams import baseline_root
 
 
-def complete_day(root: Path, day: date) -> bool:
+def complete_day(root: Path, day: date, *, require_daily: bool = True) -> bool:
     daily = root / day.strftime("%Y/%m") / f"{day:%Y%m%d}.LDASIN_DOMAIN1"
     legacy_daily = daily.with_suffix(f"{daily.suffix}.nc")
     if verified_daily_archive(daily, day) or verified_daily_archive(legacy_daily, day):
         return True
+    if require_daily:
+        return False
     for valid in utc_hours(day):
         output = root / valid.strftime("%Y/%m/%d/%Y%m%d%H.LDASIN_DOMAIN1")
         manifest = output.with_suffix(f"{output.suffix}.manifest.json")
@@ -62,7 +64,7 @@ def main() -> int:
     parser.add_argument(
         "--missing-only",
         action="store_true",
-        help="submit only days that do not have 24 complete validated hours",
+        help="submit days missing a verified daily archive (or complete hours with --keep-hourly)",
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--dependency", help="SLURM dependency expression")
@@ -92,7 +94,7 @@ def main() -> int:
             parser.error("--only-days contains a date outside --start/--end")
         days = [day for day in days if day in requested]
     if args.missing_only:
-        days = [day for day in days if not complete_day(output_root, day)]
+        days = [day for day in days if not complete_day(output_root, day, require_daily=not args.keep_hourly)]
     tasks = len(days)
     print(f"eligible_days={tasks}")
     if not tasks:

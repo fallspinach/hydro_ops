@@ -261,13 +261,15 @@ def main() -> int:
         if prism_id:
             wait_for_job(prism_id, project)
         else:
+            state["stop_reason"] = "no_eligible_prism_tasks"
             break
 
     missing = unresolved_days(output_root, start, end, state["stream"])
     state["unresolved_days"] = len(missing)
     state["unresolved_day_examples"] = [day.isoformat() for day in missing[:100]]
     if missing:
-        state["status"] = "blocked_after_maximum_attempts"
+        state["status"] = ("blocked_no_eligible_prism_tasks" if state.get("stop_reason") == "no_eligible_prism_tasks"
+                           else "blocked_after_maximum_attempts")
         write_state(manifest, state)
         return 2
 
