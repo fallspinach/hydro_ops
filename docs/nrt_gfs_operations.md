@@ -55,6 +55,22 @@ No historical files need rechunking solely for this handoff.
 
 ## Scheduling and scope
 
+Cross-cycle PRISM window caching is enabled by `window_cache_enabled` in
+`config/nrt_gfs.toml`, following paired test 4561354. Each NRT output root has
+its own hidden `.prism-window-cache`; these are disposable intermediate windows,
+not published calendar-day forcing. Private test roots do not use the operational
+cache. An explicit empty `HYDRO_OPS_NRT_WINDOW_CACHE` disables caching for reference
+benchmarks; a nonempty value overrides its location.
+
+After window processing, cleanup limits recognized cache entries to 32, 160 GB,
+and 14 days since last use, evicting oldest entries first. Limits can be temporarily
+exceeded while a window is published. Shared reader/publisher locking and exclusive
+cleanup locking protect in-flight copies; cleanup removes only recognized entry
+files, never forcing outputs, baseline files, or unknown directory content.
+Cleanup is activity-triggered, not a separate cron service. Disabling caching does
+not automatically delete retained entries. Cache tuning does not invalidate baseline
+fingerprints. Final publication validation is unchanged.
+
 The repository cron template invokes `bin/update_nwm_forcing.py` at 02, 08, 14
 and 20 UTC. On the inspected host, `crontab -l` reported no crontab for mpan;
 installation on the intended scheduler host still needs verification. The template
@@ -66,7 +82,17 @@ The recent path manages the last **seven target days**, covering the usual 3–4
 NLDAS-2 latency gap plus overlap for source replacement. It runs after the external
 source-refresh and initial older-window baseline dependencies, before older-window
 convergence. This ordering serializes access to their boundary baseline. A worker
-reserves 64 CPUs and 240 GB scratch; four assembly processes do the expensive work.
+reserves 64 CPUs and 240 GB scratch; baseline production uses four precipitation
+remapping workers and eight hourly assembly processes (validated by job 4578181).
+Worker-count tuning preserves historical baseline fingerprints rather than forcing
+accepted days to rebuild. Rollback values are one precipitation-remapping worker
+and four assembly workers in `config/nrt_gfs.toml`.
+Native-donor repair now uses four independent spawned processes, and GFS
+publication rewrites only changed chunks while retaining all full-field audits
+(paired comparison 4578828 passed). Rollback settings are
+`native_repair_workers = 1` and `gfs_sparse_writes = false`. These performance
+settings do not invalidate previously accepted baselines. Benchmark environment
+overrides still take precedence over configuration.
 The existing coordinator lock and active-cycle check prevent overlapping scheduled
 NRT cycles, and the recent writer takes its own exclusive lock.
 

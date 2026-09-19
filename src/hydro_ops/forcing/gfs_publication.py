@@ -60,9 +60,26 @@ def fill_active_holes(values, missing, active, keep, gap, cache):
     return values, targets, maximum
 
 
+def write_changed_chunks(var, index, original, updated):
+    """Avoid recompressing untouched chunks; retain the caller's full-field audit."""
+    chunks = var.chunking()
+    if not isinstance(chunks, (list, tuple)) or len(chunks) != 3 or chunks[0] != 1:
+        var[index] = updated
+        return
+    # Bitwise comparison also preserves signed zero and NaN payload changes.
+    unsigned = np.dtype(f'u{updated.dtype.itemsize}')
+    changed = np.asarray(original).view(unsigned) != updated.view(unsigned)
+    cy, cx = chunks[1:]
+    for y in range(0, updated.shape[0], cy):
+        for x in range(0, updated.shape[1], cx):
+            region = (slice(y, y + cy), slice(x, x + cx))
+            if changed[region].any():
+                var[index, region[0], region[1]] = updated[region]
+
+
 def publish_gfs_day(source_path, output_path, envelope_path, geometry_path, conservative_path,
                     cache_path, work, *, nldas_available, as_of=None, historical_test=False,
-                    allow_mixed=False, require_native_repair=False):
+                    allow_mixed=False, require_native_repair=False, sparse_writes=False):
     if source_path.resolve() == output_path.resolve() or output_path.exists():
         raise ValueError("Opt-in writer requires a new, separate destination")
     if not historical_test and as_of is None:
@@ -185,7 +202,10 @@ def publish_gfs_day(source_path, output_path, envelope_path, geometry_path, cons
                     if sha(values[unchanged]) != before_hash:
                         raise ValueError("Unrelated valid source values changed")
                     expected[index, name] = sha(values)
-                    var[index] = values
+                    if sparse_writes:
+                        write_changed_chunks(var, index, np.ma.getdata(stored), values)
+                    else:
+                        var[index] = values
                 flags[index] = usage
                 met_ids = np.asarray(dst["forcing_source_id"][index])
                 if use_gfs:

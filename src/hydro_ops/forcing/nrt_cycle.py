@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import multiprocessing
 import os
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ import sys
 import tempfile
 import time
 import tomllib
+from concurrent.futures import ProcessPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -30,6 +32,7 @@ from hydro_ops.forcing.operations import (
     discover_stage4_six_hour,
 )
 from hydro_ops.forcing.source_selection import select_hourly_source
+from hydro_ops.forcing.window_cache import WindowCache
 
 POLICY = "source_aware_recent_nrt_v1"
 
@@ -41,8 +44,14 @@ def configuration(root):
 
 def baseline_configuration(config):
     """Lossless writer tuning must not invalidate accepted native baselines."""
-    return {k: v for k, v in config.items()
-            if k not in {"reconciliation_writer_profile", "baseline_writer_profile"}}
+    result = {k: v for k, v in config.items()
+            if k not in {"reconciliation_writer_profile", "baseline_writer_profile",
+                         "precipitation_remap_workers", "native_repair_workers", "gfs_sparse_writes",
+                         "window_cache_enabled", "window_cache_max_entries", "window_cache_max_bytes", "window_cache_max_age_days"}}
+    # Preserve the historical fingerprint value: worker count is not scientific input.
+    if "assembly_workers" in result:
+        result["assembly_workers"] = 4
+    return result
 
 
 def baseline_archive_options(config):
@@ -51,6 +60,37 @@ def baseline_archive_options(config):
         raise ValueError(f"Unknown NRT baseline writer profile: {profile}")
     enabled = profile == "validated_source_chunks_v1"
     return {"chunk_copy": enabled, "preserve_source_chunks": enabled}
+
+
+def baseline_workers(config):
+    """Benchmark overrides only; production retains its accepted worker counts."""
+    result = {"assembly_workers": int(os.environ.get("HYDRO_OPS_NRT_ASSEMBLY_WORKERS", config["assembly_workers"])),
+              "precipitation_remap_workers": int(os.environ.get("HYDRO_OPS_NRT_PRECIP_WORKERS", config.get("precipitation_remap_workers", 1)))}
+    if any(value < 1 or value > 16 for value in result.values()):
+        raise ValueError("NRT baseline worker counts must be between 1 and 16")
+    return result
+
+
+def baseline_repair_options(config):
+    workers = int(os.environ.get('HYDRO_OPS_NRT_REPAIR_WORKERS', config.get('native_repair_workers', 1)))
+    sparse = os.environ.get('HYDRO_OPS_NRT_GFS_SPARSE_WRITES', '1' if config.get('gfs_sparse_writes', False) else '0')
+    if not 1 <= workers <= 8 or sparse not in {'0', '1'}:
+        raise ValueError('Invalid native repair worker count or GFS writer override')
+    return workers, sparse == '1'
+
+
+def _initialize_repair(layout, envelope, terrain, maximum_km, geometry):
+    global _worker_repair, _worker_gap
+    _worker_repair = NativeDonorRepair(layout, envelope, terrain, maximum_km=maximum_km)
+    with np.load(geometry) as data:
+        _worker_gap = np.zeros(tuple(data['shape']), dtype=bool)
+        _worker_gap.ravel()[data['indices']] = True
+
+
+def _repair_hour(task):
+    path, selection = task
+    return _worker_repair.repair(path, selection,
+        deferred_mask=_worker_gap if selection.product == 'hrrr' else None)
 
 
 def reconciliation_environment(config, environ):
@@ -217,6 +257,7 @@ class RecentNrt:
                       self.layout.cnrfc_nwm_mask)]
 
     def baseline_day(self, day):
+        started = time.monotonic()
         selections, inputs = baseline_plan(day, self.layout, self.config)
         inputs["assets"] = self.assets
         downloader = GfsDownloader(self.cache, self.work)
@@ -227,6 +268,7 @@ class RecentNrt:
                 bundles.append({k: bundle.attrs.get(k) for k in
                                 ("valid_time", "cycle", "lead", "url", "remote_etag", "remote_last_modified")})
         inputs["gfs_bundles"] = bundles
+        timings = [{"stage": "source_planning_and_gfs_acquisition", "seconds": time.monotonic() - started}]
         expected = fingerprint(inputs)
         destination = day_path(self.baseline, day)
         receipt_path = destination.with_name(destination.name + ".nrt-receipt.json")
@@ -240,21 +282,36 @@ class RecentNrt:
         with tempfile.TemporaryDirectory(prefix=f"nrt-baseline-{day:%Y%m%d}-", dir=self.work) as tmp:
             tmp = Path(tmp)
             hourly = tmp / "hourly"
+            workers = baseline_workers(self.config)
+            started = time.monotonic()
             for first, last in source_runs(selections):
                 produce_complete_day(day, self.layout, hourly, work_directory=tmp,
-                    start_hour=first, end_hour=last, assembly_workers=self.config["assembly_workers"])
-            paths, repairs = [], []
-            for selection in selections:
-                path = hourly / selection.valid_time.strftime("%Y/%m/%d/%Y%m%d%H.LDASIN_DOMAIN1")
-                repairs.append(self.repair.repair(path, selection,
-                    deferred_mask=self.gap if selection.product == "hrrr" else None))
-                paths.append(path)
+                    start_hour=first, end_hour=last, **workers)
+            timings.append({"stage": "complete_day", "seconds": time.monotonic() - started, **workers})
+            paths = [hourly / s.valid_time.strftime("%Y/%m/%d/%Y%m%d%H.LDASIN_DOMAIN1") for s in selections]
+            started = time.monotonic()
+            repair_workers, sparse_writes = baseline_repair_options(self.config)
+            if repair_workers == 1:
+                repairs = [self.repair.repair(path, s, deferred_mask=self.gap if s.product == 'hrrr' else None)
+                           for path, s in zip(paths, selections, strict=True)]
+            else:
+                with ProcessPoolExecutor(max_workers=repair_workers, mp_context=multiprocessing.get_context('spawn'),
+                    initializer=_initialize_repair, initargs=(self.layout, self.envelope,
+                        self.root / self.config['model_terrain'], self.config['maximum_native_donor_km'], self.geometry)) as pool:
+                    repairs = list(pool.map(_repair_hour, zip(paths, selections, strict=True)))
+            timings.append({"stage": "native_donor_repair", "seconds": time.monotonic() - started, "workers": repair_workers})
             assembled, corrected = tmp / "assembled.nc", tmp / "corrected.nc"
+            started = time.monotonic()
             create_daily_archive(paths, assembled, day, work_directory=tmp, **self.archive_options)
+            timings.append({"stage": "daily_archive", "seconds": time.monotonic() - started})
             archive_record = json.loads(assembled.with_name(assembled.name + ".manifest.json").read_text())
+            started = time.monotonic()
             report = publish_gfs_day(assembled, corrected, self.envelope, self.geometry,
                 self.conservative, self.cache, tmp, nldas_available=False, as_of=self.as_of,
-                allow_mixed=True, require_native_repair=True)
+                allow_mixed=True, require_native_repair=True,
+                sparse_writes=sparse_writes)
+            timings.append({"stage": "gfs_publication_and_audit", "seconds": time.monotonic() - started,
+                            "sparse_writes": sparse_writes})
             if report["status"] != "passed":
                 raise ValueError(f"NRT baseline not accepted: {report}")
             _, current = baseline_plan(day, self.layout, self.config)
@@ -267,11 +324,14 @@ class RecentNrt:
                 data.archive_granularity = "utc_calendar_day"
                 data.nrt_production_policy = POLICY
                 data.gfs_publication_status = "operational_nrt_baseline"
+            started = time.monotonic()
             checksum = transfer(corrected, destination)
+            timings.append({"stage": "baseline_transfer", "seconds": time.monotonic() - started})
         receipt = {"status": "passed", "day": str(day), "input_fingerprint": expected,
                    "baseline_writer_profile": self.config.get("baseline_writer_profile", "reference"),
                    "baseline_archive_writer": archive_record.get("archive_writer", "value_based"),
                    "baseline_archive_timing": archive_record.get("timing"),
+                   "baseline_stage_timings": timings,
                    "inputs": inputs, "published_identity": identity(destination), "sha256": checksum,
                    "as_of": self.as_of.isoformat(), "gfs_hours": report["gfs_hours"],
                    "hourly_primary_sources": inputs["hourly_primary_sources"], "gfs_hourly": report["hours"],
@@ -309,23 +369,47 @@ class RecentNrt:
             tmp = Path(tmp)
             writer_env = reconciliation_environment(self.config, os.environ)
             window_writers = []
+            timings = []
             def run(*args):
+                started = time.monotonic()
                 subprocess.run([sys.executable, *map(str, args)], cwd=self.root, env=writer_env, check=True)
+                timings.append({"stage": Path(args[0]).name, "seconds": time.monotonic() - started})
             if constrained:
                 # Share only dependency-keyed PRISM windows
                 # within this worker's scratch, never across production workers.
                 reuse = writer_env["HYDRO_OPS_NRT_REUSE_WINDOWS"] == "1"
                 windows = self.work / "nrt-prism-windows/nrt" if reuse else tmp / "windows/nrt"
+                # Keep private/test streams isolated by default; empty override disables caching.
+                default_cache = str(self.output / '.prism-window-cache') if self.config.get("window_cache_enabled", False) else ""
+                cache_root = os.environ.get("HYDRO_OPS_NRT_WINDOW_CACHE", default_cache)
+                persistent = WindowCache(cache_root) if cache_root and reuse else None
                 for d in (day, day + timedelta(days=1)):
                     signature = window_signature(d, baselines, prism,
                         "early" if (self.as_of.date() - d).days < 30 else "provisional",
                         writer_env["HYDRO_OPS_ARCHIVE_CHUNKS"] + ":" + writer_env["HYDRO_OPS_ARCHIVE_PRESERVE_SOURCE_CHUNKS"])
+                    # Include code and all fixed remapping assets, not just weather inputs.
+                    key = fingerprint({"window": signature, "assets": self.assets,
+                        "prism_assets": [identity(self.root / p) for p in
+                            ("forcing/static/prism/prism_an_4km_elevation.nc",
+                             "forcing/static/remapping/nwm_conus_1km/prism_bilinear.nc",
+                             "forcing/static/remapping/nwm_conus_1km/nwm_to_prism_conservative_masked.nc")],
+                        "library": [identity(p) for p in sorted((self.root / "src/hydro_ops/forcing").glob("*.py"))],
+                        "code": [identity(self.root / p) for p in
+                            ("bin/produce_prism_constrained_daily.py", "bin/reconcile_prism_precipitation_day.py",
+                             "src/hydro_ops/forcing/prism_temperature.py", "src/hydro_ops/forcing/precipitation_reconciliation.py",
+                             "src/hydro_ops/forcing/nrt_cycle.py")]})
                     window = day_path(windows, d)
                     marker = window.with_name(window.name + ".reuse.json")
                     cached = read_json(marker) if reuse else {}
                     if cached.get("signature") == signature and cached.get("identity") == identity(window):
                         window_writers.append(read_json(window.with_name(window.name + ".manifest.json")).get("archive_writer", "value_based"))
                         print(json.dumps({"stage": "reuse_prism_window", "day": str(d)}), flush=True)
+                        continue
+                    started = time.monotonic()
+                    if persistent and persistent.restore(key, window, identity):
+                        timings.append({"stage": "persistent_window_hit", "day": str(d), "seconds": time.monotonic() - started})
+                        window_writers.append(read_json(window.with_name(window.name + ".manifest.json")).get("archive_writer", "value_based"))
+                        _atomic_json(marker, {"signature": signature, "identity": identity(window)})
                         continue
                     run(self.root / "bin/produce_prism_constrained_daily.py", "--day", d,
                         "--complete-root", self.baseline, "--output-root", windows,
@@ -335,6 +419,15 @@ class RecentNrt:
                     window_writers.append(read_json(window.with_name(window.name + ".manifest.json")).get("archive_writer", "value_based"))
                     if reuse:
                         _atomic_json(marker, {"signature": signature, "identity": identity(window)})
+                    if persistent:
+                        started = time.monotonic()
+                        persistent.publish(key, window, identity)
+                        timings.append({"stage": "persistent_window_store", "day": str(d), "seconds": time.monotonic() - started})
+                if persistent:
+                    removed = persistent.prune(max_entries=self.config.get("window_cache_max_entries", 32),
+                        max_bytes=self.config.get("window_cache_max_bytes", 160_000_000_000),
+                        max_age_days=self.config.get("window_cache_max_age_days", 14))
+                    timings.append({"stage": "persistent_window_prune", "removed_entries": len(removed)})
                 run(self.root / "bin/materialize_calendar_forcing.py", "--input-root", windows,
                     "--output-root", tmp / "final", "--start", day, "--days", 1, "--stream", "nrt",
                     "--require-accepted-prism-windows", "--hierarchical", "--work-directory", tmp)
@@ -342,15 +435,20 @@ class RecentNrt:
             else:
                 candidate = tmp / "unconstrained.nc"
                 shutil.copyfile(baselines[0][0], candidate)
+            started = time.monotonic()
             self.audit_final(candidate, day, constrained)
+            timings.append({"stage": "audit_final", "seconds": time.monotonic() - started})
             calendar_record = read_json(candidate.with_name(candidate.name + ".manifest.json"))
             if [identity(p) for p in prism] != inputs["prism"]:
                 raise ValueError("PRISM changed during reconciliation; retain previous publication")
+            started = time.monotonic()
             checksum = transfer(candidate, destination)
+            timings.append({"stage": "final_transfer", "seconds": time.monotonic() - started})
         receipt = {"status": "passed", "day": str(day), "input_fingerprint": expected,
                    "inputs": inputs, "published_identity": identity(destination), "sha256": checksum,
                    "calendar_archive_writer": calendar_record.get("archive_writer", "value_based") if constrained else None,
                    "prism_window_archive_writers": window_writers,
+                   "stage_timings": timings,
                    "as_of": self.as_of.isoformat(), "prism_constrained": constrained,
                    "gfs_hours": next(r["gfs_hours"] for p, r in baselines if r["day"] == str(day)),
                    "hourly_primary_sources": next(r["hourly_primary_sources"] for p, r in baselines if r["day"] == str(day))}

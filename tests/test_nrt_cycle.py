@@ -160,6 +160,45 @@ def test_baseline_writer_adoption_and_rollback_preserve_fingerprints():
         assert nrt_cycle.baseline_archive_options(config) == {
             "chunk_copy": enabled, "preserve_source_chunks": enabled}
         assert nrt_cycle.fingerprint(nrt_cycle.baseline_configuration(config)) == nrt_cycle.fingerprint(old)
+        config.update(window_cache_enabled=True, window_cache_max_entries=32,
+                      window_cache_max_bytes=160000000000, window_cache_max_age_days=14)
+        assert nrt_cycle.baseline_configuration(config) == old
     assert not nrt_cycle.baseline_archive_options({})["chunk_copy"]
     with pytest.raises(ValueError, match="Unknown NRT baseline"):
         nrt_cycle.baseline_archive_options({"baseline_writer_profile": "typo"})
+
+
+def test_baseline_worker_overrides_are_bounded_and_default_unchanged(monkeypatch):
+    monkeypatch.delenv('HYDRO_OPS_NRT_ASSEMBLY_WORKERS', raising=False)
+    monkeypatch.delenv('HYDRO_OPS_NRT_PRECIP_WORKERS', raising=False)
+    assert nrt_cycle.baseline_workers({'assembly_workers': 4}) == {
+        'assembly_workers': 4, 'precipitation_remap_workers': 1}
+    monkeypatch.setenv('HYDRO_OPS_NRT_ASSEMBLY_WORKERS', '8')
+    monkeypatch.setenv('HYDRO_OPS_NRT_PRECIP_WORKERS', '4')
+    assert nrt_cycle.baseline_workers({'assembly_workers': 4}) == {
+        'assembly_workers': 8, 'precipitation_remap_workers': 4}
+    monkeypatch.setenv('HYDRO_OPS_NRT_PRECIP_WORKERS', '0')
+    with pytest.raises(ValueError):
+        nrt_cycle.baseline_workers({'assembly_workers': 4})
+
+
+def test_worker_adoption_preserves_historical_baseline_fingerprint():
+    old = {'assembly_workers': 4, 'enabled': True}
+    adopted = {'assembly_workers': 8, 'precipitation_remap_workers': 4, 'enabled': True}
+    assert nrt_cycle.baseline_configuration(adopted) == old
+    adopted.update(native_repair_workers=4, gfs_sparse_writes=True)
+    assert nrt_cycle.baseline_configuration(adopted) == old
+
+
+def test_adopted_repair_options_and_reference_override(monkeypatch):
+    monkeypatch.delenv('HYDRO_OPS_NRT_REPAIR_WORKERS', raising=False)
+    monkeypatch.delenv('HYDRO_OPS_NRT_GFS_SPARSE_WRITES', raising=False)
+    config = {'native_repair_workers': 4, 'gfs_sparse_writes': True}
+    assert nrt_cycle.baseline_repair_options(config) == (4, True)
+    assert nrt_cycle.baseline_repair_options({}) == (1, False)
+    monkeypatch.setenv('HYDRO_OPS_NRT_REPAIR_WORKERS', '1')
+    monkeypatch.setenv('HYDRO_OPS_NRT_GFS_SPARSE_WRITES', '0')
+    assert nrt_cycle.baseline_repair_options(config) == (1, False)
+    monkeypatch.setenv('HYDRO_OPS_NRT_GFS_SPARSE_WRITES', 'typo')
+    with pytest.raises(ValueError):
+        nrt_cycle.baseline_repair_options(config)
