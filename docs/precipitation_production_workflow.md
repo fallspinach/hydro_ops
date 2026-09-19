@@ -168,6 +168,12 @@ assessment. The initial deterministic rules are:
 4. Otherwise use valid Stage-IV.
 5. Use NLDAS-2 where neither acceptable MRMS nor Stage-IV is available.
 6. Use HRRR where no observation-informed source is available.
+7. In operational NRT HRRR-selected hours, use conservatively remapped GFS short-
+   forecast precipitation for remaining unsupported cells in the approved northern
+   coverage envelope. Preserve valid precipitation, including valid zero; GFS does
+   not override the preceding hierarchy. GFS acquisition is required for these
+   hours as part of the complete meteorological bundle, not an opt-in precipitation
+   experiment. See [NRT GFS operations](nrt_gfs_operations.md).
 
 Stage-IV may outrank otherwise valid MRMS in configurable regions or conditions, including
 poor radar quality and terrain blockage. These exceptions must be driven by documented rules,

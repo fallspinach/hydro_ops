@@ -1,5 +1,17 @@
 # Gated 2003–2020-10-13 forcing campaign
 
+## Status checked 2026-09-19
+
+The benchmark gate passed, and the 2003–2010 blocks have accepted completion
+reports. The 2011–2012 block subsequently required daily-archive recovery; job
+4580835 passed its full 731-day audit and released 2013–2014 controller 4524977.
+The 2015–2016, 2017–2018 and 2019–2020-10-13 blocks remain dependency-queued.
+See [the recovery record](retro_2011_2012_recovery.md). Cleanup remains deferred,
+even after acceptance. The dated retry/adoption sections below are historical
+records, not descriptions of jobs currently running.
+
+## Campaign design
+
 `bin/submit_remaining_retro_forcing.py --directory <campaign> --submit` queues:
 
 1. January and July 2003 production benchmarks concurrently, each with 21

@@ -2,6 +2,11 @@
 
 ## Rollout status
 
+Sections describing individual experiments below are chronological records.
+Current production defaults are the adopted settings in `config/nrt_gfs.toml`,
+not the earlier opt-in benchmark settings. For the latest tested timings and
+outstanding cron/model gates, see [reliability acceptance](nrt_reliability_acceptance.md).
+
 The production integration is implemented and requested in `config/nrt_gfs.toml`.
 **Integration acceptance rerun 4551871 passed** on 2026-09-17 in 3:56:02.
 Its activation receipt exists and the coordinator now enables the recent GFS path.

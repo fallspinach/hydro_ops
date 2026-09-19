@@ -42,7 +42,7 @@ slurm/     batch entry points
 tests/     unit tests
 forcing/   external inputs, forcing static data, CONUS streams, work, logs, and status
 nwm/       model domains/parameters, inputs, runs, outputs, restarts, logs, and status
-data/, outputs/, work, logs  transitional compatibility paths for historical manifests
+data/, outputs/, work, logs  retired paths; compatibility symlinks have been removed
 ```
 
 Downloaded data, outputs, work files, logs, credentials, and `config/local.toml` are ignored by Git. Empty directory markers only are tracked.
@@ -53,6 +53,14 @@ Downloaded data, outputs, work files, logs, credentials, and `config/local.toml`
 forcing stream, then submits NLDAS-2, Stage-IV, PRISM, HRRR, and MRMS refresh jobs. It
 checks SLURM first and skips a workflow when a job with that name is already pending or
 running. A non-blocking lock also prevents simultaneous updater processes.
+
+GFS is also a **required NRT forcing input**, acquired on demand by the
+source-aware production worker for HRRR-selected hours to cover the northern
+HRRR gap. It is not a separate bulk-refresh job in `update_forcing.py` and is not
+opt-in. NLDAS-only hours and retro processing do not use it. Missing required GFS
+blocks the affected update while preserving accepted output. See the
+[forcing workflow](docs/forcing_production_workflow.md#required-gfs-northern-fallback-in-nrt)
+and [NRT GFS operations](docs/nrt_gfs_operations.md).
 
 ```bash
 # Report only.
@@ -66,7 +74,9 @@ python bin/update_forcing.py --dry-run
 ```
 
 The canonical project schedule is tracked in `cron/hydro_ops.crontab`, including download
-refresh and rolling forcing-production submission. Copy its reviewed entries into `crontab -e`.
+refresh and rolling forcing-production submission. Installation remains gated by
+[operational reliability acceptance](docs/nrt_reliability_acceptance.md); the inspected
+host has no installed crontab. Do not install duplicate source-only schedules alongside it.
 The coordinated forcing entry runs source refresh, baseline production, stream publication, and
 dependency-gated cleanup in the required order. Preview any cycle without submission:
 
@@ -80,7 +90,7 @@ The reviewed UTC schedules are retained in `cron/hydro_ops.crontab`.
 The underlying source refresh can still be run independently using the project environment:
 
 ```cron
-0 */6 * * * cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --no-capture-output --name hydro-ops python bin/update_forcing.py >> logs/update-forcing.log 2>&1
+0 */6 * * * cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --no-capture-output --name hydro-ops python bin/update_forcing.py >> forcing/logs/update-forcing.log 2>&1
 ```
 
 The individual workflows retain their configured latency and refresh behavior: NLDAS-2
@@ -109,7 +119,7 @@ The default scan reads filenames and filesystem metadata only; it deliberately d
 large NetCDF files. JSON field `scan.netcdf_contents_validated` records that distinction. Use the
 existing validation tools when content-level verification is required. The report schema is
 versioned through `schema_version`; consumers should check that value before parsing.
-The canonical cron schedule refreshes this report every two hours at minute 30, offset from the
+The canonical cron template schedules this report every two hours at minute 30, offset from the
 even-hour forcing cycles. This replaces the older weekly source-only inventory entry.
 
 ## NWM 1-km target grid
@@ -376,18 +386,19 @@ and atomically publishes a complete LDASIN plus JSON manifest below
 Existing structurally complete hours are skipped. `--continue-on-error` reports unavailable
 hours without stopping an entire range.
 
-For batch operation, `slurm/produce_forcing.py` processes one hour per SLURM array task. The
-reviewable schedule in `cron/hydro_ops.crontab` submits a resumable 72-hour rolling window every
-six hours, offset from download submission and capped at four concurrent tasks. Test a
-submission without changing external state using:
+For legacy/debug batch operation, `slurm/produce_forcing.py` processes one hour per
+SLURM array task. This is **not** the current cron workflow: the template uses
+`update_nwm_forcing.py` to coordinate source refresh, daily-batched production and
+stream publication. Preview the legacy hourly submission without changing state:
 
 ```bash
 python bin/submit_forcing_production.py --force --dry-run
 ```
 
 For retrospective production, use daily batching instead. It loads each static remapping
-operator once for 24 source timesteps while still publishing 24 independent hourly LDASIN
-files. One UTC day is assigned to each resumable array task; the default concurrency is 16 and
+operator once for 24 source timesteps and publishes a calendar-day LDASIN archive
+containing 24 hourly records. Hourly files are intermediates; retaining them requires
+explicit `--keep-hourly`. One UTC day is assigned to each resumable array task and
 each task stages intermediates on node-local scratch:
 
 ```bash
@@ -587,7 +598,8 @@ hydro-ops submit nldas2 --start 2026-08-01 --end 2026-08-07
 
 With no date argument, the job fetches five UTC days ago because NLDAS near-real-time data typically lag several days. Change `lag_days` in `config/local.toml`. Reruns compare valid local files with server size and modification time, incomplete downloads use `.part`, and up to four files download concurrently by default.
 
-To run daily, add this line with `crontab -e` on a host where cron is supported (adjust the absolute path after migration):
+For a standalone NLDAS-only deployment, the following is an example schedule.
+Do not add it alongside the coordinated project cron template, which already refreshes NLDAS-2:
 
 ```cron
 15 8 * * * cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --name hydro-ops hydro-ops submit nldas2

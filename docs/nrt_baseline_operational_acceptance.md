@@ -1,5 +1,12 @@
 # Combined NRT writer operational acceptance
 
+This is a chronological benchmark record. **Current defaults** include persistent
+PRISM window caching, four precipitation-remapping workers, eight assembly workers,
+four native-repair workers and sparse GFS writes. Experimental descriptions below
+refer to the settings at submission, not current opt-in requirements. See
+[NRT GFS operations](nrt_gfs_operations.md) and
+[reliability acceptance](nrt_reliability_acceptance.md) for current operational gates.
+
 Job **4559177** completed successfully on 2026-09-18 (SLURM elapsed 2:15:54).
 It produced isolated September 14–15, 2026 CONUS NRT outputs using actual source
 availability, with no source-selection overrides. Both target days used HRRR with
@@ -129,7 +136,7 @@ cycle's cache outside the extension timer, then builds the missing September 16
 support baseline and publishes September 15 using fresh scratch and one shared
 window. All outputs/caches are private. It requires cold-reference field equality,
 unchanged retained files, and an unchanged repeat. Setup and seed costs are
-reported separately, not hidden in the measured extension. Results pending:
+reported separately, not hidden in the measured extension. Accepted evidence:
 `forcing/work/nrt-extension-20260918T195530/acceptance.json`.
 
 4572188 passed: full extension 2,518.7 seconds (41:59), including one new support
@@ -154,7 +161,7 @@ meteorological remapping, precipitation processing, and hourly assembly.
 Benchmark-only environment overrides are `HYDRO_OPS_NRT_PRECIP_WORKERS` and
 `HYDRO_OPS_NRT_ASSEMBLY_WORKERS` (1–16); production defaults remain 1 and 4.
 This is a reference-first single pair, so filesystem warmth is a caveat.
-Results pending: `forcing/work/nrt-baseline-workers-20260918/acceptance.json`.
+Accepted evidence: `forcing/work/nrt-baseline-workers-20260918/acceptance.json`.
 
 4578181 passed. Full baseline time was 1,755.5 seconds at 1/4 workers versus
 1,403.3 seconds at 4/8 workers (20.1% less). Precipitation processing fell from
@@ -177,7 +184,7 @@ accepted baseline. The experiment does not enable these two changes in productio
 Environment overrides: `HYDRO_OPS_NRT_REPAIR_WORKERS=4` and
 `HYDRO_OPS_NRT_GFS_SPARSE_WRITES=1`; defaults remain 1 and disabled. Timing records
 separate repair and GFS publication to attribute savings. This is a reference-first
-single paired test, not a multi-day scalability study. Evidence pending:
+single paired test, not a multi-day scalability study. Accepted evidence:
 `forcing/work/nrt-native-gfs-paired-20260918/acceptance.json`.
 
 4578828 passed: full baseline 1,400.2 → 1,049.3 seconds (25.1% less).
@@ -192,7 +199,7 @@ timer and verifies actual use of 4 remap / 8 assembly / 4 repair workers plus
 sparse GFS writes. It must rebuild only one support baseline, reuse exactly one
 PRISM window, match the cold-reference baseline/final fields, and complete an
 unchanged repeat. All outputs are isolated; no external source refresh is timed.
-Results pending: `forcing/work/nrt-extension-20260919T021605/acceptance.json`.
+Accepted evidence: `forcing/work/nrt-extension-20260919T021605/acceptance.json`.
 
 4579030 passed all combined acceptance checks: full extension **1,862.0 seconds
 (31:02)**, new support baseline 1,088.8 seconds (18:09), unchanged repeat 45.7

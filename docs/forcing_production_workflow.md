@@ -33,7 +33,11 @@ the sample `LDASIN_DOMAIN1` files:
 | `U2D` | 10-m eastward wind | `m s-1` |
 | `V2D` | 10-m northward wind | `m s-1` |
 
-The production system combines MRMS, Stage-IV, NLDAS-2, HRRR, and PRISM. Source choice depends
+The production system combines MRMS, Stage-IV, NLDAS-2, HRRR, PRISM, and GFS. GFS
+short forecasts are a **required northern-coverage fallback in NRT operations**
+for HRRR-selected hours, not an opt-in experiment or a replacement for NLDAS-2.
+NLDAS-only hours and stable retrospective production do not require GFS.
+Source choice depends
 on the variable, latency, revision state, effective resolution, quality information, and
 physical consistency. No product is assumed to be universally best merely because its nominal
 grid is finer or because it is described as an analysis or reanalysis.
@@ -111,7 +115,8 @@ longwave fields must not be independently mosaicked into a physically inconsiste
 
 This hybrid is a calibration target, not yet an enabled production rule. Until it passes
 withheld validation, stable retrospective output retains NLDAS-2 and near-real-time output uses
-HRRR provisionally. When NLDAS-2 arrives, affected provisional hours are regenerated rather
+HRRR provisionally, with required GFS coverage where native HRRR is absent.
+When NLDAS-2 arrives, affected provisional hours are regenerated rather
 than permanently splicing the two products at the latency boundary.
 
 ### Initial hierarchy by output
@@ -125,6 +130,12 @@ than permanently splicing the two products at the latency boundary.
 | Shortwave | NLDAS-2 initially | HRRR analysis | Preserve night; evaluate HRRR detail independently |
 | Longwave | NLDAS-2, coupled to thermodynamic bundle | HRRR analysis | Cosgrove elevation adjustment |
 | Wind U/V | NLDAS-2 baseline plus validated HRRR vector anomalies; NLDAS-2 until validated | HRRR analysis | Rotate vectors correctly; evaluate terrain-flow benefit |
+
+Every HRRR entry in the NRT column includes the required GFS northern-gap
+completion described below: a common seven-variable meteorological bundle
+(`T2D`, `PSFC`, `Q2D`, `SWDOWN`, `LWDOWN`, `U2D`, `V2D`) within the approved static
+envelope. GFS precipitation fills only unsupported precipitation cells; it does
+not override eligible MRMS, Stage-IV or other selected precipitation.
 
 This table is the version-one policy. The three-water-year overlap evaluation may justify
 bias-corrected HRRR or a conditional hierarchy for additional variables. Such a change requires
@@ -520,29 +531,41 @@ legacy rectangle-wide filling after v4 clipping. Full policy, mask provenance,
 pilot results, scope, timing and recovery details are in
 [the static-mask study and rollout record](forcing_mask_stability_study.md).
 
-An opt-in [GFS northern-gap experiment](gfs_nrt_northern_gap.md) now implements
-short-forecast extraction, correct hourly accumulation/mean decoding, cached
-native-HRRR coverage and GFS interpolation weights, and elevation-adjusted sparse
-fallback fields. January and July 2026 week tests also passed with conservative
-precipitation weights. Paired NLDAS/HRRR diagnostics and an opt-in daily-copy
-writer with GFS provenance are implemented. A complete August 24 daily-copy test
-passed all-field completeness, preservation and transfer checks (4519800), and
-archived delayed-cycle selection passed (4519850). This is **not enabled in scheduled
-NRT production or cron**. CONUS model-read tests passed for 23 hours (4519888)
-and a full midnight-to-midnight day (4520067), including the repaired NLDAS-2/PRISM
-endpoint after GFS/HRRR forcing. Seam/cycle-boundary assessment, automatic source
-replacement, mixed-source-day handling and refresh coordination remain gates.
-The isolated native-donor pilot resolves the August 25 coastal remapping gap
-without modifying retro data; its explicit 40 km cap is not an operational default.
-Sparse experimental patches are not LDASIN
-files and must not be passed directly to WRF-Hydro.
+### Required GFS northern fallback in NRT
 
-Subsequent integration: the [source-aware recent-NRT production path](nrt_gfs_operations.md)
-now connects acquisition, hourly selection, automatic NLDAS replacement and status
-reporting to the existing coordinator. It is gated by real-data acceptance job
-4520199; no scheduled activation is claimed before that test passes. Current repair
-campaigns do not use this path. See that operational record for configuration,
-full-day latency, seven-day lookback, replacement backlog and atomic publication.
+The [source-aware recent-NRT production path](nrt_gfs_operations.md) is implemented
+and its integration acceptance passed (4551871). GFS is **mandatory**, including
+when NRT is invoked by the repository cron commands. Cron installation itself is
+still pending the separate operational reliability gates; this does not make GFS
+optional. Disabling `config/nrt_gfs.toml` or removing its accepted activation
+receipt blocks NRT scheduling instead of selecting the legacy HRRR-only path.
+
+1. Select the primary meteorological source **per hour**: valid NLDAS-2 first,
+   otherwise HRRR. Mixed-source days retain batched processing.
+2. For HRRR-selected hours, acquire and validate indexed GFS short-forecast
+   bundles before expensive baseline production. Prefer leads 1–6 from six-hourly
+   cycles; at cycle boundaries use the preceding cycle's f006, not f000. The
+   preceding cycle may supply a delayed bundle up to lead 12. These are short
+   forecasts, not hourly GFS analyses.
+3. Fill the gap outside native HRRR coverage within the approved static envelope
+   with elevation-adjusted GFS meteorology from a consistent cycle. Preserve
+   supported precipitation and use conservative GFS precipitation only as the
+   final coverage fallback. The adopted native-donor repair cap is 40 km; it is
+   not a substitute for GFS across the northern gap.
+4. Apply eligible PRISM constraints, audit all eight final fields, and publish
+   complete 00–23 UTC daily archives with per-hour primary-source and GFS cycle
+   provenance. Sparse experimental patches are never model-ready LDASIN files.
+5. When NLDAS-2 arrives, regenerate the affected baseline and constrained output;
+   those hours no longer use or acquire GFS. Record replacement backlog and
+   failures in `forcing/status/nrt-gfs/latest.json`.
+
+If no acceptable GFS bundle is available for an HRRR-selected hour, fail the
+affected update and preserve previously accepted output; do not silently publish
+an incomplete northern domain. This policy does not add GFS to historical retro
+or existing repair campaigns. See the [operational record](nrt_gfs_operations.md)
+for acquisition, configuration, cache, replacement and publication details, the
+[historical experiments](gfs_nrt_northern_gap.md) for method development, and
+[reliability acceptance](nrt_reliability_acceptance.md) for current cron gates.
 
 The blanket inactive masking policy `nldas2_rectangle_nwm_active_land_v2` is retired because
 it also removed inland-water forcing. Jobs 4517940 and 4517941 were canceled; 41 published
@@ -765,8 +788,10 @@ Revisions create versioned artifacts or manifests; they are never overwritten wi
 ### Near-real-time
 
 - Use the best eligible precipitation product currently available.
-- Use HRRR for the thermodynamic bundle until NLDAS-2 arrives.
-- Use HRRR wind.
+- Select NLDAS-2 per hour when available; otherwise use HRRR with required GFS
+  northern-gap completion for meteorology and unsupported precipitation.
+- Use the same spatial/source policy for the thermodynamic bundle and wind;
+  GFS acquisition and completeness checks are mandatory for HRRR-selected hours.
 - Apply early/provisional PRISM only to complete PRISM days.
 - Rebuild affected intervals when MRMS Pass 2, Stage-IV revisions, NLDAS-2, or revised PRISM
   becomes available.

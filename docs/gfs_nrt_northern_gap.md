@@ -1,10 +1,13 @@
-# Experimental GFS fallback for the northern NRT gap
+# GFS northern NRT gap: historical experiments and method
 
-Status, 2026-09-12: the experiments below informed the new
-[source-aware recent-NRT integration](nrt_gfs_operations.md). Production/cron use
-is now wired to an acceptance gate, **not yet activated** while job 4520199 tests
-mixed-hour selection, NLDAS replacement and PRISM end-to-end. Existing repair jobs
-are unchanged. This is a short-forecast fallback, not an hourly GFS analysis.
+Current status, 2026-09-19: GFS northern fallback is **required for operational
+NRT HRRR-selected hours**, including the repository cron production path.
+Integration acceptance 4551871 passed; the earlier failed 4520199 test is
+historical, not the current activation state. Cron installation remains a separate
+operational gate. See the [source-aware NRT operations](nrt_gfs_operations.md)
+and [forcing workflow](forcing_production_workflow.md) for current policy.
+The experiments below document method development; existing repair jobs remain
+unchanged. This is a short-forecast fallback, not an hourly GFS analysis.
 
 ## Selection policy
 
@@ -157,7 +160,14 @@ deliberately rejected missing elevation before the explicit model-HGT fallback
 was implemented. Eight unit tests cover time windows, cycle fallback, no spatial
 extrapolation, source-priority merging, availability cutoffs and cached metadata.
 
-## Gates before enabling NRT
+## Historical gates before initial NRT integration
+
+The following list records the initial experiment's next steps. Hourly source
+selection, automatic NLDAS replacement, coordinated acquisition and status reporting
+have since been implemented and accepted. It is not a current activation checklist;
+see [operational reliability acceptance](nrt_reliability_acceptance.md) for remaining
+live-scheduler/model tests. Independent seam/observational assessment remains a
+separate scientific validation question.
 
 1. Inspect hourly/cycle-boundary jumps and spatial seam maps; assess whether a
    narrow transition is necessary. Paired overlap diagnostics below are not

@@ -4,7 +4,8 @@
 
 This workflow produces hourly 2-m air temperature forcing on the National Water Model (NWM)
 CONUS 1-km grid. NLDAS-2 supplies the preferred retrospective hourly evolution, HRRR analysis
-fills the recent NLDAS-2 latency gap, and PRISM daily minimum and maximum temperature constrain
+fills the recent NLDAS-2 latency gap with required GFS northern-gap completion,
+and PRISM daily minimum and maximum temperature constrain
 the daily level, range, and broad spatial pattern.
 
 The workflow has four objectives that must be satisfied together:
@@ -34,6 +35,11 @@ The products play complementary roles rather than forming a universal accuracy r
 - **PRISM AN** daily temperature uses station observations and physiographically informed
   interpolation. Daily minimum and maximum temperature constrain the baseline's daily midpoint,
   amplitude, and spatial biases. PRISM does not provide the timing of the hourly diurnal cycle.
+- **GFS short forecasts** supply required temperature and companion meteorology outside
+  native HRRR coverage for HRRR-selected NRT hours, inside the approved static envelope.
+  This is not an opt-in source or a replacement for available NLDAS-2. Its fields
+  receive elevation adjustment before PRISM constraint and coupled humidity/longwave
+  recalculation. See [NRT GFS operations](nrt_gfs_operations.md).
 - **Terrain elevation** supplies the static information needed to translate temperatures between
   the elevations represented by each source and the NWM grid.
 
@@ -112,13 +118,15 @@ constraint on the hourly arithmetic mean.
 For every target hour, select one complete hourly baseline before applying PRISM constraints:
 
 1. Use valid NLDAS-2 where it is available.
-2. Use valid HRRR analysis where NLDAS-2 has not yet been published or is missing.
-3. Leave the result missing if neither source is valid; do not silently temporal-fill gaps in
-   the first implementation.
+2. Otherwise select valid HRRR analysis for the hour, with required GFS completion
+   outside native HRRR coverage within the approved envelope.
+3. If neither primary source is valid, or required GFS is unavailable, fail the
+   affected NRT update and preserve accepted output rather than publish missing
+   active cells. Do not silently fill gaps in time.
 
-Selection occurs by target cell after remapping so valid source coverage can be respected.
-Ordinarily one product should cover the full CONUS domain at an hour. Mixed-source hours must be
-flagged and checked for spatial seams.
+The operational primary source is selected per hour; the HRRR/GFS spatial coverage
+policy is applied within HRRR-selected hours. Mixed NLDAS/HRRR days retain hourly
+provenance and batched remapping. Spatial source transitions must be recorded.
 
 Near the NLDAS-2/HRRR time boundary, compare overlapping hours and report the source difference.
 The initial implementation should rely on the same elevation and PRISM corrections for both
