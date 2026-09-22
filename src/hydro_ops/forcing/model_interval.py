@@ -12,6 +12,29 @@ import xarray as xr
 METHODS = {"mean", "sum", "minimum", "maximum", "first", "last", "integral", "omit"}
 
 
+def summary_sources(name):
+    """Virtual summary fields, evaluated before temporal reduction."""
+    return {"T2D_MIN": ("T2D",), "T2D_MAX": ("T2D",), "WIND_SPEED": ("U2D", "V2D")}.get(
+        name, (name,)
+    )
+
+
+def summary_attributes(name):
+    if name == "WIND_SPEED":
+        return {
+            "standard_name": "wind_speed",
+            "long_name": "Mean hourly wind speed",
+            "derivation": "sqrt(U2D**2 + V2D**2) before temporal averaging",
+        }
+    if name in ("T2D_MIN", "T2D_MAX"):
+        return {
+            "long_name": "Minimum hourly air temperature"
+            if name == "T2D_MIN"
+            else "Maximum hourly air temperature"
+        }
+    return {}
+
+
 def load_forcing_reducers(path: Path) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
     with path.open("rb") as stream:
         document = tomllib.load(stream)
@@ -25,7 +48,10 @@ def load_forcing_reducers(path: Path) -> tuple[dict[str, str], dict[str, str], d
 def expected_endpoint_times(day: date) -> np.ndarray:
     start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     return np.asarray(
-        [np.datetime64((start + timedelta(hours=hour)).replace(tzinfo=None), "ns") for hour in range(1, 25)]
+        [
+            np.datetime64((start + timedelta(hours=hour)).replace(tzinfo=None), "ns")
+            for hour in range(1, 25)
+        ]
     )
 
 
@@ -88,11 +114,18 @@ def reduce_model_interval_forcing(
         for name, method in reducers.items():
             if method == "omit":
                 continue
-            if name not in selected:
+            sources = summary_sources(name)
+            if any(key not in selected for key in sources):
                 raise ValueError(f"Configured forcing variable is absent: {name}")
-            value = _reduce(selected[name], method, 3600.0).expand_dims(time=[midpoint])
+            field = selected[sources[0]]
+            if name == "WIND_SPEED":
+                if field.attrs.get("units") != selected["V2D"].attrs.get("units"):
+                    raise ValueError("Wind component units differ")
+                field = np.hypot(field, selected["V2D"])
+            value = _reduce(field, method, 3600.0).expand_dims(time=[midpoint])
             output_name = output_names.get(name, name)
-            value.attrs = dict(selected[name].attrs)
+            value.attrs = dict(selected[sources[0]].attrs)
+            value.attrs.update(summary_attributes(name))
             value.attrs["cell_methods"] = f"time: {method}"
             if method == "integral":
                 value.attrs["cell_methods"] = "time: sum (interval: 1 hour)"

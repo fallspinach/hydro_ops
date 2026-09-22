@@ -1,18 +1,14 @@
 # Model-interval forcing reductions over endpoint samples D 01 through D+1 00.
 # "integral" multiplies a rate by the regular sample interval before summing.
+# Monthly T2D_MIN/T2D_MAX average these daily extrema (PRISM-style statistics).
 
 [FORCING]
 T2D = "mean"
+T2D_MIN = "minimum"
+T2D_MAX = "maximum"
 Q2D = "mean"
 PSFC = "mean"
 SWDOWN = "mean"
 LWDOWN = "mean"
-U2D = "mean"
-V2D = "mean"
-RAINRATE = "integral"
-
-[output_names]
-RAINRATE = "RAIN_DEPTH"
-
-[output_units]
-RAINRATE = "kg m-2"
+WIND_SPEED = "mean"
+RAINRATE = "mean"

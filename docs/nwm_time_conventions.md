@@ -46,6 +46,11 @@ Daily products must publish all of the following metadata:
 
 ## Variable semantics
 
+Daily and monthly forcing summaries use `bin/aggregate_forcing.py` for any domain.
+It handles endpoint selection explicitly; no preprocessing time shift is needed.
+See [forcing temporal summaries](forcing_temporal_summaries.md) for commands,
+precipitation totals versus field means, monthly reuse and completeness checks.
+
 The reduction method belongs to each variable, not to the file:
 
 - `time: mean` for states and rates;
