@@ -11,6 +11,7 @@ from pathlib import Path
 import netCDF4
 import numpy as np
 
+from hydro_ops.nwm_masks import load_masks
 from hydro_ops.nwm_subset import GridWindow, window_from_bbox
 from hydro_ops.nwm_topology import (
     SpatialSelection,
@@ -529,7 +530,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--domain-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--bbox", type=float, nargs=4, metavar=("WEST", "SOUTH", "EAST", "NORTH"), required=True)
+    region = parser.add_mutually_exclusive_group(required=True)
+    region.add_argument("--bbox", type=float, nargs=4, metavar=("WEST", "SOUTH", "EAST", "NORTH"))
+    region.add_argument("--domain-masks", type=Path, help="Use exact shared grid window and land activity from a mask bundle")
     parser.add_argument("--padding", type=int, default=2, help="1-km grid-cell padding")
     parser.add_argument("--routing-factor", type=int, default=4)
     parser.add_argument("--spatial-chunk-size", type=int, default=2_000_000)
@@ -541,11 +544,23 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     latitude, longitude = read_latlon(args.domain_dir / "wrfinput_CONUS.nc")
-    one_km = window_from_bbox(latitude, longitude, tuple(args.bbox), args.padding)
+    masks = None
+    if args.domain_masks:
+        one_km, masks, mask_lat, mask_lon = load_masks(args.domain_masks)
+        ys = slice(one_km.south_north_start, one_km.south_north_end + 1)
+        xs = slice(one_km.west_east_start, one_km.west_east_end + 1)
+        np.testing.assert_allclose(latitude[ys, xs], mask_lat, rtol=0, atol=1e-5)
+        np.testing.assert_allclose(longitude[ys, xs], mask_lon, rtol=0, atol=1e-5)
+        args.bbox = [float(mask_lon.min())-1e-5, float(mask_lat.min())-1e-5,
+                     float(mask_lon.max())+1e-5, float(mask_lat.max())+1e-5]
+    else:
+        one_km = window_from_bbox(latitude, longitude, tuple(args.bbox), args.padding)
     routing = one_km.refined(args.routing_factor)
     manifest = {
         "bbox": args.bbox,
-        "padding_1km_cells": args.padding,
+        "padding_1km_cells": 0 if args.domain_masks else args.padding,
+        "domain_masks": str(args.domain_masks.resolve()) if args.domain_masks else None,
+        "land_activity_rule": "model_mask; routing is not clipped by XLAND" if masks is not None else "source XLAND",
         "one_km_window": one_km.__dict__,
         "one_km_shape": one_km.shape,
         "routing_factor": args.routing_factor,
@@ -573,6 +588,15 @@ def main() -> None:
             longitude[one_km.south_north_start : one_km.south_north_end + 1,
                       one_km.west_east_start : one_km.west_east_end + 1],
         )
+    if masks is not None:
+        with netCDF4.Dataset(args.output_dir / 'wrfinput_CONUS.nc', 'r+') as data:
+            xland = np.asarray(data['XLAND'][:])
+            if np.any(masks['model_mask'] & (xland[0] != 1)):
+                raise ValueError('Mask would activate non-land cells in source wrfinput')
+            xland[:, ~masks['model_mask']] = 2
+            data['XLAND'][:] = xland
+            data.subset_domain_mask = str(args.domain_masks.resolve())
+            data.subset_activity_note = 'Land-surface mask only; routing-network completeness requires separate audit'
     for name, dims in ROUTING_FILES.items():
         ncks_subset(args.domain_dir / name, args.output_dir / name, routing, dims)
         update_routing_geotransform(args.output_dir / name)
@@ -604,6 +628,9 @@ def main() -> None:
             args.spatial_chunk_size,
         )
         manifest["network_files_status"] = "validated"
+        if masks is not None:
+            manifest["network_files_status"] = "rectangular_network_validated_polygon_activity_audit_required"
+            manifest["network_mask_caveat"] = "Existing completeness flags describe rectangular clipping, not polygon-inactive contributing areas; not model-run acceptance."
     args.output_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = args.output_dir / "subset_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
