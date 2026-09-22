@@ -1,12 +1,16 @@
 # Forcing and NWM project layout
 
+For moving the entire project to another filesystem location or cluster, see
+[project relocation](project_relocation.md). That is separate from the internal
+temporal-resolution directory migration described below.
+
 The repository operates two coupled production systems. `forcing` owns acquisition and production
 of meteorological forcing; `nwm` owns WRF-Hydro/NWM domains, runs, state, and model products. A
 forcing product is immutable input to an NWM run and is referenced rather than copied.
 
 ```text
 forcing/
-  inputs/                         external NLDAS-2, HRRR, MRMS, Stage-IV, and PRISM archives
+  inputs/                         external NLDAS-2, HRRR, MRMS, Stage-IV, PRISM, and GFS archives
   static/                         source grids, elevations, and reusable remapping weights
   outputs/
     conus/{baseline,nrt,retro}/   daily 24-record LDASIN collections
@@ -41,3 +45,87 @@ manifests use canonical paths directly. `bin/migrate_project_layout.py` still na
 as one-time migration sources, but compatibility-link creation is disabled unless explicitly
 requested with `--create-compatibility-links`. `bin/rewrite_manifest_paths.py` provides an
 idempotent, atomic dry-run/execute migration for structured historical manifests.
+
+## Planned temporal-resolution level — NOT activated
+
+Existing producers and NWM readers still use `<domain>/<stream>/YYYY/MM/`.
+Do not move these directories while current production or model runs use them.
+The agreed destination is:
+
+```text
+forcing/outputs/<domain>/
+  baseline/hourly/YYYY/MM/YYYYMMDD.LDASIN_DOMAIN1
+  nrt/
+    hourly/YYYY/MM/YYYYMMDD.LDASIN_DOMAIN1
+    daily/YYYY/MM/YYYYMMDD.LDASIN_DOMAIN1.daily
+    monthly/YYYY/YYYYMM.LDASIN_DOMAIN1.monthly
+  retro/
+    hourly/YYYY/MM/YYYYMMDD.LDASIN_DOMAIN1
+    daily/YYYY/MM/YYYYMMDD.LDASIN_DOMAIN1.daily
+    monthly/YYYY/YYYYMM.LDASIN_DOMAIN1.monthly
+```
+
+Resolution names describe the data, not file duration. Hourly records remain
+packed into calendar-day files (00–23 timestamps); daily summaries use completed
+01–00 endpoint samples with 00–00 bounds. Monthly summaries cover whole calendar
+months. Temperature monthly min/max fields are means of daily extrema. See
+[summary semantics](forcing_temporal_summaries.md). The same domain → stream →
+resolution principle applies to NWM history products, but this migration does
+not relocate NWM outputs, restart files, or external source archives.
+
+Only independently produced domain baselines need storage. Routine baseline
+daily/monthly summary products are not planned. NRT and retro remain separate.
+
+### Preparation and cutover gates
+
+Run this read-only inventory while jobs continue:
+
+```bash
+conda activate hydro-ops
+python bin/plan_forcing_resolution_layout.py
+```
+
+It emits JSON with proposed year-directory renames, destination conflicts, all
+current user SLURM jobs, and source/configuration/documentation files requiring
+path review. It deliberately has **no execute mode** and never declares the
+system safe solely because the queue is empty. It does not recursively scan the
+archive, validate NetCDF contents, or inventory every embedded manifest path.
+Run it again immediately before cutover; this is a live plan, not a frozen job list.
+
+1. Let current forcing chains finish and verify final coverage/audit reports.
+   As of the September 20 review, these include post-2020 repair array 4549027
+   and retro controllers 4524978–4524980 (through 2020-10-13). Completion estimates
+   are not safety gates; retries and descendants must also finish.
+2. Arrange a pause at an NWM restart/checkpoint boundary. Review running and
+   pending NWM jobs, including their frozen submission environments and namelists.
+   Stop automatic chain advancement/launches during the maintenance window;
+   do not cancel or hold jobs merely by running the planner. Check interactive
+   readers, cron, status scans, and other users as well.
+3. Prepare and review path edits for producers, PRISM controllers, baseline
+   cleanup, repair scripts, source replacement, status discovery, subset tools,
+   summary scripts, and NWM `INDIR`/forcing roots. Audit dynamically assembled
+   paths too: textual matches are a review aid, not a complete dependency graph.
+   Pending jobs with captured old paths must be updated or resubmitted deliberately.
+4. Save the pre-migration inventory and rollback journal. Move only four-digit
+   year directories beneath `hourly/`, retaining filenames and sidecars. Use
+   same-filesystem renames; no NetCDF rewriting or recompression is needed.
+   Never merge conflicting destinations. Leave `daily/`, `monthly/`, experiments,
+   and unrelated files alone. No backward-compatibility symlinks are planned.
+5. Rewrite operational manifest/task-list paths using exact, idempotent mappings
+   that distinguish stream roots from already-qualified resolution roots. Preserve
+   historical provenance and source/content checksums; do not blindly replace all
+   occurrences of a stream prefix (which would nest daily/monthly under hourly).
+   The older `rewrite_manifest_paths.py` does NOT yet implement this new mapping.
+6. Validate counts, sizes, sidecars, and representative NetCDF reads against the
+   saved inventory. Test year-boundary hourly lookup, daily/monthly aggregation,
+   status reporting, subset extraction, NRT no-op planning, and an NWM forcing-read
+   smoke test before releasing jobs. A migration must not trigger scientific
+   reprocessing solely because a path changed.
+7. Release producers/readers only after all gates pass. Before release, rollback
+   can reverse recorded renames and restore saved configuration/manifests. After
+   new production writes begin, rollback requires another coordinated pause and
+   reconciliation—never overwrite newly published data.
+
+Preparation does not change production defaults, queued jobs, cron, or archive
+paths. The execution utility, path edits, and final cutover validation remain a
+separate maintenance step after the above pause is arranged.

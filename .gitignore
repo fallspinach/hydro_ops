@@ -28,6 +28,7 @@ external/
 # Credentials and local overrides
 .netrc
 config/local.env
+config/site.local.env
 config/local.toml
 *.secret
 

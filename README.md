@@ -86,6 +86,13 @@ conda run --no-capture-output --name hydro-ops \
 ```
 
 The reviewed UTC schedules are retained in `cron/hydro_ops.crontab`.
+All saved entries use `bin/run_cron.sh` to provide the AWARE SLURM and Python
+environment explicitly. See [cron environment setup](docs/cron_environment.md)
+for clean-environment tests and single-host deployment precautions.
+For moving the checkout and data to a new location, see the
+[project relocation runbook](docs/project_relocation.md). Site settings are
+centralized in `config/site.env`; `bin/render_crontab.py` generates a destination
+schedule, and `bin/audit_project_portability.py` inventories remaining source paths.
 
 The underlying source refresh can still be run independently using the project environment:
 

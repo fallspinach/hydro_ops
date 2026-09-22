@@ -1,22 +1,26 @@
 # Hydro Ops recurring jobs
 #
 # Keep this file as the version-controlled source of truth for project schedules.
+# This is the current-site rendering. For relocation render hydro_ops.crontab.in
+# using bin/render_crontab.py; rendering never installs or changes a crontab.
 # Copy individual entries into `crontab -e` after reviewing paths for the target host.
 
 CRON_TZ=UTC
+# Install on ONE login node only. run_cron.sh supplies Python and SLURM explicitly.
+# Preflight: env -i PATH=/usr/bin:/bin /usr/bin/bash bin/run_cron.sh --check
 
 # Coordinated NRT cycles. The 08 UTC slot is the deeper daily convergence pass, so the ordinary
 # six-hourly entry deliberately omits hour 08.
 # The same coordinator reads config/nrt_gfs.toml. Its recent seven-day source-aware
 # tail is gated by forcing/status/nrt-gfs/activation.json; older windows and retro
 # are unchanged. Sources refresh first; GFS is acquired only for selected HRRR hours.
-0 2,14,20 * * * cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --no-capture-output --name hydro-ops python bin/update_nwm_forcing.py --cycle six-hourly >> forcing/logs/nwm-cycle-six-hourly.log 2>&1
-0 8 * * * cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --no-capture-output --name hydro-ops python bin/update_nwm_forcing.py --cycle daily >> forcing/logs/nwm-cycle-daily.log 2>&1
+0 2,14,20 * * * /usr/bin/bash /cw3e/mead/projects/cwp206/agentization/hydro_ops/bin/run_cron.sh bin/update_nwm_forcing.py --cycle six-hourly >> /cw3e/mead/projects/cwp206/agentization/hydro_ops/forcing/logs/nwm-cycle-six-hourly.log 2>&1
+0 8 * * * /usr/bin/bash /cw3e/mead/projects/cwp206/agentization/hydro_ops/bin/run_cron.sh bin/update_nwm_forcing.py --cycle daily >> /cw3e/mead/projects/cwp206/agentization/hydro_ops/forcing/logs/nwm-cycle-daily.log 2>&1
 
 # Stable retrospective promotion after PRISM's normal mid-month revision cycle. Cleanup is a
 # dependency-gated final stage and never runs inside parallel PRISM workers.
-0 10 18 * * cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --no-capture-output --name hydro-ops python bin/update_nwm_forcing.py --cycle monthly-retro >> forcing/logs/nwm-cycle-retro.log 2>&1
+0 10 18 * * /usr/bin/bash /cw3e/mead/projects/cwp206/agentization/hydro_ops/bin/run_cron.sh bin/update_nwm_forcing.py --cycle monthly-retro >> /cw3e/mead/projects/cwp206/agentization/hydro_ops/forcing/logs/nwm-cycle-retro.log 2>&1
 
 # Read-only dashboard status, offset 30 minutes from the even-hour production submissions. The
 # writer atomically replaces the canonical JSON document, so web readers never see partial JSON.
-30 */2 * * * cd /cw3e/mead/projects/cwp206/agentization/hydro_ops && /home/mpan/local/miniforge3/bin/conda run --no-capture-output --name hydro-ops python bin/report_forcing_status.py --format json --output forcing/status/forcing-status.json >> forcing/logs/forcing-status.log 2>&1
+30 */2 * * * /usr/bin/bash /cw3e/mead/projects/cwp206/agentization/hydro_ops/bin/run_cron.sh bin/report_forcing_status.py --format json --output forcing/status/forcing-status.json >> /cw3e/mead/projects/cwp206/agentization/hydro_ops/forcing/logs/forcing-status.log 2>&1
