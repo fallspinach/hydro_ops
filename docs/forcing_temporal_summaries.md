@@ -168,9 +168,30 @@ Daily and monthly products are written directly to their final sibling directori
 under the existing retro root. Only hourly year directories move later. A
 cooperative output-root lock prevents overlapping backfill controllers. Run no
 independent summary writer against the same destination while it is locked.
+With `--parallel-years`, controllers instead hold a shared root lock and exclusive
+locks for every output year they touch. Disjoint years may run together; overlapping
+years and legacy exclusive-root controllers remain mutually excluded. Next-year
+hourly boundary inputs are read-only and are not cleaned up by summaries.
 Existing matching summaries are skipped; stale ones fail rather than silently
 overwrite accepted products. Monthly processing starts only after all requested
 daily tasks succeed, so a failed run cannot publish new incomplete monthly means.
+
+The 1979–1980 and 1986–1990 expansion uses
+`slurm/backfill_forcing_summaries_1979_1990.sh`: seven concurrent year tasks,
+four workers and eight reserved CPUs per task (28 workers / 56 reserved CPUs).
+Expect roughly 7–10 hours after allocation based on earlier single-year runs;
+aggregate filesystem contention is not yet benchmarked at seven-year concurrency.
+Submitted as array **4617402** on September 22, 2026 (UTC); indices 0–6 map to
+1979, 1980, 1986, 1987, 1988, 1989, 1990. Logs are
+`forcing/logs/summary-backfill-4617402_<index>.out`. All requested source-day and
+next-day-boundary audit checks passed before submission.
+1979 starts January 2: January 1 is incomplete, so no January monthly mean is
+published. `--skip-incomplete-first-month` explicitly enables this daily-only
+initial partial month. Early monthly-constrained source manifests may lack a
+top-level `verified` flag; their identity-matched static-envelope audits must then
+prove 24 records, no missing active cells, unchanged active/retained values, and
+no values outside the mask for all eight forcing fields. Explicit `verified=false`
+is never accepted through this compatibility path.
 
 ```bash
 python bin/backfill_forcing_summaries.py \

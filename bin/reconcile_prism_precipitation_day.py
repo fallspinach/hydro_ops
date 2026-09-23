@@ -119,7 +119,7 @@ def main() -> int:
             args.daily_output,
             args.day,
             compression_level=2,
-            normalize_precipitation_timing=os.environ.get("HYDRO_OPS_RETRO_NEW_PRODUCTION") == "1",
+            normalize_precipitation_timing=True,
             work_directory=args.work_directory,
             time_variable_overrides=overrides,
             global_attributes={

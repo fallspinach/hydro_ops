@@ -78,12 +78,20 @@ daily/monthly summary products are not planned. NRT and retro remain separate.
 
 ### Preparation and cutover gates
 
+Current preparation and the reader/receipt worklist are recorded in
+[the hourly cutover checklist](forcing_hourly_cutover_checklist.md). The 1986 NWM
+job is held while 1985 finishes; preparation does not activate the new layout.
+
 Run this read-only inventory while jobs continue:
 
 ```bash
 conda activate hydro-ops
 python bin/plan_forcing_resolution_layout.py
 ```
+
+Use `--inventory-files --output PATH.json` to save a per-file identity snapshot
+alongside the directory plan. This remains read-only for all forcing files and
+has no execute mode. Save a fresh snapshot at the actual maintenance window.
 
 It emits JSON with proposed year-directory renames, destination conflicts, all
 current user SLURM jobs, and source/configuration/documentation files requiring

@@ -13,6 +13,43 @@ from hydro_ops.forcing.daily_archive import (
 )
 
 
+@pytest.mark.parametrize("chunk_copy", [False, True])
+def test_cnrfc_policy_crosses_july_boundary_and_calendar_regrouping(tmp_path, chunk_copy):
+    paths = []
+    for hour in range(24):
+        path = tmp_path / f"boundary-{hour}.nc"
+        with Dataset(path, "w") as data:
+            data.createDimension("time", 1)
+            data.createDimension("y", 2)
+            data.createDimension("x", 2)
+            time = data.createVariable("time", "f8", ("time",))
+            time.units = "hours since 2020-06-30 12:00:00"
+            time[:] = hour
+            field = data.createVariable("RAINRATE", "f4", ("time", "y", "x"),
+                                        zlib=True, complevel=2, chunksizes=(1, 2, 2))
+            field[:] = hour
+            if hour >= 12:
+                data.cnrfc_stage4_policy = "six-hour constraint; NLDAS-2 timing"
+        paths.append(path)
+    window = tmp_path / "window.nc"
+    create_daily_archive(paths, window, date(2020, 7, 1), chunk_copy=chunk_copy)
+    with Dataset(window) as data:
+        assert data.cnrfc_stage4_policy == "six-hour constraint; NLDAS-2 timing"
+        assert data.cnrfc_stage4_policy_effective_from == "2020-07-01T00:00:00Z"
+        np.testing.assert_array_equal(data["RAINRATE"][:, 0, 0], np.arange(24))
+    selected = tmp_path / "july.nc"
+    create_daily_archive([window] * 12, selected, date(2020, 7, 1), expected_hours=12,
+                         source_time_indices=list(range(12, 24)), chunk_copy=chunk_copy)
+    with Dataset(selected) as data:
+        assert data.cnrfc_stage4_policy == "six-hour constraint; NLDAS-2 timing"
+        np.testing.assert_array_equal(data["RAINRATE"][:, 0, 0], np.arange(12, 24))
+    with Dataset(paths[15], "a") as data:
+        data.delncattr("cnrfc_stage4_policy")
+    with pytest.raises(ValueError, match="Missing CNRFC policy"):
+        create_daily_archive(paths, tmp_path / "invalid.nc", date(2020, 7, 1),
+                             chunk_copy=chunk_copy)
+
+
 @pytest.mark.parametrize("legacy_first", [True, False])
 def test_optional_timing_schema_preserves_existing_and_marks_unknown(tmp_path, legacy_first):
     paths = [tmp_path / f"{h}.nc" for h in range(2)]

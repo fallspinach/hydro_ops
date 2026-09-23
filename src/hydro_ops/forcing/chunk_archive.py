@@ -18,6 +18,7 @@ import h5py
 import numpy as np
 from netCDF4 import Dataset
 
+from hydro_ops.forcing.baseline_schema import FIELDS, SPECS, UnknownDiagnostic, canonical_names
 from hydro_ops.forcing.daily_archive import (
     _attributes,
     _chunks,
@@ -46,6 +47,9 @@ def assemble(paths, indices, destination, day, work, *, expected_hours=24,
         raise ValueError('Experimental archive requires a new separate destination')
     dims, names = _validate_inputs(paths, expected_hours, indices, normalize_precipitation_timing)
     normalized = {"precip_timing_source_id"} & set(names) if normalize_precipitation_timing else set()
+    for path in set(paths):
+        with Dataset(path) as source:
+            normalized.update((set(SPECS) | {"precip_timing_source_id"}) & (set(names) - set(source.variables)))
     overrides = {} if overrides is None else overrides
     if set(overrides)-set(names):
         raise ValueError('Unknown override variables')
@@ -70,6 +74,8 @@ def assemble(paths, indices, destination, day, work, *, expected_hours=24,
                 options = {}
                 if '_FillValue' in src.ncattrs():
                     options['fill_value'] = src._FillValue
+                elif name in SPECS and canonical_names(first):
+                    options['fill_value'] = UnknownDiagnostic(first, name).getncattr('_FillValue')
                 chunks = _chunks(src, {'time': expected_hours, **dims})
                 if preserve_source_chunks and src.ndim >= 2 and hasattr(src, 'chunking'):
                     source_chunks = src.chunking()
@@ -81,7 +87,7 @@ def assemble(paths, indices, destination, day, work, *, expected_hours=24,
                     options.update(zlib=True, complevel=2, shuffle=True, chunksizes=chunks)
                 var = out.createVariable(name, src.dtype, src.dimensions, **options)
                 attrs = _attributes(src)
-                if name in normalized:
+                if name == "precip_timing_source_id" and name in normalized:
                     attrs["long_name"] = "source supplying the within-block hourly timing pattern"
                     attrs["comment"] = "Zero means no separate within-block timing provenance (not reconciled or unavailable); legacy missing fields normalized to zero."
                 # Recomputing vmin/vmax would require a separate reduction.
@@ -129,6 +135,11 @@ def assemble(paths, indices, destination, day, work, *, expected_hours=24,
                         raise UnsupportedArchive(f'Incompatible filters: {name}')
                     # Metadata differences must not be hidden by raw copying.
                     for key in ('_FillValue', 'scale_factor', 'add_offset', 'units'):
+                        # _validate_inputs already checked canonical diagnostic
+                        # units, allowing only documented legacy absence. Output
+                        # metadata comes from the same normalized variable view.
+                        if key == 'units' and name in SPECS and FIELDS <= set(names):
+                            continue
                         if (key in first.attrs) != (key in src.attrs):
                             raise ValueError(f'Metadata mismatch: {name}/{key}')
                         if key in first.attrs:

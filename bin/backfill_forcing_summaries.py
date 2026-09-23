@@ -6,6 +6,7 @@ import json
 import multiprocessing
 import time
 from concurrent.futures import ProcessPoolExecutor
+from contextlib import ExitStack, contextmanager
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -20,8 +21,20 @@ def audited(path):
     audit = json.loads(Path(envelope["audit"]).read_text())
     stat = path.stat()
     identity = {"inode": stat.st_ino, "bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+    # Early monthly-constrained publications predate the archive verified flag.
+    # Accept their full, identity-matched field audit, never an explicit failure.
+    fields = audit.get("fields", {})
+    legacy_verified = "verified" not in manifest and all(
+        fields.get(name, {}).get("records") == 24
+        and fields[name].get("missing_active_cell_hours") == 0
+        and fields[name].get("active_unchanged") is True
+        and fields[name].get("retained_unchanged") is True
+        and fields[name].get("valid_outside_mask") == 0
+        and bool(fields[name].get("active_sha256"))
+        for name in ("LWDOWN", "PSFC", "Q2D", "RAINRATE", "SWDOWN", "T2D", "U2D", "V2D")
+    )
     if not (
-        manifest.get("verified") is True
+        (manifest.get("verified") is True or legacy_verified)
         and envelope.get("policy") == "nldas2_seven_met_static_envelope_v4"
         and envelope.get("published_identity") == identity
         and audit.get("published_identity") == identity
@@ -59,6 +72,28 @@ def reduce_day(task):
     return {**result, "day": str(day), "seconds": time.monotonic() - started}
 
 
+@contextmanager
+def publication_locks(root, start, end, parallel_years=False):
+    with ExitStack() as locks:
+        lock = locks.enter_context((root / ".summary-backfill.lock").open("a"))
+        mode = fcntl.LOCK_SH if parallel_years else fcntl.LOCK_EX
+        fcntl.flock(lock, mode | fcntl.LOCK_NB)
+        if parallel_years:
+            for year in range(start.year, end.year + 1):
+                year_lock = locks.enter_context(
+                    (root / f".summary-backfill-{year}.lock").open("a")
+                )
+                fcntl.flock(year_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+
+
+def requested_months(start, end, skip_incomplete_first_month=False):
+    month_start = start
+    if skip_incomplete_first_month and month_start.day != 1:
+        month_start = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return list(periods(month_start, end, "monthly")) if month_start <= end else []
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-root", type=Path, required=True)
@@ -67,9 +102,13 @@ def main():
     parser.add_argument("--end", type=date.fromisoformat, required=True)
     parser.add_argument("--workers", type=int, choices=(1, 2, 4, 8), default=4)
     parser.add_argument("--audit-only", action="store_true")
+    parser.add_argument("--parallel-years", action="store_true",
+                        help="Shared root lock plus exclusive year locks for disjoint campaigns")
+    parser.add_argument("--skip-incomplete-first-month", action="store_true",
+                        help="Produce daily records from start, but omit its incomplete monthly summary")
     args = parser.parse_args()
     # Whole-month requests ensure monthly products are never silently partial.
-    months = list(periods(args.start, args.end, "monthly"))
+    months = requested_months(args.start, args.end, args.skip_incomplete_first_month)
     days = [d for d, _ in periods(args.start, args.end, "daily")]
     for d in [*days, args.end + timedelta(days=1)]:
         audited(input_path(args.input_root, d))
@@ -87,8 +126,7 @@ def main():
         return
     args.output_root.mkdir(parents=True, exist_ok=True)
     # A cooperative single-controller lock also protects overlapping year requests.
-    with (args.output_root / ".summary-backfill.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with publication_locks(args.output_root, args.start, args.end, args.parallel_years):
         config = Path(__file__).resolve().parents[1] / "config/forcing_daily_reducers.toml"
         reducers, names, units = load_forcing_reducers(config)
         started = time.monotonic()

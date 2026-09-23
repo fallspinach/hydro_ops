@@ -10,15 +10,15 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from hydro_ops.config import load_settings
+from hydro_ops.forcing.baseline_publication import accepted_baseline
 from hydro_ops.forcing.complete_day import utc_hours
-from hydro_ops.forcing.daily_archive import verified_daily_archive
 from hydro_ops.forcing.streams import baseline_root
 
 
 def complete_day(root: Path, day: date, *, require_daily: bool = True) -> bool:
     daily = root / day.strftime("%Y/%m") / f"{day:%Y%m%d}.LDASIN_DOMAIN1"
     legacy_daily = daily.with_suffix(f"{daily.suffix}.nc")
-    if verified_daily_archive(daily, day) or verified_daily_archive(legacy_daily, day):
+    if accepted_baseline(daily, day) or accepted_baseline(legacy_daily, day):
         return True
     if require_daily:
         return False

@@ -91,9 +91,30 @@ def references(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--output", type=Path, help="Save a preparation snapshot; never executes moves")
+    parser.add_argument("--inventory-files", action="store_true",
+                        help="Record files and identities beneath proposed year-directory moves")
     args = parser.parse_args()
     root = args.project_root.resolve()
     report = inventory(root)
+    if args.inventory_files:
+        files = []
+        for move in report['proposed_moves']:
+            source = root / move['source']
+            for path in sorted(source.rglob('*')):
+                if path.is_symlink():
+                    report['conflicts'].append(f'Symlink inside year directory: {path}')
+                    continue
+                if not path.is_file():
+                    continue
+                stat = path.stat()
+                files.append({'source': str(path.relative_to(root)),
+                              'destination': str(Path(move['destination']) / path.relative_to(source)),
+                              'identity': {'inode': stat.st_ino, 'bytes': stat.st_size,
+                                           'mtime_ns': stat.st_mtime_ns}})
+        report['file_inventory'] = files
+        report['file_count'] = len(files)
+        report['total_bytes'] = sum(item['identity']['bytes'] for item in files)
     report.update(
         schema_version=1,
         mode="plan-only",
@@ -111,7 +132,18 @@ def main():
             "post-migration forcing and NWM read smoke tests",
         ],
     )
-    print(json.dumps(report, indent=2))
+    if args.output:
+        if args.output.exists():
+            raise FileExistsError(args.output)
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        partial = args.output.with_name(args.output.name+'.part')
+        partial.write_text(json.dumps(report, indent=2)+'\n')
+        partial.replace(args.output)
+        print(json.dumps({'snapshot': str(args.output), 'proposed_moves': len(report['proposed_moves']),
+                          'conflicts': report['conflicts'], 'files': report.get('file_count'),
+                          'mode': 'plan-only', 'migration_authorized': False}))
+    else:
+        print(json.dumps(report, indent=2))
 
 
 if __name__ == "__main__":

@@ -100,6 +100,14 @@ Source-specific rules include:
 - Treat the stable archive and mutable realtime feed as distinct revisions.
 - Record the contributing accumulation file and stream.
 
+Archive metadata must follow the selected records across the 2020-07-01 policy boundary.
+A PRISM window ending July 1 begins June 30, so copying only its first input's global
+attributes loses the CNRFC policy even when the July records are correctly treated.
+The daily archive writer now carries the policy from marked post-boundary inputs,
+records `cnrfc_stage4_policy_effective_from`, and rejects mixed inputs with unmarked
+post-boundary records. This applies to both regular and compressed-chunk publication;
+it does not change precipitation values or weaken the final publication check.
+
 The CNRFC mask is rasterized at grid-cell centers from the official NWS RFC boundary dataset.
 Its source URL, feature attributes, retrieval checksum, and rasterization rule are embedded in
 the static mask. The policy is spatially limited to that mask; no other RFC is altered.

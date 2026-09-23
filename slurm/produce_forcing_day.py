@@ -18,7 +18,7 @@ configured_python = os.environ.get("HYDRO_OPS_PYTHON")
 if configured_python and Path(sys.executable).resolve() != Path(configured_python).resolve():
     os.execv(configured_python, [configured_python, *sys.argv])
 
-from hydro_ops.forcing.daily_archive import verified_daily_archive
+from hydro_ops.forcing.baseline_publication import accepted_baseline
 
 
 def domain_repaired(path: Path, day: date) -> bool:
@@ -47,18 +47,16 @@ def main() -> int:
         day = start + timedelta(days=index)
     python = os.environ.get("HYDRO_OPS_PYTHON", sys.executable)
     output_root = os.environ.get("HYDRO_OPS_OUTPUT_ROOT")
+    force = os.environ.get("HYDRO_OPS_FORCE") == "1"
     if output_root and os.environ.get("HYDRO_OPS_ARCHIVE_DAILY") == "1":
         daily = Path(output_root) / day.strftime("%Y/%m") / f"{day:%Y%m%d}.LDASIN_DOMAIN1"
         legacy_daily = daily.with_suffix(f"{daily.suffix}.nc")
-        if os.environ.get("HYDRO_OPS_FORCE") != "1" and (
-            (verified_daily_archive(daily, day) and domain_repaired(daily, day))
-            or (
-                verified_daily_archive(legacy_daily, day)
-                and domain_repaired(legacy_daily, day)
-            )
-        ):
+        if not force and (accepted_baseline(daily, day) or accepted_baseline(legacy_daily, day)):
             print(f"SKIP verified daily archive {daily}", flush=True)
             return 0
+        # Existing but unaccepted archives require a real rebuild, including
+        # hourly intermediates; never reuse old science just to add metadata.
+        force = force or daily.exists() or legacy_daily.exists()
     scratch = (
         f"/scratch/{os.environ['SLURM_JOB_USER']}/job_{os.environ['SLURM_JOB_ID']}"
         f"/forcing-day-{day:%Y%m%d}"
@@ -86,7 +84,7 @@ def main() -> int:
         command.extend(["--start-hour", start_hour])
     if output_root:
         command.extend(["--output-root", output_root])
-    if os.environ.get("HYDRO_OPS_FORCE") == "1":
+    if force:
         command.append("--force")
     produced = subprocess.run(command, check=False)
     if produced.returncode != 0 or os.environ.get("HYDRO_OPS_ARCHIVE_DAILY") != "1":
@@ -105,7 +103,7 @@ def main() -> int:
         scratch,
         "--delete-hourly",
     ]
-    if os.environ.get("HYDRO_OPS_FORCE") == "1":
+    if force:
         archive.append("--force")
     if start_hour:
         archive.extend(["--start-hour", start_hour])

@@ -132,17 +132,18 @@ def publish_gfs_day(source_path, output_path, envelope_path, geometry_path, cons
         staged = Path(temporary) / output_path.name
         shutil.copyfile(source_path, staged)
         with Dataset(staged, "r+") as dst:
-            flags = dst.createVariable("gfs_fallback_qc", "u1", ("time", "y", "x"),
+            flags = dst.variables.get("gfs_fallback_qc") or dst.createVariable("gfs_fallback_qc", "u1", ("time", "y", "x"),
                                        zlib=True, complevel=2, shuffle=True, chunksizes=(1, min(256, keep.shape[0]), min(256, keep.shape[1])))
             flags.flag_masks = np.array([1, 2, 4, 8, 16, 32], dtype=np.uint8)
             flags.flag_meanings = "gfs_meteorology gfs_precipitation model_HGT_used relative_humidity_clipped source_hour_roundoff_clipped active_hole_repaired"
             # Explicit CF missing metadata is essential: netCDF4 masks its implicit
             # default fill, but xarray otherwise tries to decode it as a huge date.
-            cycle = dst.createVariable("gfs_forecast_reference_time", "f8", ("time",),
+            cycle = dst.variables.get("gfs_forecast_reference_time") or dst.createVariable("gfs_forecast_reference_time", "f8", ("time",),
                                        fill_value=np.nan)
             cycle.units = dst["time"].units
             cycle.calendar = getattr(dst["time"], "calendar", "standard")
-            leads = dst.createVariable("gfs_forecast_lead_hours", "i2", ("time",))
+            leads = dst.variables.get("gfs_forecast_lead_hours") or dst.createVariable("gfs_forecast_lead_hours", "i2", ("time",))
+            leads.units = "hours"
             dst["forcing_source_id"].flag_values = np.array([0, 1, 2, 3, 4], dtype=np.uint8)
             dst["forcing_source_id"].flag_meanings = "missing nldas2 hrrr nldas2_hrrr_hybrid gfs_short_forecast"
             dst["precip_source_id"].flag_values = np.arange(9, dtype=np.uint8)

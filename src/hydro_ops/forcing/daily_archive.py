@@ -12,7 +12,52 @@ from time import perf_counter
 from typing import Any
 
 import numpy as np
-from netCDF4 import Dataset
+from netCDF4 import Dataset, num2date
+
+from hydro_ops.forcing.baseline_schema import (
+    FIELDS,
+    SPECS,
+    VERSION,
+    CanonicalDiagnostic,
+    UnknownDiagnostic,
+    canonical_names,
+)
+
+
+def _record_policy_attributes(paths, indices) -> dict[str, str]:
+    """Carry CNRFC policy across mixed pre/post-policy windows, never invent it.
+
+    Global attributes from the first record alone are insufficient at July 1,
+    2020. Every selected post-boundary record must come from a marked source.
+    The attribute describes only records on/after the explicit effective time.
+    """
+    selected = {}
+    for path, index in zip(paths, indices, strict=True):
+        selected.setdefault(path, []).append(index)
+    policies = []
+    missing = []
+    for path, records in selected.items():
+        with Dataset(path) as source:
+            policy = str(getattr(source, "cnrfc_stage4_policy", ""))
+            time = source.variables.get("time")
+            if time is None or not hasattr(time, "units"):
+                continue
+            stamps = num2date(time[records], time.units,
+                              calendar=getattr(time, "calendar", "standard"))
+            applicable = any((t.year, t.month, t.day) >= (2020, 7, 1) for t in stamps)
+            if applicable:
+                if policy:
+                    policies.append(policy)
+                else:
+                    missing.append(str(path))
+    if policies and missing:
+        raise ValueError(f"Missing CNRFC policy on selected post-boundary records: {missing}")
+    if not policies:
+        return {}
+    return {
+        "cnrfc_stage4_policy": "; ".join(dict.fromkeys(policies)),
+        "cnrfc_stage4_policy_effective_from": "2020-07-01T00:00:00Z",
+    }
 
 
 def _attributes(variable) -> dict[str, Any]:
@@ -46,12 +91,15 @@ def _validate_inputs(
     variables: list[str] | None = None
     previous_time: float | None = None
     time_units: str | None = None
+    signatures = {}
+    metadata = {}
     for path, source_index in zip(paths, source_time_indices, strict=True):
         with Dataset(path) as dataset:
             current_dimensions = {
                 name: len(value) for name, value in dataset.dimensions.items() if name != "time"
             }
             current_variables = sorted(dataset.variables)
+            current_variables = sorted(set(current_variables) | canonical_names(dataset))
             if normalize_precipitation_timing and "precip_source_id" in current_variables:
                 current_variables = sorted(set(current_variables) | {"precip_timing_source_id"})
             if dimensions is None:
@@ -74,6 +122,31 @@ def _validate_inputs(
             if units != time_units or (previous_time is not None and value <= previous_time):
                 raise ValueError(f"Hourly times are inconsistent or unordered: {path}")
             previous_time = value
+            for name in current_variables:
+                variable = _source_variable(dataset, name)
+                signature = (str(variable.dtype), variable.dimensions)
+                if name in SPECS and canonical_names(dataset):
+                    expected = UnknownDiagnostic(dataset, name)
+                    if signature != (str(expected.dtype), expected.dimensions):
+                        raise ValueError(f"Canonical diagnostic schema differs: {path}:{name}")
+                    if name == "gfs_forecast_reference_time" and variable.getncattr("units") != units:
+                        raise ValueError(f"GFS reference time units differ: {path}")
+                if name in signatures and signatures[name] != signature:
+                    raise ValueError(f"Variable schema differs: {path}:{name}")
+                signatures[name] = signature
+                if name in FIELDS:
+                    attrs = {key: variable.getncattr(key) for key in
+                             ("units", "scale_factor", "add_offset", "_FillValue")
+                             if key in variable.ncattrs()}
+                    if name in metadata:
+                        if attrs.keys() != metadata[name].keys():
+                            raise ValueError(f"Physical metadata differs: {path}:{name}")
+                        for key, value in attrs.items():
+                            numeric = np.asarray(value).dtype.kind in "fci"
+                            equal = np.array_equal(value, metadata[name][key], equal_nan=True) if numeric else np.array_equal(value, metadata[name][key])
+                            if not equal:
+                                raise ValueError(f"Physical metadata differs: {path}:{name}/{key}")
+                    metadata[name] = attrs
     assert dimensions is not None and variables is not None
     return dimensions, variables
 
@@ -92,6 +165,10 @@ class _UnknownTiming:
 
 
 def _source_variable(dataset, name):
+    if name in SPECS and name not in dataset.variables:
+        return UnknownDiagnostic(dataset, name)
+    if name in SPECS and canonical_names(dataset):
+        return CanonicalDiagnostic(dataset, name)
     if name == "precip_timing_source_id" and name not in dataset.variables:
         return _UnknownTiming(dataset["precip_source_id"])
     return dataset[name]
@@ -133,6 +210,9 @@ def create_daily_archive(
     unknown = set(overrides) - set(variable_names)
     if unknown:
         raise ValueError(f"Override variables are absent from hourly inputs: {sorted(unknown)}")
+    global_attributes = {**(global_attributes or {}), **_record_policy_attributes(paths, indices)}
+    if set(SPECS) <= set(variable_names):
+        global_attributes["baseline_schema_version"] = VERSION
     if chunk_copy and compression_level == 2 and not destination.exists():
         from hydro_ops.forcing.chunk_archive import UnsupportedArchive, assemble
         try:
@@ -193,6 +273,8 @@ def create_daily_archive(
                     fill_value = (
                         source.getncattr("_FillValue") if "_FillValue" in source.ncattrs() else None
                     )
+                    if name in SPECS and fill_value is None and canonical_names(first):
+                        fill_value = UnknownDiagnostic(first, name).getncattr("_FillValue")
                     options: dict[str, Any] = {}
                     chunks = _chunks(source, {"time": expected_hours, **dimensions})
                     if chunks:

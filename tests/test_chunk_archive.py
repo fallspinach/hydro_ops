@@ -175,5 +175,6 @@ def test_normalized_provenance_with_coupled_overrides(tmp_path, present):
     manifest = json.loads(optimized.with_suffix('.nc.manifest.json').read_text())
     assert manifest['archive_writer'] == 'compressed_chunks'
     assert manifest['fully_verified_overrides'] == sorted(changes)
-    assert manifest['timing']['normalized_variables'] == ['precip_timing_source_id']
+    from hydro_ops.forcing.baseline_schema import SPECS
+    assert manifest['timing']['normalized_variables'] == sorted([*SPECS, 'precip_timing_source_id'])
     assert [p.read_bytes() for p in paths] == originals
