@@ -11,12 +11,12 @@ def forcing_stream_root(project_root: Path, stream: str) -> Path:
     """Return the canonical domain and stream root."""
     if stream not in FORCING_STREAMS:
         raise ValueError(f"Unknown forcing stream: {stream}")
-    return project_root / "forcing/outputs/conus" / stream
+    return project_root / "forcing/outputs/conus" / stream / "hourly"
 
 
 def baseline_root(project_root: Path) -> Path:
     """Return the canonical reusable baseline root."""
-    return project_root / "forcing/outputs/conus/baseline"
+    return project_root / "forcing/outputs/conus/baseline/hourly"
 
 
 def validate_stream_output_root(root: Path, stream: str) -> Path:
@@ -24,9 +24,10 @@ def validate_stream_output_root(root: Path, stream: str) -> Path:
     if stream not in FORCING_STREAMS:
         raise ValueError(f"Unknown forcing stream: {stream}")
     resolved = root.resolve()
-    if resolved.name != stream:
+    stream_directory = resolved.parent if resolved.name == "hourly" else resolved
+    if stream_directory.name != stream:
         raise ValueError(
-            f"The {stream!r} stream output root must end in '/{stream}', got: {resolved}"
+            f"The {stream!r} stream output root must end in '/{stream}/hourly' (or a private '/{stream}'), got: {resolved}"
         )
     other = "retro" if stream == "nrt" else "nrt"
     if other in resolved.parts:

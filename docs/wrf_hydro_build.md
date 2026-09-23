@@ -150,8 +150,8 @@ The project build applies `patches/wrf_hydro-5.4.0-daily-io.patch` automatically
 `YYYYMMDD.LDASIN_DOMAIN1` and then `YYYY/MM/YYYYMMDD.LDASIN_DOMAIN1`, selects the requested
 hourly record, and keeps that daily file open until the date changes. Both sequential and MPP
 land-reader paths are covered. Existing flat forcing directories therefore remain valid, while
-an operational run can set `INDIR` directly to `forcing/outputs/conus/nrt` or
-`forcing/outputs/conus/retro` without staging links or copies.
+an operational run can set `INDIR` directly to `forcing/outputs/conus/nrt/hourly` or
+`forcing/outputs/conus/retro/hourly` without staging links or copies.
 
 Treat restarts as paired model state rather than forcing or ordinary history output. Noah-MP
 reads the exact path in `RESTART_FILENAME_REQUESTED`; routing reads the exact path in

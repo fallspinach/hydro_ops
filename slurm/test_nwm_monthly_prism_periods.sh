@@ -13,7 +13,7 @@ project_root=${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
 python=/home/mpan/local/miniforge3/envs/hydro-ops/bin/python
 subset="$project_root/nwm/runs/nwm_subset_mid_atlantic"
 template="$subset/run_prism_native_daily"
-forcing_root="$project_root/forcing/outputs/conus/retro"
+forcing_root="$project_root/forcing/outputs/conus/retro/hourly"
 scratch_root=${SLURM_TMPDIR:-"/scratch/${SLURM_JOB_USER}/job_${SLURM_JOB_ID}"}
 
 case ${SLURM_ARRAY_TASK_ID} in

@@ -55,7 +55,7 @@ def run_trial(directory, month, mode, window_writing=False):
     start, end = date(2003, month, 15), date(2003, month, 16)
     task = trial / "task.jsonl"
     task.write_text(json.dumps({"start": str(start), "end": str(end), "stream": "retro",
-                               "revision": "stable", "baseline_root": str(PROJECT / "forcing/outputs/conus/baseline"),
+                               "revision": "stable", "baseline_root": str(PROJECT / "forcing/outputs/conus/baseline/hourly"),
                                "output_root": str(trial / "retro")}) + "\n")
     os.environ.update(HYDRO_OPS_PROJECT_ROOT=str(PROJECT), HYDRO_OPS_PYTHON=sys.executable,
                       HYDRO_OPS_PRISM_CALENDAR_TASK_FILE=str(task), SLURM_ARRAY_TASK_ID="0",
@@ -214,7 +214,7 @@ def submit(window_writing=False):
         for mode in ("reference", "optimized"):
             for offset in range(-1, 3):
                 day = date(2003, month, 15) + timedelta(days=offset)
-                path = PROJECT / "forcing/outputs/conus/baseline" / day.strftime("%Y/%m/%Y%m%d.LDASIN_DOMAIN1")
+                path = PROJECT / "forcing/outputs/conus/baseline/hourly" / day.strftime("%Y/%m/%Y%m%d.LDASIN_DOMAIN1")
                 if not path.is_file():
                     raise FileNotFoundError(path)
             build.append(queue(f"2003{month:02d}15-16-{mode}", ["--directory", str(directory), "--run", mode, "--month", str(month)]))

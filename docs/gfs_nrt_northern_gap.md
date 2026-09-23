@@ -228,7 +228,7 @@ Historical test 4519800 uses:
 
 ```
 python bin/produce_gfs_nrt_day.py \
-  --input forcing/outputs/conus/nrt/2026/08/20260824.LDASIN_DOMAIN1 \
+  --input forcing/outputs/conus/nrt/hourly/2026/08/20260824.LDASIN_DOMAIN1 \
   --output forcing/work/gfs-nrt-exploration/full_day/20260824.LDASIN_DOMAIN1 \
   --work /path/to/job/scratch --historical-test
 ```

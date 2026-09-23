@@ -57,7 +57,7 @@ def main():
                                 root / kind / "1979" / stamp[4:6] / f"{stamp}.LDASIN_DOMAIN1"))
         for month in range(3, 7):
             stamp = f"2021{month:02}15"
-            samples.append(("2021_retro", stamp, project / "forcing/outputs/conus/retro/2021"
+            samples.append(("2021_retro", stamp, project / "forcing/outputs/conus/retro/hourly/2021"
                             / stamp[4:6] / f"{stamp}.LDASIN_DOMAIN1"))
         model = project / "nwm/static/operational/nwm.v3.1.6/domain/wrfinput_CONUS_NLDAS2.nc"
         with Dataset(model) as data:

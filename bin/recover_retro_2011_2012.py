@@ -36,7 +36,7 @@ def main():
 
     try:
         check_scratch(scratch)
-        baseline = project / 'forcing/outputs/conus/baseline'
+        baseline = project / 'forcing/outputs/conus/baseline/hourly'
         day = date(2011, 10, 29)
         daily = baseline / '2011/10/20111029.LDASIN_DOMAIN1'
         if not verified_daily_archive(daily, day):
@@ -55,7 +55,7 @@ def main():
         report['baseline_recovery'] = 'passed'
         _atomic_json(journal, report)
         task = {'start': '2011-10-28', 'end': '2011-10-30', 'stream': 'retro', 'revision': 'stable',
-                'baseline_root': str(baseline), 'output_root': str(project / 'forcing/outputs/conus/retro'),
+                'baseline_root': str(baseline), 'output_root': str(project / 'forcing/outputs/conus/retro/hourly'),
                 'writer_profile': 'validated_chunks_v1'}
         task_path = campaign / 'tasks.jsonl'
         task_path.write_text(json.dumps(task) + '\n')

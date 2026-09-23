@@ -29,8 +29,8 @@ def evidence(path):
 def check(task):
     root, day, mask_hash = task
     relative = day.strftime('%Y/%m/%Y%m%d.LDASIN_DOMAIN1')
-    baseline = root/'forcing/outputs/conus/baseline'/relative
-    retro = root/'forcing/outputs/conus/retro'/relative
+    baseline = root/'forcing/outputs/conus/baseline/hourly'/relative
+    retro = root/'forcing/outputs/conus/retro/hourly'/relative
     try:
         paths = [baseline, baseline.with_name(baseline.name+'.manifest.json')]
         for path in [*paths, retro]:

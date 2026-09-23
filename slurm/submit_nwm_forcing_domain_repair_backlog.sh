@@ -34,7 +34,7 @@ for range in "${ranges[@]}"; do
     start=${range%%:*}
     end=${range##*:}
     while ! "$task_python" bin/submit_nwm_forcing_domain_repair.py \
-        --root forcing/outputs/conus/retro \
+        --root forcing/outputs/conus/retro/hourly \
         --start "$start" \
         --end "$end" \
         --project-root "$project_root" \

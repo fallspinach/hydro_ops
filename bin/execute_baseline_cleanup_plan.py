@@ -13,13 +13,13 @@ from plan_baseline_cleanup import evidence, identity
 def validate_entry(entry, root):
     day = date.fromisoformat(entry['day'])
     relative = day.strftime('%Y/%m/%Y%m%d.LDASIN_DOMAIN1')
-    base = root/'forcing/outputs/conus/baseline'/relative
+    base = root/'forcing/outputs/conus/baseline/hourly'/relative
     expected = [base, base.with_name(base.name+'.manifest.json')]
     if entry['status'] != 'eligible' or not entry['checks'] or not all(entry['checks'].values()):
         raise ValueError(f'Unaccepted entry: {day}')
     if [p['path'] for p in entry['delete']] != [str(p) for p in expected]:
         raise ValueError(f'Unexpected deletion targets: {day}')
-    replacement = root/'forcing/outputs/conus/retro'/relative
+    replacement = root/'forcing/outputs/conus/retro/hourly'/relative
     if entry['replacement']['path'] != str(replacement):
         raise ValueError(f'Unexpected replacement: {day}')
     for item in [*entry['delete'], entry['replacement'], *entry['evidence']]:

@@ -195,7 +195,7 @@ def build_status(
         )
     nwm_root = settings.output_root / "conus"
     production = {
-        stream: production_inventory(nwm_root / stream, start=start, end=end, gap_limit=gap_limit)
+        stream: production_inventory(nwm_root / stream / "hourly", start=start, end=end, gap_limit=gap_limit)
         for stream in ("baseline", "nrt", "retro")
     }
     issues = []

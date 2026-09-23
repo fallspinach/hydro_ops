@@ -13,7 +13,7 @@ scratch.mkdir(parents=True, exist_ok=True)
 subprocess.run([
     sys.executable, str(project / "bin/test_static_forcing_mask.py"),
     "--mask", str(root / "nldas2-seven-met-union-v1.nc"),
-    "--source", str(project / "forcing/outputs/conus/retro" / day[:4] / day[4:6] / f"{day}.LDASIN_DOMAIN1"),
+    "--source", str(project / "forcing/outputs/conus/retro/hourly" / day[:4] / day[4:6] / f"{day}.LDASIN_DOMAIN1"),
     "--output", str(root / "retro" / day[:4] / day[4:6] / f"{day}.LDASIN_DOMAIN1"),
     "--work", str(scratch),
 ], check=True)

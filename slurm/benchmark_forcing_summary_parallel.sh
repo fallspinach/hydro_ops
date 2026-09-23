@@ -17,7 +17,7 @@ for workers in 4 8; do
     if [[ "$workers" == 8 ]]; then output="$result/workers8"; fi
     /usr/bin/time -v -o "$result/workers${workers}.time" \
         "$python" "$root/bin/backfill_forcing_summaries.py" \
-        --input-root "$root/forcing/outputs/conus/retro" --output-root "$output" \
+        --input-root "$root/forcing/outputs/conus/retro/hourly" --output-root "$output" \
         --start 1981-01-01 --end 1981-01-31 --workers "$workers" \
         > "$result/workers${workers}.jsonl" 2> "$result/workers${workers}.stderr"
 done

@@ -35,7 +35,7 @@ def configure_writer(task: dict, project: Path, environ: dict) -> bool:
     if stream not in {"retro", "nrt"} or profile != (
             "validated_chunks_v1" if stream == "retro" else "reference"):
         raise ValueError("Unvalidated stream/writer profile")
-    if Path(task["output_root"]).resolve() != (project / "forcing/outputs/conus" / stream).resolve():
+    if Path(task["output_root"]).resolve() != (project / "forcing/outputs/conus" / stream / "hourly").resolve():
         raise ValueError("Unexpected production output root")
     if environ.get("HYDRO_OPS_REBUILD_STATIC_ENVELOPE") != "1":
         raise ValueError("Static envelope required")
@@ -167,7 +167,7 @@ def main() -> int:
             finalize_static_manifest(source, destination)
         # Keep corrected NRT baselines for subsequent stable PRISM processing.
         if task["stream"] == "nrt":
-            target = project / "forcing/outputs/conus/baseline" / relative
+            target = project / "forcing/outputs/conus/baseline/hourly" / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             for suffix in ("", ".manifest.json"):
                 source_base = Path(str(baseline / relative) + suffix)

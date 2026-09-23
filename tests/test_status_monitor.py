@@ -38,7 +38,7 @@ def test_build_status_is_json_serializable_and_formats_text(tmp_path, monkeypatc
         mrms_products=("pass1", "pass2"),
     )
     touch(settings.hrrr_data_dir / "2026/01/01/hrrr_forcing.2026010100.grib2.nc")
-    touch(settings.output_root / "conus/nrt/2026/01/20260101.LDASIN_DOMAIN1", 7)
+    touch(settings.output_root / "conus/nrt/hourly/2026/01/20260101.LDASIN_DOMAIN1", 7)
     monkeypatch.setattr(
         "hydro_ops.status_monitor.slurm_inventory",
         lambda: {"available": True, "jobs": [], "job_count": 0, "states": {}},

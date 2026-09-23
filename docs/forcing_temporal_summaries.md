@@ -65,7 +65,7 @@ Example CONUS daily summaries (inclusive start/end dates):
 ```bash
 conda activate hydro-ops
 python bin/aggregate_forcing.py \
-  --input-root forcing/outputs/conus/retro \
+  --input-root forcing/outputs/conus/retro/hourly \
   --output-root forcing/outputs/conus/retro/daily \
   --frequency daily --start 1981-01-01 --end 1981-01-31 \
   --domain conus --stream retro
@@ -86,7 +86,7 @@ python bin/aggregate_forcing.py \
 ```
 
 Or build monthly summaries directly from hourly archives: omit `--from-daily` and
-point `--input-root` at `forcing/outputs/conus/retro`. Output is
+point `--input-root` at `forcing/outputs/conus/retro/hourly`. Output is
 `monthly/YYYY/YYYYMM.LDASIN_DOMAIN1.monthly`. Monthly requests require whole months;
 there is no automatic partial-month output.
 
@@ -195,7 +195,7 @@ is never accepted through this compatibility path.
 
 ```bash
 python bin/backfill_forcing_summaries.py \
-  --input-root forcing/outputs/conus/retro \
+  --input-root forcing/outputs/conus/retro/hourly \
   --output-root forcing/outputs/conus/retro \
   --start 1981-01-01 --end 1985-12-31 --audit-only
 ```

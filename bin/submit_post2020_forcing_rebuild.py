@@ -26,7 +26,7 @@ def main() -> int:
     missing_prism = set()
     inventory = {}
     for stream in ("retro", "nrt"):
-        root = settings.project_root / "forcing/outputs/conus" / stream
+        root = settings.project_root / "forcing/outputs/conus" / stream / "hourly"
         days = sorted(
             date.fromisoformat(path.name[:8])
             for path in root.glob("*/*/*.LDASIN_DOMAIN1")
@@ -52,7 +52,7 @@ def main() -> int:
                               "output_root": str(root)})
     pilot = {"start": str(pilot_day), "end": str(pilot_day), "stream": "nrt",
              "revision": "provisional",
-             "output_root": str(settings.project_root / "forcing/outputs/conus/nrt")}
+             "output_root": str(settings.project_root / "forcing/outputs/conus/nrt/hourly")}
     plan = {"inventory": inventory, "batches": len(tasks), "workers": args.workers,
             "cpus_per_worker": 64, "scratch_mb_per_worker": 240000,
             "pilot": pilot, "missing_prism": sorted(missing_prism)}

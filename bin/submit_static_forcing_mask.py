@@ -17,7 +17,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     project = Path(__file__).resolve().parents[1]
-    root = project / "forcing/outputs/conus/retro"
+    root = project / "forcing/outputs/conus/retro/hourly"
     paths = []
     day = date(1979, 1, 1)
     absent = []

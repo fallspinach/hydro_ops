@@ -106,7 +106,7 @@ def main():
     parser.add_argument('--cdo', default='/home/mpan/local/miniforge3/bin/cdo')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    sources = [root/f'forcing/outputs/conus/retro/2000/01/200001{d}.LDASIN_DOMAIN1' for d in (15, 16, 17, 18)]
+    sources = [root/f'forcing/outputs/conus/retro/hourly/2000/01/200001{d}.LDASIN_DOMAIN1' for d in (15, 16, 17, 18)]
     mask = root/'forcing/static/coverage/conus/nldas2_seven_met_static_envelope_v4.nc'
     for source in sources:
         if not source.is_file():

@@ -37,7 +37,7 @@ def main() -> int:
         relative = day.strftime("%Y/%m/%Y%m%d.LDASIN_DOMAIN1")
         subprocess.run(
             [python, "bin/restore_inactive_forcing_values.py",
-             str(project / "forcing/outputs/conus/retro" / relative),
+             str(project / "forcing/outputs/conus/retro/hourly" / relative),
              str(candidate / relative), "--work-directory", str(scratch),
              "--backup-directory", str(root / "before-restoration")], cwd=project, check=True,
         )

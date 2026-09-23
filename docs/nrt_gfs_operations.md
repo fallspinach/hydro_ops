@@ -161,8 +161,8 @@ day. Before they are available, publish an explicitly unconstrained NRT baseline
 copy; do not pretend a PRISM constraint was applied. A previously constrained
 output is retained if its PRISM inputs subsequently disappear.
 
-Baseline data remain in `forcing/outputs/conus/baseline` for later retrospective
-work. Final recent NRT stays in `forcing/outputs/conus/nrt`; no retro output is
+Baseline data remain in `forcing/outputs/conus/baseline/hourly` for later retrospective
+work. Final recent NRT stays in `forcing/outputs/conus/nrt/hourly`; no retro output is
 written. Private candidates are checked for complete active coverage and masked
 outside the static envelope after PRISM. Permanent transfers are checksum-verified
 before atomic replacement. Failed days keep their previous publication, record an

@@ -31,7 +31,7 @@ def audit(project, start, end, mask_hash):
     count = 0
     day = start
     while day <= end:
-        path = project / "forcing/outputs/conus/retro" / day.strftime("%Y/%m/%Y%m%d.LDASIN_DOMAIN1")
+        path = project / "forcing/outputs/conus/retro/hourly" / day.strftime("%Y/%m/%Y%m%d.LDASIN_DOMAIN1")
         if not accepted(path, "retro"):
             raise ValueError(f"Unaccepted stable publication: {path}")
         with Dataset(path) as ds:

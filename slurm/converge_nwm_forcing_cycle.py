@@ -162,7 +162,7 @@ def main() -> int:
     manifest = Path(os.environ["HYDRO_OPS_CYCLE_MANIFEST"])
     state = json.loads(manifest.read_text())
     start, end = date.fromisoformat(state["start"]), date.fromisoformat(state["end"])
-    output_root = project / "forcing/outputs/conus" / state["stream"]
+    output_root = project / "forcing/outputs/conus" / state["stream"] / "hourly"
     maximum = int(state.get("maximum_attempts", 4))
     history = state.setdefault("convergence_attempts", [])
     state["continuation_job_id"] = os.environ.get("SLURM_JOB_ID")

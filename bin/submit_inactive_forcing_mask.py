@@ -20,7 +20,7 @@ def main() -> int:
     settings = load_settings()
     groups = {"historical": [], "post2020": []}
     for stream in ("retro", "nrt"):
-        for path in sorted((settings.project_root / "forcing/outputs/conus" / stream).glob("*/*/*.LDASIN_DOMAIN1")):
+        for path in sorted((settings.project_root / "forcing/outputs/conus" / stream / "hourly").glob("*/*/*.LDASIN_DOMAIN1")):
             groups["historical" if path.name[:8] < "20201014" else "post2020"].append(str(path))
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
     for label, paths in groups.items():

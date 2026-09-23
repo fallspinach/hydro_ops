@@ -389,7 +389,7 @@ python bin/produce_forcing_range.py --start 2026072410 --end 2026072412
 
 Each hour discovers available revisions, runs the seven-field path, composites precipitation,
 and atomically publishes a complete LDASIN plus JSON manifest below
-`forcing/outputs/conus/baseline`.
+`forcing/outputs/conus/baseline/hourly`.
 Existing structurally complete hours are skipped. `--continue-on-error` reports unavailable
 hours without stopping an entire range.
 
@@ -470,8 +470,8 @@ daily LDASIN collection with:
 ```bash
 python bin/produce_prism_constrained_daily.py \
   --day 2026-07-15 \
-  --complete-root forcing/outputs/conus/baseline \
-  --output-root forcing/outputs/conus/nrt \
+  --complete-root forcing/outputs/conus/baseline/hourly \
+  --output-root forcing/outputs/conus/nrt/hourly \
   --stream nrt \
   --revision provisional
 ```
@@ -487,8 +487,8 @@ Create a verified calendar-day baseline collection before removing its hourly in
 ```bash
 python bin/archive_nwm_forcing_day.py \
   --day 2026-07-15 \
-  --hourly-root forcing/outputs/conus/baseline \
-  --output-root forcing/outputs/conus/baseline \
+  --hourly-root forcing/outputs/conus/baseline/hourly \
+  --output-root forcing/outputs/conus/baseline/hourly \
   --delete-hourly
 ```
 
@@ -513,8 +513,8 @@ a crossed NRT/retro destination fails before opening an output.
 
 Current-month days are labeled `early`, older mutable days `provisional`, and days at least 183
 days old `stable`. The `nrt` stream retains early/provisional forcing below
-`forcing/outputs/conus/nrt`; the `retro` stream independently publishes stable forcing below
-`forcing/outputs/conus/retro`. Stable publication therefore never replaces the retained NRT
+`forcing/outputs/conus/nrt/hourly`; the `retro` stream independently publishes stable forcing below
+`forcing/outputs/conus/retro/hourly`. Stable publication therefore never replaces the retained NRT
 record. Source modification times and the revision stored in each output are used to decide
 whether it must be rebuilt. The canonical recurring entries are in `cron/hydro_ops.crontab`.
 

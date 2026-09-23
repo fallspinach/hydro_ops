@@ -43,7 +43,7 @@ def test_approved_writer_scope(tmp_path, stream, enabled):
     module = load("slurm/rebuild_post2020_forcing.py")
     receipt = tmp_path / "acceptance.json"
     receipt.write_text(json.dumps({"status": "passed", "days": list(range(7))}))
-    task = {"stream": stream, "output_root": str(tmp_path / "forcing/outputs/conus" / stream),
+    task = {"stream": stream, "output_root": str(tmp_path / "forcing/outputs/conus" / stream / "hourly"),
             "writer_acceptance": str(receipt), "writer_all_optimizations": True,
             "writer_profile": "validated_chunks_v1" if stream == "retro" else "reference"}
     env = {"HYDRO_OPS_REBUILD_STATIC_ENVELOPE": "1", "HYDRO_OPS_RETRO_NEW_PRODUCTION": "1"}

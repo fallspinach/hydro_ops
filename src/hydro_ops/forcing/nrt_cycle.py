@@ -236,8 +236,8 @@ class RecentNrt:
         self.config = configuration(root)
         self.archive_options = baseline_archive_options(self.config)
         self.layout = OperationalLayout.project_defaults(root)
-        self.output = output_root or root / "forcing/outputs/conus/nrt"
-        self.baseline = baseline_root or root / "forcing/outputs/conus/baseline"
+        self.output = output_root or root / "forcing/outputs/conus/nrt/hourly"
+        self.baseline = baseline_root or root / "forcing/outputs/conus/baseline/hourly"
         self.envelope = root / self.config["envelope"]
         self.geometry = root / self.config["geometry"]
         self.conservative = root / self.config["conservative_weights"]
@@ -384,7 +384,8 @@ class RecentNrt:
                 reuse = writer_env["HYDRO_OPS_NRT_REUSE_WINDOWS"] == "1"
                 windows = self.work / "nrt-prism-windows/nrt" if reuse else tmp / "windows/nrt"
                 # Keep private/test streams isolated by default; empty override disables caching.
-                default_cache = str(self.output / '.prism-window-cache') if self.config.get("window_cache_enabled", False) else ""
+                cache_container = self.output.parent if self.output.name == "hourly" else self.output
+                default_cache = str(cache_container / '.prism-window-cache') if self.config.get("window_cache_enabled", False) else ""
                 cache_root = os.environ.get("HYDRO_OPS_NRT_WINDOW_CACHE", default_cache)
                 persistent = WindowCache(cache_root) if cache_root and reuse else None
                 for d in (day, day + timedelta(days=1)):

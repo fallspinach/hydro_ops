@@ -26,7 +26,7 @@ domain="$project_root/nwm/static/operational/nwm.v3.1.6/domain"
 land_configuration="$project_root/nwm/static/operational/nwm.v3.1.6/analysis_assim"
 hydro_configuration="$project_root/nwm/static/operational/nwm.v3.1.6/analysis_assim_no_lakes"
 constants="$project_root/nwm/static/operational/nwm.v3.1.6/constants"
-forcing=${HYDRO_OPS_FORCING_ROOT:-"$project_root/forcing/outputs/conus/retro"}
+forcing=${HYDRO_OPS_FORCING_ROOT:-"$project_root/forcing/outputs/conus/retro/hourly"}
 executable="$project_root/external/wrf_hydro_nwm_public-v5.4.0/build-intel/Run/wrf_hydro_NoahMP.exe"
 
 mkdir -p "$run_root" "$result_root"

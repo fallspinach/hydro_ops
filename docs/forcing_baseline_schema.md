@@ -87,8 +87,9 @@ Operational follow-up **4627429** uses `slurm/test_nrt_schema_operational.sh` to
 repair September 15 through `run_cycle` with production paths and its normal
 lock, then repeat without external refresh. It requires unchanged status and
 unchanged file identities on the second cycle. Reports are saved in
-`forcing/status/layout-migration/operational-gate-4627429/`. Migration remains
-blocked until this test passes; the script cannot migrate data or release NWM.
+`forcing/status/layout-migration/operational-gate-4627429/`. This failed attempt
+blocked migration until its corrected rerun passed; the test script itself
+cannot migrate data or release NWM.
 
 ### Operational input-selection correction
 
@@ -114,15 +115,21 @@ or historical-file deletion was introduced.
 
 Validation: 43 focused tests passed, including mixed leftover hourly/daily
 inputs, missing/duplicate selected records, date-boundary lookup, and cache
-version invalidation. The production repair/no-op gate must pass before layout
-migration proceeds.
+version invalidation. The corrected production repair/no-op gate subsequently
+passed, clearing the operational prerequisite for migration.
 
 Rerun submitted as **4627624**. Log:
 `forcing/logs/nrt-schema-operational-4627624.out`; acceptance reports:
 `forcing/status/layout-migration/operational-gate-4627624/`. It uses production
 paths and automatically runs the unchanged-input check after successful repair.
+It completed successfully in 18m07s: September 15 was published with accepted
+PRISM constraints and no missing required active cells. The repeat took about
+8 seconds, reported unchanged, and preserved all three baseline file identities
+and the published NRT identity.
 
-Subsequent operational acceptance should include an unchanged-input no-op cycle
-and NLDAS replacing HRRR/GFS. The schema layer itself deliberately does not alter
-source fingerprints or skip decisions. Layout migration remains separately gated
-on the running NWM job and the migration checklist.
+Post-layout NRT gate 4627946 also passed (18 seconds total, both cycles unchanged).
+The CONUS model test and final migration gate passed; NWM 1986 was released.
+See [cutover acceptance](forcing_hourly_cutover_checklist.md). An additional
+real-source NLDAS-arrival replay remains useful broader coverage, but is not
+claimed as part of these schema/cutover results. Input selection is explicitly
+versioned; compression/schema normalization alone does not invalidate baselines.

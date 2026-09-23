@@ -25,9 +25,9 @@ raise SystemExit(
             "--month",
             str(month),
             "--baseline-root",
-            str(project / "forcing/outputs/conus/baseline"),
+            str(project / "forcing/outputs/conus/baseline/hourly"),
             "--retro-root",
-            str(project / "forcing/outputs/conus/retro"),
+            str(project / "forcing/outputs/conus/retro/hourly"),
             "--report",
             str(
                 project / f"forcing/outputs/validation/reports/monthly-prism/{year}{month:02d}.json"

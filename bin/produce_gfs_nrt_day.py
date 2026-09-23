@@ -25,7 +25,7 @@ def main():
     production = root / "forcing/outputs"
     if args.output.resolve().is_relative_to(production) and (
             not args.publish_nrt or args.historical_test
-            or not args.output.resolve().is_relative_to(production / "conus/nrt")):
+            or not args.output.resolve().is_relative_to(production / "conus/nrt/hourly")):
         parser.error("Production writes require --publish-nrt, a CONUS nrt path, and non-historical operation")
     layout = OperationalLayout.project_defaults(root)
     artifacts = root / "forcing/work/gfs-nrt-exploration"

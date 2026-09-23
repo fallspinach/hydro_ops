@@ -43,7 +43,7 @@ def main():
     for index in selected:
         task = tasks[index]
         if task["stream"] not in {"retro", "nrt"} or Path(task["output_root"]).resolve() != (
-                settings.project_root / "forcing/outputs/conus" / task["stream"]).resolve():
+                settings.project_root / "forcing/outputs/conus" / task["stream"] / "hourly").resolve():
             raise ValueError("Unexpected task output root")
     plan = {"original_job": args.job, "original_tasks": str(args.tasks.resolve()),
             "original_states": states, "selected_indices": selected,

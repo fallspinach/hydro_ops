@@ -16,7 +16,7 @@ mkdir -p "$result"
 # Eight CPUs reserve memory; the reducer itself is single-process/single-thread.
 /usr/bin/time -v -o "$result/timing.txt" \
     "$python" "$root/bin/aggregate_forcing.py" \
-    --input-root "$root/forcing/outputs/conus/retro" \
+    --input-root "$root/forcing/outputs/conus/retro/hourly" \
     --output-root "$result/daily" --frequency daily \
     --start 1981-01-30 --end 1981-01-30 --domain conus --stream retro \
     > "$result/aggregation.jsonl" 2> "$result/aggregation.stderr"
@@ -29,7 +29,7 @@ import numpy as np
 from netCDF4 import Dataset
 
 root, result = map(Path, sys.argv[1:])
-source = root / 'forcing/outputs/conus/retro/1981/01'
+source = root / 'forcing/outputs/conus/retro/hourly/1981/01'
 output = result / 'daily/1981/01/19810130.LDASIN_DOMAIN1.daily'
 with Dataset(source / '19810130.LDASIN_DOMAIN1') as a, Dataset(source / '19810131.LDASIN_DOMAIN1') as b, Dataset(output) as o:
     ny, nx = len(o.dimensions['y']), len(o.dimensions['x'])

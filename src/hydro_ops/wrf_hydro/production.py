@@ -320,7 +320,7 @@ def publish_hourly(paths, destination, ncrcat):
 def run_segment(project, work, logs, output, restart_root, inputs, start, end, ranks):
     hours = int((end - start).total_seconds() // 3600)
     domain = project / "nwm/static/operational/nwm.v3.1.6"
-    forcing = project / "forcing/outputs/conus/retro"
+    forcing = project / "forcing/outputs/conus/retro/hourly"
     check_forcing(forcing, start, end)
     restart_check(inputs, start)
     work.mkdir(parents=True, exist_ok=False)

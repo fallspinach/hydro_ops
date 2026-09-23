@@ -24,7 +24,7 @@ root = Path(os.environ['HYDRO_OPS_PROJECT_ROOT'])
 p = Path(os.environ['HYDRO_OPS_PRISM_CALENDAR_TASK_FILE'])
 p.parent.mkdir(parents=True, exist_ok=True)
 task = dict(start='2026-09-15', end='2026-09-15', stream='nrt', revision='early',
-            baseline_root=str(root/'forcing/outputs/conus/baseline'),
+            baseline_root=str(root/'forcing/outputs/conus/baseline/hourly'),
             output_root=str(root/'forcing/work'/f'nrt-schema-v1-{os.environ["SLURM_JOB_ID"]}'/'output'),
             writer_profile='validated_chunks_v1')
 p.write_text(json.dumps(task)+'\n')

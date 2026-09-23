@@ -40,7 +40,7 @@ def main():
         return
     rank = int(os.environ['SLURM_ARRAY_TASK_ID'])
     folder = base/f'task-{rank}'
-    sources = [PROJECT/f'forcing/outputs/conus/retro/2000/{rank+1:02}/2000{rank+1:02}{d:02}.LDASIN_DOMAIN1'
+    sources = [PROJECT/f'forcing/outputs/conus/retro/hourly/2000/{rank+1:02}/2000{rank+1:02}{d:02}.LDASIN_DOMAIN1'
                for d in range(1, 9)]
     mask = PROJECT/'forcing/static/coverage/conus/nldas2_seven_met_static_envelope_v4.nc'
     if args.phase == 'build':

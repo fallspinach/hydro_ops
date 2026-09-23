@@ -16,7 +16,7 @@ export HYDRO_OPS_MIN_SCRATCH_FREE_GB=120
 case "${RECOVERY_STAGE:?}" in
 baseline)
     export HYDRO_OPS_START_DAY=2026-09-01 HYDRO_OPS_ARCHIVE_DAILY=1
-    export HYDRO_OPS_OUTPUT_ROOT="$root/forcing/outputs/conus/baseline"
+    export HYDRO_OPS_OUTPUT_ROOT="$root/forcing/outputs/conus/baseline/hourly"
     export HYDRO_OPS_LAYOUT_ROOT="$root"
     unset HYDRO_OPS_FORCING_DAY_TASK_FILE HYDRO_OPS_FORCE HYDRO_OPS_START_HOUR
     "$HYDRO_OPS_PYTHON" slurm/produce_forcing_day.py
@@ -43,8 +43,8 @@ root = Path(os.environ['HYDRO_OPS_PROJECT_ROOT'])
 p = Path(os.environ['HYDRO_OPS_PRISM_CALENDAR_TASK_FILE'])
 p.parent.mkdir(parents=True, exist_ok=True)
 tasks = [dict(start=a, end=b, stream='nrt', revision='early',
-              baseline_root=str(root/'forcing/outputs/conus/baseline'),
-              output_root=str(root/'forcing/outputs/conus/nrt'), writer_profile='validated_chunks_v1')
+              baseline_root=str(root/'forcing/outputs/conus/baseline/hourly'),
+              output_root=str(root/'forcing/outputs/conus/nrt/hourly'), writer_profile='validated_chunks_v1')
          for a,b in [('2026-09-01','2026-09-07'),('2026-09-08','2026-09-13')]]
 p.write_text(''.join(json.dumps(t)+'\n' for t in tasks))
 PY

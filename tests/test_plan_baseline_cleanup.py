@@ -15,8 +15,8 @@ spec.loader.exec_module(plan)
 def test_plan_is_read_only_and_rejects_stale_or_unstable_replacement(tmp_path):
     day = date(2019, 1, 6)
     relative = '2019/01/20190106.LDASIN_DOMAIN1'
-    baseline = tmp_path/'forcing/outputs/conus/baseline'/relative
-    retro = tmp_path/'forcing/outputs/conus/retro'/relative
+    baseline = tmp_path/'forcing/outputs/conus/baseline/hourly'/relative
+    retro = tmp_path/'forcing/outputs/conus/retro/hourly'/relative
     baseline.parent.mkdir(parents=True)
     retro.parent.mkdir(parents=True)
     baseline.write_bytes(b'baseline remains')

@@ -16,7 +16,7 @@ elif os.environ.get("GFS_NEXT_STEP") == "cycle":
 else:
     day = date.fromisoformat(os.environ.get("GFS_TEST_DAY", "20260824"))
     command = [sys.executable, "bin/produce_gfs_nrt_day.py", "--input",
-        f"forcing/outputs/conus/nrt/{day:%Y/%m/%Y%m%d}.LDASIN_DOMAIN1", "--output",
+        f"forcing/outputs/conus/nrt/hourly/{day:%Y/%m/%Y%m%d}.LDASIN_DOMAIN1", "--output",
         f"forcing/work/gfs-nrt-exploration/full_day/{day:%Y%m%d}.LDASIN_DOMAIN1",
         "--work", str(scratch), "--historical-test"]
 subprocess.run(command, cwd=root, check=True)

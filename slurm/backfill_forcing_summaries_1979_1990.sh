@@ -21,6 +21,6 @@ if [[ "$year" == 1979 ]]; then
     extra+=(--skip-incomplete-first-month)
 fi
 "$HYDRO_OPS_PYTHON" "$root/bin/backfill_forcing_summaries.py" \
-    --input-root "$root/forcing/outputs/conus/retro" \
+    --input-root "$root/forcing/outputs/conus/retro/hourly" \
     --output-root "$root/forcing/outputs/conus/retro" \
     --start "$start" --end "$year-12-31" --workers 4 --parallel-years "${extra[@]}"

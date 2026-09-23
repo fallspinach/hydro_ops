@@ -16,7 +16,7 @@ import apply_static_forcing_mask as mask_writer
 from netCDF4 import Dataset, num2date
 
 PROJECT = Path(__file__).resolve().parents[1]
-ROOT = PROJECT / "forcing/outputs/conus/retro"
+ROOT = PROJECT / "forcing/outputs/conus/retro/hourly"
 MASK = PROJECT / "forcing/static/coverage/conus/nldas2_seven_met_static_envelope_v4.nc"
 
 

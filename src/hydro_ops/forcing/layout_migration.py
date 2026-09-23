@@ -1,6 +1,6 @@
-"""Inactive, pure path mapping helpers for a future hourly-resolution cutover.
+"""Pure path mapping helpers for the hourly-resolution cutover.
 
-No production module imports these helpers. No filesystem changes are performed.
+The migration utility uses these helpers; they perform no filesystem changes.
 Stream roots without a year require caller-specific review, not blanket rewriting.
 """
 import re

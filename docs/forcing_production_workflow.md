@@ -909,13 +909,13 @@ NLDAS-2 begins at 13 UTC on 1979-01-01. January 1979 cannot form a complete cale
 constraint and is intentionally excluded; unconstrained daily baseline production begins on
 1979-01-02, and monthly constrained production covers 1979-02 through 1980-12.
 
-For example, after unconstrained daily forcing exists below `forcing/outputs/conus/baseline`, run:
+For example, after unconstrained daily forcing exists below `forcing/outputs/conus/baseline/hourly`, run:
 
 ```bash
 python bin/produce_prism_constrained_month.py \
   --year 1979 --month 2 \
-  --complete-root forcing/outputs/conus/baseline \
-  --output-root forcing/outputs/conus/retro \
+  --complete-root forcing/outputs/conus/baseline/hourly \
+  --output-root forcing/outputs/conus/retro/hourly \
   --maximum-ratio 100
 ```
 
@@ -1027,9 +1027,9 @@ from replacing the near-real-time record.
 The canonical on-disk hierarchy is:
 
 ```text
-forcing/outputs/conus/baseline/        unconstrained reusable baseline
-forcing/outputs/conus/nrt/             retained early/provisional operational record
-forcing/outputs/conus/retro/           stable daily or historical-month retrospective record
+forcing/outputs/conus/baseline/hourly/        unconstrained reusable baseline
+forcing/outputs/conus/nrt/hourly/             retained early/provisional operational record
+forcing/outputs/conus/retro/hourly/           stable daily or historical-month retrospective record
 ```
 
 Both published streams use `YYYY/MM/YYYYMMDD.LDASIN_DOMAIN1` below their root. Stream schedulers

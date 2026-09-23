@@ -90,7 +90,7 @@ Create a forcing summary matching one model interval:
 
 ```bash
 python bin/reduce_forcing_model_day.py \
-  --input-root forcing/outputs/conus/nrt \
+  --input-root forcing/outputs/conus/nrt/hourly \
   --day 2026-09-01 \
   --output forcing/outputs/conus_summary/nrt/2026/09/20260901.forcing_summary.nc
 ```

@@ -24,8 +24,8 @@ root = Path(os.environ['HYDRO_OPS_PROJECT_ROOT'])
 path = Path(os.environ['HYDRO_OPS_PRISM_CALENDAR_TASK_FILE'])
 path.parent.mkdir(parents=True, exist_ok=True)
 tasks = [dict(start=a, end=b, stream='retro', revision='stable',
-              baseline_root=str(root/'forcing/outputs/conus/baseline'),
-              output_root=str(root/'forcing/outputs/conus/retro'),
+              baseline_root=str(root/'forcing/outputs/conus/baseline/hourly'),
+              output_root=str(root/'forcing/outputs/conus/retro/hourly'),
               writer_profile='validated_chunks_v1')
          for a, b in [('2019-01-05', '2019-01-15'), ('2019-03-18', '2019-03-23')]]
 path.write_text(''.join(json.dumps(t)+'\n' for t in tasks))

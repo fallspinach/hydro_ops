@@ -124,7 +124,7 @@ and layer for future extractions; existing artifact metadata is not rewritten he
 
 ```bash
 python bin/subset_nwm_forcing.py \
-  forcing/outputs/conus/retro/1981/01/19810101.LDASIN_DOMAIN1 \
+  forcing/outputs/conus/retro/hourly/1981/01/19810101.LDASIN_DOMAIN1 \
   forcing/outputs/cnrfc/retro/1981/01/19810101.LDASIN_DOMAIN1 \
   --domain-masks nwm/static/domains/cnrfc/masks/cnrfc_masks.nc
 ```

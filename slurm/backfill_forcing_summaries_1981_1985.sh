@@ -21,6 +21,6 @@ r=json.loads(Path(sys.argv[1]).read_text())
 assert r['status']=='passed' and r['compared_files']==32 and r['backfill_workers']==4
 PY
 "$python" "$root/bin/backfill_forcing_summaries.py" \
-    --input-root "$root/forcing/outputs/conus/retro" \
+    --input-root "$root/forcing/outputs/conus/retro/hourly" \
     --output-root "$root/forcing/outputs/conus/retro" \
     --start "$year-01-01" --end "$year-12-31" --workers 4

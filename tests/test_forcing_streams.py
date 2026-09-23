@@ -10,12 +10,12 @@ from hydro_ops.forcing.streams import (
 
 
 def test_canonical_stream_roots_are_siblings(tmp_path: Path) -> None:
-    assert forcing_stream_root(tmp_path, "nrt") == tmp_path / "forcing/outputs/conus/nrt"
-    assert forcing_stream_root(tmp_path, "retro") == tmp_path / "forcing/outputs/conus/retro"
+    assert forcing_stream_root(tmp_path, "nrt") == tmp_path / "forcing/outputs/conus/nrt/hourly"
+    assert forcing_stream_root(tmp_path, "retro") == tmp_path / "forcing/outputs/conus/retro/hourly"
 
 
 def test_baseline_root_is_canonical(tmp_path: Path) -> None:
-    assert baseline_root(tmp_path) == tmp_path / "forcing/outputs/conus/baseline"
+    assert baseline_root(tmp_path) == tmp_path / "forcing/outputs/conus/baseline/hourly"
 
 
 def test_stream_root_must_match_selected_stream(tmp_path: Path) -> None:

@@ -13,7 +13,8 @@ forcing/
   inputs/                         external NLDAS-2, HRRR, MRMS, Stage-IV, PRISM, and GFS archives
   static/                         source grids, elevations, and reusable remapping weights
   outputs/
-    conus/{baseline,nrt,retro}/   daily 24-record LDASIN collections
+    conus/{baseline,nrt,retro}/hourly/  calendar-day collections of hourly LDASIN
+    conus/{nrt,retro}/{daily,monthly}/  summary products (not model input)
     validation/                   forcing validation products
   work/                           manifests, task lists, locks, and temporary coordination state
   logs/                           forcing acquisition and production logs
@@ -46,11 +47,11 @@ as one-time migration sources, but compatibility-link creation is disabled unles
 requested with `--create-compatibility-links`. `bin/rewrite_manifest_paths.py` provides an
 idempotent, atomic dry-run/execute migration for structured historical manifests.
 
-## Planned temporal-resolution level — NOT activated
+## Temporal-resolution level — activated September 23, 2026
 
-Existing producers and NWM readers still use `<domain>/<stream>/YYYY/MM/`.
-Do not move these directories while current production or model runs use them.
-The agreed destination is:
+Producers and NWM readers now use `<domain>/<stream>/hourly/YYYY/MM/`.
+The previous year directories were renamed without rewriting NetCDF data.
+The layout is:
 
 ```text
 forcing/outputs/<domain>/
@@ -78,9 +79,18 @@ daily/monthly summary products are not planned. NRT and retro remain separate.
 
 ### Preparation and cutover gates
 
-Current preparation and the reader/receipt worklist are recorded in
-[the hourly cutover checklist](forcing_hourly_cutover_checklist.md). The 1986 NWM
-job is held while 1985 finishes; preparation does not activate the new layout.
+Completed acceptance results and the reader/receipt worklist are recorded in
+[the hourly cutover checklist](forcing_hourly_cutover_checklist.md). Gate 4627957
+passed and released NWM 1986 after the NRT no-op and CONUS model tests passed.
+The migration renamed 97 directories containing 35,752 files and rebound 17,777
+JSON sidecars; data-file identities and existing summary freshness were preserved.
+The pre-cutover operational repair/no-op test 4627624 passed. The exact inventory,
+durable rename/metadata journal and original sidecar backups are under
+`forcing/status/layout-migration/cutover-20260923/`. Code checkpoint: `d620802`.
+Historical completed task files, logs, cleanup journals and content-audit evidence
+remain historical; current dated paths in published JSON sidecars are rebound.
+No compatibility symlinks were created. NRT's private `.prism-window-cache`
+remains at the stream-container level and is not a published hourly product.
 
 Run this read-only inventory while jobs continue:
 
@@ -97,13 +107,14 @@ It emits JSON with proposed year-directory renames, destination conflicts, all
 current user SLURM jobs, and source/configuration/documentation files requiring
 path review. It deliberately has **no execute mode** and never declares the
 system safe solely because the queue is empty. It does not recursively scan the
-archive, validate NetCDF contents, or inventory every embedded manifest path.
+archive unless `--inventory-files` is selected, or validate NetCDF contents.
 Run it again immediately before cutover; this is a live plan, not a frozen job list.
 
-1. Let current forcing chains finish and verify final coverage/audit reports.
-   As of the September 20 review, these include post-2020 repair array 4549027
-   and retro controllers 4524978–4524980 (through 2020-10-13). Completion estimates
-   are not safety gates; retries and descendants must also finish.
+The following sequence was used for this cutover and remains the checklist for
+future coordinated migrations:
+
+1. Let forcing chains finish and verify final coverage/audit reports.
+   Completion estimates are not safety gates; retries and descendants must finish.
 2. Arrange a pause at an NWM restart/checkpoint boundary. Review running and
    pending NWM jobs, including their frozen submission environments and namelists.
    Stop automatic chain advancement/launches during the maintenance window;
@@ -134,6 +145,8 @@ Run it again immediately before cutover; this is a live plan, not a frozen job l
    new production writes begin, rollback requires another coordinated pause and
    reconciliation—never overwrite newly published data.
 
-Preparation does not change production defaults, queued jobs, cron, or archive
-paths. The execution utility, path edits, and final cutover validation remain a
-separate maintenance step after the above pause is arranged.
+`bin/migrate_forcing_hourly_layout.py` is the separate, explicitly gated executor.
+It journals exact renames, backs up changed sidecars, and verifies all data-file
+identities. `bin/verify_forcing_hourly_layout.py` checks representative archives,
+NWM year-boundary lookup, unchanged daily/monthly summaries, status discovery,
+and the CNRFC grid crop. Its checks do not release held jobs.

@@ -37,8 +37,8 @@ first = run_cycle(root, work, day, day, datetime.now(UTC))
 _atomic_json(state/'repair.json', first)
 if first['status'] != 'passed':
     raise RuntimeError('Repair failed; migration remains blocked')
-paths = [day_path(root/'forcing/outputs/conus/baseline', day+timedelta(days=i)) for i in (-1, 0, 1)]
-paths += [day_path(root/'forcing/outputs/conus/nrt', date.fromisoformat(r['day'])) for r in first['days']]
+paths = [day_path(root/'forcing/outputs/conus/baseline/hourly', day+timedelta(days=i)) for i in (-1, 0, 1)]
+paths += [day_path(root/'forcing/outputs/conus/nrt/hourly', date.fromisoformat(r['day'])) for r in first['days']]
 before = [identity(p) for p in paths]
 second = run_cycle(root, work, day, day, datetime.now(UTC))
 _atomic_json(state/'noop.json', second)
