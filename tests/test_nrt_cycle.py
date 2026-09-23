@@ -113,7 +113,7 @@ def test_cycle_reports_failure_and_preserves_existing_output(tmp_path, monkeypat
     assert output.read_bytes() == b"previous accepted data"
 
 
-def test_window_reuse_tracks_only_its_dependencies(tmp_path):
+def test_window_reuse_tracks_only_its_dependencies(tmp_path, monkeypatch):
     day = date(2026, 9, 15)
     prism = tmp_path / "prism_ppt_us_25m_20260915.nc"
     prism.write_bytes(b"initial")
@@ -121,6 +121,9 @@ def test_window_reuse_tracks_only_its_dependencies(tmp_path):
     def signature(items=records, chunks="0"):
         return nrt_cycle.window_signature(day, items, [prism], "early", chunks)
     original = signature()
+    with monkeypatch.context() as patch:
+        patch.setattr(nrt_cycle, "INPUT_SELECTION", "old_hourly_discovery")
+        assert signature() != original
     assert signature(records[1:]) == original
     assert signature(records[:-1]) == original
     assert signature(chunks="1") != original

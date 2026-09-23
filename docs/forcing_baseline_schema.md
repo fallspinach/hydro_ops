@@ -90,6 +90,38 @@ unchanged file identities on the second cycle. Reports are saved in
 `forcing/status/layout-migration/operational-gate-4627429/`. Migration remains
 blocked until this test passes; the script cannot migrate data or release NWM.
 
+### Operational input-selection correction
+
+Job 4627429 failed after 21m36s at the final active-cell audit, before publication
+or the no-op cycle. The schema checks succeeded. The actual window manifest
+showed leftover September 14 hourly files being chosen ahead of its repaired
+daily archive. Each of those hourly files had 57,934 missing active T2D cells;
+the checked corresponding daily records had none. Missing values propagated
+through the 24-hour temperature adjustment into 11,461 active cells during
+September 15 00–11 UTC, also affecting coupled humidity and longwave. Every
+new hole lay within the stale hourly missing mask. The isolated test's generic
+post-PRISM repair had concealed this input-selection error.
+
+The NRT controller now passes `--baseline-archives` with the exact daily files
+returned by its baseline acceptance/production step. The PRISM worker resolves
+timestamps only within that list, rejects ambiguous or absent records, and never
+falls back to leftover hourly files. Legacy standalone discovery is unchanged.
+`explicit_accepted_daily_archives_v1` is included in final-input and window-cache
+fingerprints, invalidating old selection results without rebuilding valid
+baselines. Baseline file identities are checked again before storing newly
+computed windows and before final publication. No extra nearest-neighbor filling
+or historical-file deletion was introduced.
+
+Validation: 43 focused tests passed, including mixed leftover hourly/daily
+inputs, missing/duplicate selected records, date-boundary lookup, and cache
+version invalidation. The production repair/no-op gate must pass before layout
+migration proceeds.
+
+Rerun submitted as **4627624**. Log:
+`forcing/logs/nrt-schema-operational-4627624.out`; acceptance reports:
+`forcing/status/layout-migration/operational-gate-4627624/`. It uses production
+paths and automatically runs the unchanged-input check after successful repair.
+
 Subsequent operational acceptance should include an unchanged-input no-op cycle
 and NLDAS replacing HRRR/GFS. The schema layer itself deliberately does not alter
 source fingerprints or skip decisions. Layout migration remains separately gated

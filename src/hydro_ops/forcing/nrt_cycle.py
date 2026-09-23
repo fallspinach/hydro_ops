@@ -35,6 +35,7 @@ from hydro_ops.forcing.source_selection import select_hourly_source
 from hydro_ops.forcing.window_cache import WindowCache
 
 POLICY = "source_aware_recent_nrt_v1"
+INPUT_SELECTION = "explicit_accepted_daily_archives_v1"
 
 
 def configuration(root):
@@ -140,6 +141,7 @@ def window_signature(day, baselines, prism, revision, chunks):
     if set(records) != required:
         raise ValueError("Incomplete PRISM-window baseline dependencies")
     return fingerprint({"baselines": records,
+                        "input_selection": INPUT_SELECTION,
                         "prism": [identity(p) for p in prism if f"{day:%Y%m%d}" in p.name],
                         "revision": revision, "chunks": chunks})
 
@@ -353,9 +355,11 @@ class RecentNrt:
         constrained = all(p.is_file() for p in prism)
         required = [day + timedelta(days=i) for i in (-1, 0, 1)] if constrained else [day]
         baselines = [self.baseline_day(d) for d in required]
+        baseline_identities = [identity(p) for p, _ in baselines]
         inputs = {"baseline_fingerprints": [r["input_fingerprint"] for _, r in baselines],
                   "baseline_sha256": [r["sha256"] for _, r in baselines],
-                  "prism": [identity(p) for p in prism], "policy": POLICY}
+                  "prism": [identity(p) for p in prism], "policy": POLICY,
+                  "input_selection": INPUT_SELECTION}
         expected = fingerprint(inputs)
         destination = day_path(self.output, day)
         receipt_path = destination.with_name(destination.name + ".nrt-receipt.json")
@@ -415,7 +419,10 @@ class RecentNrt:
                         "--complete-root", self.baseline, "--output-root", windows,
                         "--revision", "early" if (self.as_of.date() - d).days < 30 else "provisional",
                         "--stream", "nrt", "--work-directory", tmp,
-                        "--archive-access", "direct", "--allow-legacy-12utc-output", "--force")
+                        "--archive-access", "direct", "--allow-legacy-12utc-output", "--force",
+                        "--baseline-archives", *(p for p, _ in baselines))
+                    if [identity(p) for p, _ in baselines] != baseline_identities:
+                        raise ValueError("Selected baselines changed during PRISM reconciliation")
                     window_writers.append(read_json(window.with_name(window.name + ".manifest.json")).get("archive_writer", "value_based"))
                     if reuse:
                         _atomic_json(marker, {"signature": signature, "identity": identity(window)})
@@ -439,6 +446,8 @@ class RecentNrt:
             self.audit_final(candidate, day, constrained)
             timings.append({"stage": "audit_final", "seconds": time.monotonic() - started})
             calendar_record = read_json(candidate.with_name(candidate.name + ".manifest.json"))
+            if [identity(p) for p, _ in baselines] != baseline_identities:
+                raise ValueError("Selected baselines changed; retain previous publication")
             if [identity(p) for p in prism] != inputs["prism"]:
                 raise ValueError("PRISM changed during reconciliation; retain previous publication")
             started = time.monotonic()

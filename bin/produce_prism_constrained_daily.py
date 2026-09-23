@@ -89,8 +89,34 @@ def resolve_forcing_hours(
     destination: Path,
     *,
     archive_access: str,
+    baseline_archives: list[Path] | None = None,
 ) -> tuple[list[Path], list[int]]:
     """Resolve hourly inputs to files and explicit NetCDF time-record indices."""
+    if baseline_archives is not None:
+        # Controller-selected archives are authoritative. Never rediscover old
+        # hourly files or silently fall back if a selected record is unavailable.
+        records = {}
+        for path in baseline_archives:
+            with Dataset(path) as data:
+                time = data["time"]
+                stamps = num2date(time[:], time.units,
+                                  calendar=getattr(time, "calendar", "standard"),
+                                  only_use_cftime_datetimes=False,
+                                  only_use_python_datetimes=True)
+                for index, stamp in enumerate(stamps):
+                    stamp = stamp.replace(tzinfo=None)
+                    if stamp in records:
+                        raise ValueError(f"Ambiguous selected baseline record: {stamp}")
+                    records[stamp] = (path, index)
+        selected = []
+        for stamp in valid_times:
+            key = stamp.replace(tzinfo=None)
+            if key not in records:
+                raise ValueError(f"Selected baseline archives lack record: {stamp}")
+            selected.append(records[key])
+        if archive_access != "direct":
+            raise ValueError("Explicit baseline archives require direct access")
+        return [p for p, _ in selected], [i for _, i in selected]
     ncks = shutil.which("ncks")
     resolved: list[Path] = []
     indices: list[int] = []
@@ -131,6 +157,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--day", required=True, type=date.fromisoformat)
     parser.add_argument("--complete-root", required=True, type=Path)
+    parser.add_argument("--baseline-archives", nargs="+", type=Path,
+                        help="Exact controller-selected daily inputs; no hourly discovery/fallback")
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument("--stream", choices=FORCING_STREAMS)
     parser.add_argument("--precipitation-weights", type=Path)
@@ -186,6 +214,7 @@ def main() -> int:
             valid_times,
             temp / "extracted_hours",
             archive_access=args.archive_access,
+            baseline_archives=args.baseline_archives,
         )
         constraint = temp / f"prism_temperature_constraint.{stamp}.nc"
         corrected = temp / f"hybrid_temperature_prism_corrected.{stamp}.nc"

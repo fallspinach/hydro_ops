@@ -18,7 +18,8 @@ operational receipts, or queued job definitions have been moved or rewritten.
 - Read-only inspection found no installed cron entries on login1/login2 at
   preparation time and at the operational-gate launch. Recheck at cutover.
 - Full-size isolated schema test **4626634** passed in 23m22s. Normal NRT
-  repair plus unchanged-input reuse gate **4627429** is running. Do not move
+  repair/reuse gate **4627429** failed on stale-hourly input selection. The
+  corrected exact-daily-input gate **4627624** has been submitted. Do not move
   paths or change live defaults while this writer is active.
 
 Snapshot: `forcing/status/layout-migration/preparation-20260923.json`.
