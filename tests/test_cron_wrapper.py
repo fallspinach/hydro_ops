@@ -85,6 +85,18 @@ def test_cron_template_uses_wrapper():
     assert all(">> /cw3e/" in line for line in entries)
 
 
+def test_nrt_cron_utc_schedule():
+    for name in ("hydro_ops.crontab", "hydro_ops.crontab.in"):
+        text = (ROOT / "cron" / name).read_text()
+        assert "CRON_TZ=UTC" in text.splitlines()
+        entries = [line for line in text.splitlines() if line and line[0].isdigit()]
+        daily = [line for line in entries if "--cycle daily " in line]
+        fast = [line for line in entries if "--cycle six-hourly " in line]
+        assert len(daily) == len(fast) == 1
+        assert daily[0].split()[:5] == ["30", "2", "*", "*", "*"]
+        assert fast[0].split()[:5] == ["30", "8,14,20", "*", "*", "*"]
+
+
 @pytest.mark.skipif(
     not Path("/cm/shared/apps/slurm/current/bin/squeue").exists(),
     reason="AWARE login-node integration test",

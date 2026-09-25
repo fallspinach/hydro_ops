@@ -2,9 +2,9 @@
 # Install on ONE host only after review. This file is not directly installable.
 CRON_TZ=UTC
 
-# Routine NRT; 08 UTC is replaced by the deeper daily cycle.
-0 2,14,20 * * * /usr/bin/bash @WRAPPER@ bin/update_nwm_forcing.py --cycle six-hourly >> @LOG_ROOT@/nwm-cycle-six-hourly.log 2>&1
-0 8 * * * /usr/bin/bash @WRAPPER@ bin/update_nwm_forcing.py --cycle daily >> @LOG_ROOT@/nwm-cycle-daily.log 2>&1
+# NRT at 2.5 hours after each synoptic boundary; daily replaces six-hourly at 02:30 UTC.
+30 8,14,20 * * * /usr/bin/bash @WRAPPER@ bin/update_nwm_forcing.py --cycle six-hourly >> @LOG_ROOT@/nwm-cycle-six-hourly.log 2>&1
+30 2 * * * /usr/bin/bash @WRAPPER@ bin/update_nwm_forcing.py --cycle daily >> @LOG_ROOT@/nwm-cycle-daily.log 2>&1
 # Stable retrospective promotion.
 0 10 18 * * /usr/bin/bash @WRAPPER@ bin/update_nwm_forcing.py --cycle monthly-retro >> @LOG_ROOT@/nwm-cycle-retro.log 2>&1
 # Read-only dashboard status.

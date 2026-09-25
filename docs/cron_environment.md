@@ -39,7 +39,11 @@ schedule is moved to another host or site modules change.
 
 Review the saved schedule and existing crontab on the chosen host before installing.
 Installing a file replaces that host's current user crontab, so preserve any unrelated
-entries. The four schedules and UTC cadence are unchanged; only their launcher and
-absolute log paths changed. Do not add a duplicate source-only refresh schedule.
+entries. The saved UTC schedule runs daily at **02:30**, with extension-only cycles
+at **08:30, 14:30, and 20:30**. Daily includes the extension, so do not add a second
+six-hourly invocation at 02:30. Status reporting remains every two hours at minute
+30; retrospective promotion remains at 10:00 UTC on the 18th of each month.
+See [NRT scheduling](nrt_operational_extension_schedule.md) for the timing rationale.
+Do not add a duplicate source-only refresh schedule.
 Observe the first live cycle and its dependent jobs after installation; successful
 environment tests are not an end-to-end production validation.

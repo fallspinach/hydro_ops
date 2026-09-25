@@ -2,6 +2,41 @@
 
 ## Rollout status
 
+The NLDAS-2 Earthdata Cloud backend passed acceptance and became the operational
+default on September 24, 2026 UTC; see
+[cloud migration and compatibility checks](nldas_earthdata_cloud_migration.md).
+No crontab change is required; the configured discovery backend is now `cmr`.
+
+### Latest NLDAS-2 hours (September 24, 2026 UTC)
+
+Operational source refreshes now submit NLDAS-2 with `--discover-latest`.
+The configured five-day lag remains the conservative completeness/repair cutoff,
+not the acquisition ceiling: discovery continues through today UTC. Directory
+404s beyond that cutoff are logged as not-yet-published and retried next cycle.
+Older missing directories, authentication errors, non-404 HTTP errors, and empty
+or unrecognized listings still fail visibly. Explicit historical downloads retain
+their strict requested ranges unless this flag is supplied.
+
+Available hours from a partial day are retained individually and immediately
+eligible for per-hour NRT source selection. A complete 24-hour day is aggregated
+with the existing verified daily writer under `YYYY/`; hourly copies are retained
+for the existing retention/cleanup workflow. No partial daily collection is
+published. NLDAS arrival changes source fingerprints, replacing HRRR/GFS only
+where NLDAS is now available; other hours retain HRRR plus northern GFS fallback.
+Daily and six-hourly cycles inherit this acquisition policy through
+`bin/update_forcing.py`; no crontab change is required.
+
+The earlier fill-metadata recovery **4629200 passed in 30m33s**: September 16–17
+were published and September 18–22 were unchanged. Parent **4629199** completed
+in 34m08s with zero unresolved days. Its latency report deliberately retains the
+original failed cycle's launch time, so it is not a fresh-cycle latency benchmark.
+Latest-hour acquisition test **4629219 passed in 20 seconds**: September 19 was
+archived, September 20's 13 available hours (00–12 UTC) were downloaded and kept
+hourly, and September 21–24 directory 404s were deferred. Real source selection
+confirmed 13 NLDAS hours and 11 HRRR hours on September 20. All **393 tests passed**.
+Production replacement test **4629221** covers September 19–21, including adjacent
+PRISM-window dependencies; its completion/acceptance is still pending.
+
 Sections describing individual experiments below are chronological records.
 Current production defaults are the adopted settings in `config/nrt_gfs.toml`,
 not the earlier opt-in benchmark settings. For the latest tested timings and
@@ -76,11 +111,12 @@ Cleanup is activity-triggered, not a separate cron service. Disabling caching do
 not automatically delete retained entries. Cache tuning does not invalidate baseline
 fingerprints. Final publication validation is unchanged.
 
-The repository cron template invokes `bin/update_nwm_forcing.py` at 02, 08, 14
-and 20 UTC. On the inspected host, `crontab -l` reported no crontab for mpan;
+The repository cron template invokes `bin/update_nwm_forcing.py` at 02:30, 08:30,
+14:30 and 20:30 UTC. On the inspected host, `crontab -l` reported no crontab for mpan;
 installation on the intended scheduler host still needs verification. The template
 commands need no replacement: the coordinator reads the new
-configuration. The 08 UTC pass retains the existing deeper older-window refresh.
+configuration. The 02:30 UTC daily pass extends first, then performs the deeper
+source refresh and revision pass; the other slots only extend latest hours.
 The monthly retrospective cycle is unchanged.
 
 The recent path manages the last **seven target days**, covering the usual 3–4-day
@@ -381,3 +417,32 @@ are absent. It stages only its dedicated acceptance summary. Failed validation,
 repository changes or Git authentication failure leave a `finalization.json` record
 and withhold the push. Missing the performance target alone is documented rather
 than misrepresented as a correctness failure.
+# September 24 efficiency adoption and latest-hour work
+
+The scheduler integration now routes six-hourly NRT through latest-hour
+extension and daily NRT through extension → revision cycle → separate summary
+refresh. See [current scheduling contract](nrt_operational_extension_schedule.md).
+Earlier rollout notes below record historical gates, not the current routing.
+
+NRT baseline workers are now **16 assembly / 8 precipitation remapping / 8 native
+repair** following benchmark 4635991 (12.55% less baseline time, equivalent
+fields). New recent-NRT workers request 128 CPUs and 240000 MB scratch. The
+latest-hour cron activation remains gated separately; this tuning does not
+remove any validation or change forcing science.
+
+Mixed-source baseline production now shares the precipitation remapping window
+across NLDAS/HRRR segments. Final auditing retains full validation/readback but
+only rewrites records requiring changes. New publication days precede revisions.
+The full test suite passed (412 tests); isolated integration job **4631009** tests
+the complete PRISM cycle and unchanged repeat. Its receipt will be
+`forcing/work/nrt-efficiency-adoption-4631009/acceptance.json`.
+
+Latest-hour publication is **not activated yet**. The target is the latest
+contiguous usable hour, not a PRISM/MRMS-pass-2 release or midnight boundary.
+Required northern GFS coverage and active-cell completeness still apply.
+Partial-day acquisition/publication and model-reader tests remain prerequisites
+to changing cron's fixed end-date cutoff. See
+[efficiency results and rollout](nrt_efficiency_experiment.md).
+The explicit partial-day writer is now implemented behind a non-cron API;
+[latest-hour rollout and remaining gates](nrt_latest_hour_publication.md) describes
+private integration test **4631499** and its limitations.

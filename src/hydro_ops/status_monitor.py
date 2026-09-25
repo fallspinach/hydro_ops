@@ -14,7 +14,7 @@ from hydro_ops.config import Settings
 from hydro_ops.forcing.nrt_cycle import activation, configuration, read_json
 from hydro_ops.forcing_status import forcing_coverage
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 DAY_FILE = re.compile(r"^(\d{8})\.LDASIN_DOMAIN1$")
 
 
@@ -49,9 +49,19 @@ def _runs(days: list[date]) -> list[dict[str, Any]]:
 
 
 def production_inventory(
-    root: Path, *, start: date | None = None, end: date | None = None, gap_limit: int = 20
+    root: Path, *, start: date | None = None, end: date | None = None, gap_limit: int = 20,
+    frequency: str = "hourly",
 ) -> dict[str, Any]:
-    """Inventory published daily files using names and metadata, not NetCDF reads."""
+    """Inventory file coverage only; neither completeness nor freshness is certified."""
+    if frequency not in ("hourly", "daily", "monthly"):
+        raise ValueError(f"Unsupported frequency: {frequency}")
+    monthly = frequency == "monthly"
+    pattern = DAY_FILE if frequency == "hourly" else re.compile(
+        rf"^(\d{{{6 if monthly else 8}}})\.LDASIN_DOMAIN1\.{frequency}$"
+    )
+    if monthly:
+        start = start.replace(day=1) if start else None
+        end = end.replace(day=1) if end else None
     paths: dict[date, list[Path]] = {}
     bytes_total = 0
     partial_files = 0
@@ -62,10 +72,15 @@ def production_inventory(
             if path.name.endswith(".part"):
                 partial_files += 1
                 continue
-            match = DAY_FILE.match(path.name)
+            match = pattern.match(path.name)
             if not match:
                 continue
-            day = datetime.strptime(match.group(1), "%Y%m%d").replace(tzinfo=UTC).date()
+            try:
+                day = datetime.strptime(
+                    match.group(1), "%Y%m" if monthly else "%Y%m%d"
+                ).replace(tzinfo=UTC).date()
+            except ValueError:
+                continue
             if (start and day < start) or (end and day > end):
                 continue
             paths.setdefault(day, []).append(path)
@@ -80,8 +95,9 @@ def production_inventory(
         while cursor <= range_end:
             if cursor not in present:
                 missing.append(cursor)
-            cursor += timedelta(days=1)
-    return {
+            cursor = ((cursor.replace(day=28) + timedelta(days=4)).replace(day=1)
+                      if monthly else cursor + timedelta(days=1))
+    result = {
         "root": str(root.resolve()),
         "first_day": _iso(days[0] if days else None),
         "last_day": _iso(days[-1] if days else None),
@@ -96,6 +112,20 @@ def production_inventory(
         "missing_day_examples": [item.isoformat() for item in missing[:gap_limit]],
         "missing_days_truncated": len(missing) > gap_limit,
     }
+    if monthly:
+        # Months are periods, not isolated days or 30-day approximations.
+        for key in list(result):
+            if "day" in key:
+                result[key.replace("days", "months").replace("day", "month")] = result.pop(key)
+        for key in ("first_month", "last_month"):
+            result[key] = result[key][:7] if result[key] else None
+        for key in ("duplicate_months", "missing_month_examples"):
+            result[key] = [value[:7] for value in result[key]]
+        result["audit_window"] = {
+            key: value[:7] if value else None for key, value in result["audit_window"].items()
+        }
+        result.pop("coverage_segments")
+    return result
 
 
 def slurm_inventory(user: str | None = None) -> dict[str, Any]:
@@ -198,6 +228,21 @@ def build_status(
         stream: production_inventory(nwm_root / stream / "hourly", start=start, end=end, gap_limit=gap_limit)
         for stream in ("baseline", "nrt", "retro")
     }
+    summaries = {
+        domain.name: {
+            stream: {
+                frequency: production_inventory(
+                    domain / stream / frequency, start=start, end=end,
+                    gap_limit=gap_limit, frequency=frequency,
+                )
+                for frequency in ("daily", "monthly")
+            }
+            for stream in ("nrt", "retro")
+        }
+        for domain in sorted(settings.output_root.iterdir())
+        if domain.is_dir() and any((domain / stream).is_dir() for stream in ("nrt", "retro"))
+    } if settings.output_root.is_dir() else {}
+    summary_refresh = read_json(settings.project_root / "forcing/status/nrt-summaries/latest.json")
     issues = []
     if not activation(settings.project_root):
         issues.append("required NRT GFS northern fallback is inactive; NRT scheduling blocked")
@@ -209,6 +254,16 @@ def build_status(
     recent = read_json(settings.project_root / "forcing/status/nrt-gfs/latest.json")
     if recent.get("status") == "failed":
         issues.append("recent NRT GFS cycle failed; previous accepted daily files retained")
+    if summary_refresh.get("status") == "failed":
+        issues.append("NRT daily/monthly summary refresh failed; hourly forcing remains independent")
+    for domain, streams in summaries.items():
+        for stream, frequencies in streams.items():
+            for frequency, item in frequencies.items():
+                unit = "months" if frequency == "monthly" else "days"
+                for key in ("partial_files", f"duplicate_{unit}", f"missing_{unit}"):
+                    if item[key]:
+                        count = len(item[key]) if isinstance(item[key], list) else item[key]
+                        issues.append(f"{domain}/{stream}/{frequency}: {count} {key}")
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at_utc": generated.isoformat(),
@@ -216,6 +271,8 @@ def build_status(
         "summary": {"status": "attention" if issues else "ok", "issues": issues},
         "external_sources": external,
         "production_streams": production,
+        "summary_streams": summaries,
+        "nrt_summary_refresh": summary_refresh,
         "slurm": slurm_inventory() if include_slurm else {"available": False, "skipped": True},
         "coordinators": coordinator_inventory(settings.work_root),
         "recent_nrt_gfs": {
@@ -225,7 +282,9 @@ def build_status(
             "latest_cycle": recent,
             "acceptance": read_json(settings.project_root / "forcing/status/nrt-gfs/activation.json"),
         },
-        "scan": {"mode": "metadata", "netcdf_contents_validated": False},
+        "scan": {"mode": "metadata", "netcdf_contents_validated": False,
+                 "summary_freshness_validated": False,
+                 "summary_gap_scope": "explicit audit window or first-to-last existing period; not hourly backlog"},
     }
 
 
@@ -258,7 +317,7 @@ def format_text(report: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "NWM daily production streams",
+            "NWM hourly production streams (calendar-day files)",
             f"{'Stream':<10} {'First':<12} {'Last':<12} {'Days':>8} {'Missing':>9} {'Size':>11}",
             "-" * 68,
         ]
@@ -267,6 +326,21 @@ def format_text(report: dict[str, Any]) -> str:
         lines.append(
             f"{name:<10} {(item['first_day'] or '-'):<12} {(item['last_day'] or '-'):<12} {item['unique_days']:>8,d} {item['missing_days']:>9,d} {_size(item['bytes']):>11}"
         )
+    lines.extend(["", "Daily/monthly forcing summaries (file coverage, not freshness)",
+                  f"{'Domain/stream/resolution':<30} {'First':<12} {'Last':<12} {'Periods':>8} {'Missing':>8} {'Size':>11}"])
+    for domain, streams in report.get("summary_streams", {}).items():
+        for stream, frequencies in streams.items():
+            for frequency, item in frequencies.items():
+                unit = "month" if frequency == "monthly" else "day"
+                label = f"{domain}/{stream}/{frequency}"
+                lines.append(
+                    f"{label:<30} {(item[f'first_{unit}'] or '-'):<12} "
+                    f"{(item[f'last_{unit}'] or '-'):<12} {item[f'unique_{unit}s']:>8,d} "
+                    f"{item[f'missing_{unit}s']:>8,d} {_size(item['bytes']):>11}"
+                )
+    refresh = report.get("nrt_summary_refresh", {})
+    lines.append(f"NRT summary refresh: {refresh.get('status', 'not reported')}; "
+                 f"job={refresh.get('job_id', '-')}")
     slurm = report["slurm"]
     lines.extend(["", "SLURM"])
     if not slurm.get("available"):
