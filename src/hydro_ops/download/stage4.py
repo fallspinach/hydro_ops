@@ -7,7 +7,7 @@ import logging
 import re
 import tarfile
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -74,9 +74,16 @@ class Stage4Downloader:
         pattern = re.compile(rf'href=["\'](st4_conus\.{stamp}[0-9]{{2}}\.[0-9]{{2}}h\.grb2)["\']')
         with self._session() as session:
             response = session.get(remote_dir, timeout=self.timeout)
+            if response.status_code == 404 and day == datetime.now(UTC).date():
+                LOG.warning("Stage-IV realtime %s not yet published (HTTP 404); retry next refresh: %s",
+                            day, remote_dir)
+                return []
             response.raise_for_status()
         names = sorted(set(pattern.findall(response.text)))
         if not names:
+            if day == datetime.now(UTC).date():
+                LOG.warning("Stage-IV realtime %s has no published files yet; retry next refresh", day)
+                return []
             raise RuntimeError(f"No Stage-IV GRIB2 files found for {day} at {remote_dir}")
         local_dir = self.settings.stage4_data_dir / "realtime" / day.strftime("%Y/%m/%d")
         return [Stage4File(urljoin(remote_dir, name), local_dir / name, "grib2") for name in names]
@@ -156,6 +163,8 @@ class Stage4Downloader:
                 )
                 return 0, 0
             items = self.discover_realtime(day)
+            if not items:
+                return 0, 0
             refresh = True
         elif stream == "archive":
             if dry_run:

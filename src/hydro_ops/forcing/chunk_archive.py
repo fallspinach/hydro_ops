@@ -16,7 +16,7 @@ from pathlib import Path
 
 import h5py
 import numpy as np
-from netCDF4 import Dataset
+from netCDF4 import Dataset, default_fillvals
 
 from hydro_ops.forcing.baseline_schema import FIELDS, SPECS, UnknownDiagnostic, canonical_names
 from hydro_ops.forcing.daily_archive import (
@@ -135,6 +135,17 @@ def assemble(paths, indices, destination, day, work, *, expected_hours=24,
                         raise UnsupportedArchive(f'Incompatible filters: {name}')
                     # Metadata differences must not be hidden by raw copying.
                     for key in ('_FillValue', 'scale_factor', 'add_offset', 'units'):
+                        # NetCDF masks its type-default fill even when the
+                        # attribute is absent. Legacy diagnostics can therefore
+                        # share raw chunks with an explicit identical default.
+                        # Compare the output too; never reinterpret a sentinel.
+                        if key == '_FillValue' and name in SPECS and FIELDS <= set(names):
+                            default = default_fillvals.get(src.dtype.str[1:])
+                            if default is not None:
+                                fills = [np.asarray(v.attrs.get(key, default)).reshape(-1)
+                                         for v in (first, src, target)]
+                                if all(np.array_equal(fills[0], v, equal_nan=True) for v in fills[1:]):
+                                    continue
                         # _validate_inputs already checked canonical diagnostic
                         # units, allowing only documented legacy absence. Output
                         # metadata comes from the same normalized variable view.

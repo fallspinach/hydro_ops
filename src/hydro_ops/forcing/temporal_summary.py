@@ -106,6 +106,7 @@ def summarize(
     block_rows=120,
     overwrite=False,
     skip_existing=False,
+    replace_stale=False,
     domain="",
     stream="",
 ):
@@ -155,8 +156,10 @@ def summarize(
             with Dataset(output) as old:
                 if getattr(old, "aggregation_signature", "") == signature:
                     return {"status": "unchanged", "path": str(output)}
-            raise ValueError(f"Stale summary: {output}; regenerate with --overwrite")
-        raise FileExistsError(output)
+            if not replace_stale:
+                raise ValueError(f"Stale summary: {output}; regenerate with --overwrite")
+        else:
+            raise FileExistsError(output)
     with ExitStack() as stack:
         data = [stack.enter_context(Dataset(p)) for p in paths]
         first = data[0]

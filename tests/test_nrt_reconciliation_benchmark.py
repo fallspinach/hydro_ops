@@ -31,6 +31,7 @@ def test_refresh_allows_only_stage4_missing_archives(tmp_path, monkeypatch):
     assert module.main([]) == 0
     assert len(commands) == 5
     assert all(("--allow-missing" in command) == ("stage4" in command) for command in commands)
+    assert all(("--discover-latest" in command) == ("nldas2" in command) for command in commands)
 
 
 def test_comparison_rejects_changed_data(tmp_path):

@@ -34,12 +34,15 @@ def assets(weights, target, remap, quality_weights, six_weights, mask):
             'six': identity(six_weights), 'mask': identity(mask)}
 
 
-def prepare(start: date, days: int, layout, directory: Path, work: Path):
+def prepare(start: date, days: int, layout, directory: Path, work: Path, *, remap_workers=2,
+            end_hour=None):
     if not 1 <= days <= 3:
         raise ValueError('Job-local cache is bounded to three days')
     directory.mkdir(parents=True, exist_ok=False)
     first = datetime.combine(start, datetime.min.time(), UTC)-timedelta(hours=5)
-    times = [first+timedelta(hours=i) for i in range(24*days+6)]
+    if end_hour is not None and (days != 1 or not 0 <= end_hour <= 23):
+        raise ValueError('Partial precipitation cache must cover one day')
+    times = [first+timedelta(hours=i) for i in range(24*days+6 if end_hour is None else end_hour+6)]
     discovered = [discover_precipitation_candidates(v, layout) for v in times]
     candidates, quality = [d[0] for d in discovered], [d[1] for d in discovered]
     products = set().union(*(set(c) for c in candidates))
@@ -54,7 +57,7 @@ def prepare(start: date, days: int, layout, directory: Path, work: Path):
     outputs = process_precipitation_day(times, candidates, quality, weights, layout.target_grid,
         layout.remap_grid, directory/'outputs', work_directory=work,
         quality_weights=layout.mrms_quality_bilinear if any(quality) else None,
-        remap_workers=2, stage4_six_hour_paths=constraints,
+        remap_workers=remap_workers, stage4_six_hour_paths=constraints,
         stage4_six_hour_weights=layout.stage4_conservative, cnrfc_mask_path=layout.cnrfc_nwm_mask)
     if records(times, candidates, quality, constraints) != before or assets(
             weights, layout.target_grid, layout.remap_grid, layout.mrms_quality_bilinear,

@@ -25,12 +25,14 @@ from hydro_ops.forcing.complete_day import produce_complete_day, utc_hours
 from hydro_ops.forcing.daily_archive import create_daily_archive
 from hydro_ops.forcing.gfs_publication import _atomic_json, publish_gfs_day
 from hydro_ops.forcing.native_donor import FIELDS, NativeDonorRepair
+from hydro_ops.forcing.nrt_freshness import publication_order
 from hydro_ops.forcing.operational_strategy import latency
 from hydro_ops.forcing.operations import (
     OperationalLayout,
     discover_precipitation_candidates,
     discover_stage4_six_hour,
 )
+from hydro_ops.forcing.precipitation_cache import prepare as prepare_precipitation
 from hydro_ops.forcing.source_selection import select_hourly_source
 from hydro_ops.forcing.window_cache import WindowCache
 
@@ -155,11 +157,14 @@ def source_runs(selections):
             first = index
 
 
-def baseline_plan(day, layout, config):
-    selections = [select_hourly_source(t, layout.nldas2_root, layout.hrrr_root) for t in utc_hours(day)]
+def baseline_plan(day, layout, config, *, end_hour=23, latest=False):
+    if not 0 <= end_hour <= 23:
+        raise ValueError("Invalid end hour")
+    selections = [select_hourly_source(t, layout.nldas2_root, layout.hrrr_root)
+                  for t in utc_hours(day)[:end_hour + 1]]
     paths = {s.path for s in selections}
     start = utc_hours(day)[0] - timedelta(hours=5)
-    for index in range(30):
+    for index in range(end_hour + 6 if latest else 30):
         candidates, quality = discover_precipitation_candidates(start + timedelta(hours=index), layout)
         paths.update(candidates.values())
         if quality:
@@ -170,6 +175,8 @@ def baseline_plan(day, layout, config):
     record = {"policy": POLICY, "day": str(day), "configuration": baseline_configuration(config),
               "hourly_primary_sources": [s.product for s in selections],
               "files": [identity(p) for p in sorted(paths)]}
+    if latest:
+        record["latest_hour_policy"] = {"end_hour": end_hour, "future_precipitation": False}
     return selections, record
 
 
@@ -258,9 +265,9 @@ class RecentNrt:
                       self.layout.mrms_quality_bilinear, self.layout.stage4_conservative,
                       self.layout.cnrfc_nwm_mask)]
 
-    def baseline_day(self, day):
+    def baseline_day(self, day, *, end_hour=23, latest=False):
         started = time.monotonic()
-        selections, inputs = baseline_plan(day, self.layout, self.config)
+        selections, inputs = baseline_plan(day, self.layout, self.config, end_hour=end_hour, latest=latest)
         inputs["assets"] = self.assets
         downloader = GfsDownloader(self.cache, self.work)
         bundles = []
@@ -278,17 +285,28 @@ class RecentNrt:
         if up_to_date(destination, receipt, expected):
             return destination, receipt
         old_modes = receipt.get("hourly_primary_sources", [])
-        if len(old_modes) == 24 and any(old == "nldas2" and new.product != "nldas2"
-                                       for old, new in zip(old_modes, selections, strict=True)):
+        if len(old_modes) > len(selections):
+            raise RuntimeError("Refusing to truncate an existing baseline")
+        if any(old == "nldas2" and new.product != "nldas2"
+               for old, new in zip(old_modes, selections)):
             raise RuntimeError("Refusing to downgrade a retained NLDAS-2 baseline during a source outage")
         with tempfile.TemporaryDirectory(prefix=f"nrt-baseline-{day:%Y%m%d}-", dir=self.work) as tmp:
             tmp = Path(tmp)
             hourly = tmp / "hourly"
             workers = baseline_workers(self.config)
             started = time.monotonic()
-            for first, last in source_runs(selections):
+            runs = list(source_runs(selections))
+            precipitation_options = {}
+            if len(runs) > 1:
+                cache = tmp / "mixed-precipitation-cache"
+                prepare_precipitation(day, 1, self.layout, cache, tmp,
+                                      remap_workers=workers["precipitation_remap_workers"],
+                                      end_hour=end_hour if latest else None)
+                precipitation_options["precipitation_cache"] = cache
+            for first, last in runs:
                 produce_complete_day(day, self.layout, hourly, work_directory=tmp,
-                    start_hour=first, end_hour=last, **workers)
+                    start_hour=first, end_hour=last, **workers, **precipitation_options,
+                    precipitation_end_hour=end_hour if latest else None)
             timings.append({"stage": "complete_day", "seconds": time.monotonic() - started, **workers})
             paths = [hourly / s.valid_time.strftime("%Y/%m/%d/%Y%m%d%H.LDASIN_DOMAIN1") for s in selections]
             started = time.monotonic()
@@ -304,25 +322,27 @@ class RecentNrt:
             timings.append({"stage": "native_donor_repair", "seconds": time.monotonic() - started, "workers": repair_workers})
             assembled, corrected = tmp / "assembled.nc", tmp / "corrected.nc"
             started = time.monotonic()
-            create_daily_archive(paths, assembled, day, work_directory=tmp, **self.archive_options)
+            create_daily_archive(paths, assembled, day, work_directory=tmp,
+                                 expected_hours=end_hour + 1, **self.archive_options)
             timings.append({"stage": "daily_archive", "seconds": time.monotonic() - started})
             archive_record = json.loads(assembled.with_name(assembled.name + ".manifest.json").read_text())
             started = time.monotonic()
             report = publish_gfs_day(assembled, corrected, self.envelope, self.geometry,
                 self.conservative, self.cache, tmp, nldas_available=False, as_of=self.as_of,
                 allow_mixed=True, require_native_repair=True,
-                sparse_writes=sparse_writes)
+                sparse_writes=sparse_writes, expected_hours=end_hour + 1)
             timings.append({"stage": "gfs_publication_and_audit", "seconds": time.monotonic() - started,
                             "sparse_writes": sparse_writes})
             if report["status"] != "passed":
                 raise ValueError(f"NRT baseline not accepted: {report}")
-            _, current = baseline_plan(day, self.layout, self.config)
+            _, current = baseline_plan(day, self.layout, self.config, end_hour=end_hour, latest=latest)
             current["assets"] = self.assets
             current["gfs_bundles"] = bundles
             if fingerprint(current) != expected:
                 raise ValueError("Native inputs changed during build; retain previous publication")
             with Dataset(corrected, "r+") as data:
                 data.forcing_stream = "baseline"
+                data.calendar_day_complete = "true" if end_hour == 23 else "false"
                 data.archive_granularity = "utc_calendar_day"
                 data.nrt_production_policy = POLICY
                 data.gfs_publication_status = "operational_nrt_baseline"
@@ -330,6 +350,8 @@ class RecentNrt:
             checksum = transfer(corrected, destination)
             timings.append({"stage": "baseline_transfer", "seconds": time.monotonic() - started})
         receipt = {"status": "passed", "day": str(day), "input_fingerprint": expected,
+                   "complete_day": end_hour == 23,
+                   "latest_model_ready_hour": utc_hours(day)[end_hour].isoformat(),
                    "baseline_writer_profile": self.config.get("baseline_writer_profile", "reference"),
                    "baseline_archive_writer": archive_record.get("archive_writer", "value_based"),
                    "baseline_archive_timing": archive_record.get("timing"),
@@ -342,6 +364,7 @@ class RecentNrt:
         _atomic_json(receipt_path, receipt)
         _atomic_json(destination.with_name(destination.name + ".manifest.json"), {
             "daily_file": str(destination), "verified": True, "forcing_stream": "baseline",
+            "complete_day": end_hour == 23, "hourly_source_count": end_hour + 1,
             "verification": POLICY, "nrt_receipt": str(receipt_path), "source_files": inputs["files"]})
         return destination, receipt
 
@@ -350,11 +373,14 @@ class RecentNrt:
         return [root / variable / f"{d:%Y/%m}/prism_{variable}_us_25m_{d:%Y%m%d}.nc"
                 for d in (day, day + timedelta(days=1)) for variable in ("ppt", "tmin", "tmax")]
 
-    def produce_day(self, day):
-        prism = self.prism_paths(day)
-        constrained = all(p.is_file() for p in prism)
+    def produce_day(self, day, *, end_hour=23, latest=False):
+        if end_hour != 23 and not latest:
+            raise ValueError("Partial publication requires latest-hour mode")
+        prism = [] if latest else self.prism_paths(day)
+        constrained = bool(prism) and all(p.is_file() for p in prism)
         required = [day + timedelta(days=i) for i in (-1, 0, 1)] if constrained else [day]
-        baselines = [self.baseline_day(d) for d in required]
+        baselines = [self.baseline_day(d, end_hour=end_hour, latest=True) if latest
+                     else self.baseline_day(d) for d in required]
         baseline_identities = [identity(p) for p, _ in baselines]
         inputs = {"baseline_fingerprints": [r["input_fingerprint"] for _, r in baselines],
                   "baseline_sha256": [r["sha256"] for _, r in baselines],
@@ -364,6 +390,8 @@ class RecentNrt:
         destination = day_path(self.output, day)
         receipt_path = destination.with_name(destination.name + ".nrt-receipt.json")
         old = read_json(receipt_path)
+        if len(old.get("hourly_primary_sources", [])) > end_hour + 1:
+            raise RuntimeError("Refusing to truncate published NRT")
         if old.get("prism_constrained") and not constrained:
             raise RuntimeError("Retain existing PRISM-constrained NRT while its inputs are missing")
         if up_to_date(destination, old, expected):
@@ -444,8 +472,9 @@ class RecentNrt:
                 candidate = tmp / "unconstrained.nc"
                 shutil.copyfile(baselines[0][0], candidate)
             started = time.monotonic()
-            self.audit_final(candidate, day, constrained)
-            timings.append({"stage": "audit_final", "seconds": time.monotonic() - started})
+            writes = self.audit_final(candidate, day, constrained, expected_hours=end_hour + 1)
+            timings.append({"stage": "audit_final", "seconds": time.monotonic() - started,
+                            "record_writes": writes})
             calendar_record = read_json(candidate.with_name(candidate.name + ".manifest.json"))
             if [identity(p) for p, _ in baselines] != baseline_identities:
                 raise ValueError("Selected baselines changed; retain previous publication")
@@ -455,6 +484,8 @@ class RecentNrt:
             checksum = transfer(candidate, destination)
             timings.append({"stage": "final_transfer", "seconds": time.monotonic() - started})
         receipt = {"status": "passed", "day": str(day), "input_fingerprint": expected,
+                   "complete_day": end_hour == 23,
+                   "latest_model_ready_hour": utc_hours(day)[end_hour].isoformat(),
                    "inputs": inputs, "published_identity": identity(destination), "sha256": checksum,
                    "calendar_archive_writer": calendar_record.get("archive_writer", "value_based") if constrained else None,
                    "prism_window_archive_writers": window_writers,
@@ -469,35 +500,46 @@ class RecentNrt:
         return {"day": str(day), "status": "published", "gfs_hours": receipt["gfs_hours"],
                 "prism_constrained": constrained}
 
-    def audit_final(self, path, day, constrained):
+    def audit_final(self, path, day, constrained, *, expected_hours=24):
+        writes = 0
         with Dataset(path, "r+") as data:
             times = num2date(data["time"][:], data["time"].units, only_use_cftime_datetimes=False)
-            if [(t.date(), t.hour, t.minute, t.second) for t in times] != [(day, h, 0, 0) for h in range(24)]:
+            if not 1 <= expected_hours <= 24 or [(t.date(), t.hour, t.minute, t.second) for t in times] != [(day, h, 0, 0) for h in range(expected_hours)]:
                 raise ValueError("NRT output is not 00–23 UTC")
             if not getattr(data, "cnrfc_stage4_policy", ""):
                 raise ValueError("NRT output lost CNRFC exclusion provenance")
             if constrained and str(getattr(data, "prism_reconciliation_accepted", "false")).lower() != "true":
                 raise ValueError("NRT output lacks accepted PRISM reconciliation")
-            for index in range(24):
+            for index in range(expected_hours):
                 for name in FIELDS:
-                    values = np.ma.filled(data[name][index], np.nan)
+                    variable = data[name]
+                    values = np.ma.filled(variable[index], np.nan)
                     if not np.isfinite(values[self.repair.active]).all():
                         raise ValueError(f"Final NRT active holes: {index} {name}")
                     values[~self.repair.keep] = np.nan
-                    data[name][index] = np.where(np.isfinite(values), values, data[name]._FillValue)
+                    desired = np.where(np.isfinite(values), values, variable._FillValue)
+                    variable.set_auto_mask(False)
+                    actual = variable[index]
+                    variable.set_auto_mask(True)
+                    if not np.array_equal(actual, desired, equal_nan=True):
+                        variable[index] = desired
+                        writes += 1
             data.forcing_stream = "nrt"
             data.archive_granularity = "utc_calendar_day"
+            data.calendar_day_complete = "true" if expected_hours == 24 else "false"
+            data.hourly_source_count = expected_hours
             data.nrt_production_policy = POLICY
             data.prism_constraint_status = "applied" if constrained else "awaiting_complete_daily_inputs"
             if not constrained:
                 data.prism_reconciliation_accepted = "false"
             data.forcing_domain_policy = "nrt_native_gfs_static_envelope_v1"
         with Dataset(path) as data:
-            for index in range(24):
+            for index in range(expected_hours):
                 for name in FIELDS:
                     values = np.ma.filled(data[name][index], np.nan)
                     if not np.isfinite(values[self.repair.active]).all() or np.isfinite(values[~self.repair.keep]).any():
                         raise ValueError(f"NRT readback failed: {index} {name}")
+        return writes
 
 
 def run_cycle(root, work, start, end, as_of, *, output_root=None, baseline_root=None,
@@ -521,7 +563,14 @@ def run_cycle(root, work, start, end, as_of, *, output_root=None, baseline_root=
             return report
         backlog = replacement_backlog(engine.output, engine.layout, start)
         report["replacement_backlog_days"] = [str(d) for d in backlog]
-        days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+        accepted = []
+        for index in range((end - start).days + 1):
+            day = start + timedelta(days=index)
+            path = day_path(engine.output, day)
+            record = read_json(path.with_name(path.name + ".nrt-receipt.json"))
+            if record.get("status") == "passed" and record.get("published_identity") == identity(path):
+                accepted.append(day)
+        days = publication_order(start, end, accepted)
         days += backlog[:engine.config.get("maximum_old_replacement_days", 2)]
         for day in days:
             day_started = time.monotonic()

@@ -111,6 +111,25 @@ def test_chunk_assembly_matches_reference(tmp_path):
         assemble(paths, indices, actual, day, tmp_path/'work', expected_hours=2)
 
 
+def test_diagnostic_nondefault_fill_mismatch_still_rejected(tmp_path):
+    paths = []
+    for i, fill in enumerate((255, 254)):
+        folder = tmp_path / str(i)
+        folder.mkdir()
+        source, _ = fixture_files(folder, chunksizes=(1, 2, 2))
+        with Dataset(source, 'a') as ds:
+            ds['time'].units = 'hours since 2000-01-01'
+            ds['time'][:] = [i * 2, i * 2 + 1]
+            ds.createVariable('gfs_fallback_qc', 'u1', ('time', 'y', 'x'),
+                              fill_value=fill, zlib=True, complevel=2,
+                              chunksizes=(1, 2, 2))[:] = 0
+        paths.append(source)
+    with pytest.raises(AssertionError):
+        assemble(paths, [0, 0], tmp_path / 'invalid.nc', date(2000, 1, 1),
+                 tmp_path / 'work', expected_hours=2)
+    assert not (tmp_path / 'invalid.nc').exists()
+
+
 @pytest.mark.parametrize('time_chunk', [1, 2])
 def test_opt_in_overrides_and_fallback(tmp_path, time_chunk):
     source, _ = fixture_files(tmp_path, chunksizes=(time_chunk, 2, 2))

@@ -7,7 +7,9 @@ import argparse
 import fcntl
 import getpass
 import json
+import os
 import re
+import shlex
 import subprocess
 import sys
 from datetime import UTC, date, datetime, timedelta
@@ -44,6 +46,8 @@ def main() -> int:
         help="use the existing source archive (for explicit historical retro windows)",
     )
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--revisions-only", action="store_true",
+                        help="Internal daily continuation after latest-hour publication")
     args = parser.parse_args()
     if bool(args.start) != bool(args.end):
         parser.error("--start and --end must be supplied together")
@@ -108,7 +112,47 @@ def main() -> int:
                 recent_start = max(start, end - timedelta(days=config["lookback_days"] - 1))
                 plan["recent_nrt_start"] = recent_start.isoformat()
                 plan["recent_nrt_end"] = end.isoformat()
+        if stream == 'nrt' and not args.revisions_only:
+            plan['publication_ceiling'] = 'latest_available_contiguous_hour_at_execution'
+            plan['daily_revision_continuation'] = args.cycle == 'daily'
+            plan['window_dates_scope'] = 'revision workflow only; not latest-hour publication cutoff'
         print(json.dumps(plan, indent=2))
+        if stream == "nrt" and not args.revisions_only:
+            # Latest-hour publication has no dependency on optional-source refreshes.
+            if any('|hrrr_download' in line for line in active):
+                print('SKIP active HRRR acquisition; avoid concurrent canonical writers')
+                return 0
+            worker_partition = os.environ.get('HYDRO_OPS_NRT_PARTITION', 'compute-128')
+            plan['latest_worker_partition'] = worker_partition
+            command = ['sbatch', '--parsable', f'--partition={worker_partition}',
+                       '--nodes=1', '--ntasks=1', '--cpus-per-task=128', '--tmp=240000',
+                       '--time=06:00:00', f'--job-name=nwm-cycle-{args.cycle}-latest-hour',
+                       f'--output={settings.log_root}/nrt-latest-extension-%j.out',
+                       '--wrap', 'source bin/project_environment.sh; exec ' +
+                       shlex.join([sys.executable, 'bin/run_latest_nrt.py'])]
+            if settings.slurm_account:
+                command.insert(1, f'--account={settings.slurm_account}')
+            print(shlex.join(command))
+            if args.dry_run:
+                return 0
+            job = subprocess.check_output(command, cwd=settings.project_root, text=True).strip().split(';')[0]
+            plan.update(status='latest_extension_submitted', latest_extension_job_id=job)
+            manifest = settings.work_root / f'nwm-latest-cycle-{args.cycle}-{job}.json'
+            manifest.write_text(json.dumps(plan, indent=2)+'\n')
+            if args.cycle == 'daily':
+                follow = ['sbatch', '--parsable', f'--partition={settings.slurm_partition}',
+                          '--nodes=1', '--ntasks=1', '--cpus-per-task=1', '--time=00:30:00',
+                          f'--dependency=afterok:{job}', '--job-name=nrt-daily-revision-launch',
+                          f'--output={settings.log_root}/nrt-daily-revision-launch-%j.out',
+                          '--wrap', 'source bin/project_environment.sh; exec ' + shlex.join([
+                              sys.executable, 'bin/update_nwm_forcing.py', '--cycle', 'daily', '--revisions-only'])]
+                if settings.slurm_account:
+                    follow.insert(1, f'--account={settings.slurm_account}')
+                plan['revision_launcher_job_id'] = subprocess.check_output(
+                    follow, cwd=settings.project_root, text=True).strip().split(';')[0]
+            manifest.write_text(json.dumps(plan, indent=2)+'\n')
+            print(json.dumps(plan, indent=2))
+            return 0
         if args.dry_run:
             return 0
         refresh_output = ""

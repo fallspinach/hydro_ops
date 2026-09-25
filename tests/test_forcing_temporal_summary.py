@@ -116,6 +116,8 @@ def test_repeat_and_stale_sources(tmp_path):
         d["T2D"][1, 0, 0] += 1
     with pytest.raises(ValueError, match="Stale summary"):
         run(tmp_path, out, start, stop, skip_existing=True)
+    assert run(tmp_path, out, start, stop, skip_existing=True, replace_stale=True)["status"] == "published"
+    assert run(tmp_path, out, start, stop, skip_existing=True, replace_stale=True)["status"] == "unchanged"
     assert run(tmp_path, out, start, stop, overwrite=True)["status"] == "published"
 
 

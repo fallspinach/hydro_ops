@@ -12,6 +12,19 @@ backfill = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(backfill)
 
 
+def test_nrt_receipt_rejects_stale_identity(tmp_path):
+    from hydro_ops.forcing.nrt_cycle import identity
+    path = tmp_path / 'forcing.nc'
+    path.write_bytes(b'fixture')
+    receipt = path.with_name(path.name + '.nrt-receipt.json')
+    receipt.write_text(json.dumps({'status': 'passed', 'sha256': 'test',
+                                   'published_identity': identity(path)}))
+    assert backfill.audited(path, 'nrt') == identity(path)
+    path.write_bytes(b'changed content')
+    with pytest.raises(ValueError, match='stale'):
+        backfill.audited(path, 'nrt')
+
+
 def test_parallel_year_locks_exclude_overlaps_and_legacy_controller(tmp_path):
     a, b = date(1980, 1, 1), date(1981, 1, 1)
     with backfill.publication_locks(tmp_path, a, a, True):
@@ -66,6 +79,26 @@ def test_audit_identity_and_acceptance_required(tmp_path):
     sidecar = source.with_name(source.name + ".manifest.json")
     sidecar.write_text(json.dumps(manifest))
     assert backfill.audited(source) == identity
+    # Accept only an explicit, identity/hash-linked verified scratch transfer.
+    staged = {**identity, "inode": identity["inode"] + 1}
+    original_audit = json.loads(audit.read_text())
+    linked_audit = {**original_audit, "published_identity": staged, "mask_sha256": "mask"}
+    manifest["static_envelope"].update(staged_identity=staged, mask_sha256="mask",
+        audit_scope="staged-candidate validation recorded in mask audit; permanent transfer checksum verified")
+    sidecar.write_text(json.dumps(manifest))
+    audit.write_text(json.dumps(linked_audit))
+    assert backfill.audited(source) == identity
+    for change in [{"published_identity": {**staged, "inode": 0}},
+                   {"candidate_sha256": "wrong"}, {"mask_sha256": "wrong"}]:
+        audit.write_text(json.dumps({**linked_audit, **change}))
+        with pytest.raises(ValueError, match="audit"):
+            backfill.audited(source)
+    audit.write_text(json.dumps(linked_audit))
+    manifest["static_envelope"]["audit_scope"] = "unverified copy"
+    sidecar.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="audit"):
+        backfill.audited(source)
+    audit.write_text(json.dumps(original_audit))
     del manifest["verified"]
     sidecar.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="audit"):

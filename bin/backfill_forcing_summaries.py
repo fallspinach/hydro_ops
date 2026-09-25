@@ -1,4 +1,4 @@
-"""Bounded parallel daily summaries followed by monthly reuse; audited retro only."""
+"""Bounded parallel daily/monthly summaries from accepted retro or NRT files."""
 
 import argparse
 import fcntl
@@ -14,13 +14,42 @@ from hydro_ops.forcing.model_interval import load_forcing_reducers
 from hydro_ops.forcing.temporal_summary import input_path, periods, summarize, summary_path
 
 
-def audited(path):
+def audited(path, stream="retro"):
     """Match an accepted historical static-envelope audit to the current inode."""
+    if stream == "nrt":
+        from hydro_ops.forcing.nrt_cycle import identity
+        receipt = path.with_name(path.name + ".nrt-receipt.json")
+        if not receipt.exists():
+            # Earlier NRT publishers use the same strict static-envelope chain
+            # as retro. Never fall back from an existing but failed/stale receipt.
+            return audited(path, "retro")
+        record = json.loads(receipt.read_text())
+        current = identity(path)
+        if (record.get("status") != "passed" or record.get("published_identity") != current
+                or not record.get("sha256")):
+            raise ValueError(f"Missing/stale/unaccepted NRT source audit: {path}")
+        return current
     manifest = json.loads(path.with_name(path.name + ".manifest.json").read_text())
     envelope = manifest["static_envelope"]
     audit = json.loads(Path(envelope["audit"]).read_text())
     stat = path.stat()
     identity = {"inode": stat.st_ino, "bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+    # Historical post-2020 publishers kept the full audit bound to scratch,
+    # then recorded a checksum-verified transfer to the permanent inode.
+    # Follow that explicit chain; a generic identity mismatch is still rejected.
+    staged = envelope.get("staged_identity")
+    staged_transfer = (
+        isinstance(staged, dict)
+        and set(staged) == {"inode", "bytes", "mtime_ns"}
+        and staged.get("bytes") == identity["bytes"]
+        and audit.get("published_identity") == staged
+        and envelope.get("audit_scope") in {
+            "full staged-candidate content audit; permanent transfer checksum verified",
+            "staged-candidate validation recorded in mask audit; permanent transfer checksum verified",
+        }
+        and bool(envelope.get("mask_sha256"))
+        and audit.get("mask_sha256") == envelope["mask_sha256"]
+    )
     # Early monthly-constrained publications predate the archive verified flag.
     # Accept their full, identity-matched field audit, never an explicit failure.
     fields = audit.get("fields", {})
@@ -37,7 +66,7 @@ def audited(path):
         (manifest.get("verified") is True or legacy_verified)
         and envelope.get("policy") == "nldas2_seven_met_static_envelope_v4"
         and envelope.get("published_identity") == identity
-        and audit.get("published_identity") == identity
+        and (audit.get("published_identity") == identity or staged_transfer)
         and audit.get("status") == "published"
         and envelope.get("active_values_unchanged") is True
         and envelope.get("retained_values_unchanged") is True
@@ -50,10 +79,11 @@ def audited(path):
 
 
 def reduce_day(task):
-    root, output, day, reducers, names, units = task
+    root, output, day, reducers, names, units, *options = task
+    stream = options[0] if options else "retro"
     stop = day + timedelta(days=1)
     inputs = [input_path(root, d) for d in (day, stop)]
-    identities = [audited(p) for p in inputs]
+    identities = [audited(p, stream) for p in inputs]
     started = time.monotonic()
     result = summarize(
         root,
@@ -64,10 +94,11 @@ def reduce_day(task):
         names,
         units,
         skip_existing=True,
+        replace_stale=stream == "nrt",
         domain="conus",
-        stream="retro",
+        stream=stream,
     )
-    if [audited(p) for p in inputs] != identities:
+    if [audited(p, stream) for p in inputs] != identities:
         raise ValueError(f"Source changed during summary: {day}")
     return {**result, "day": str(day), "seconds": time.monotonic() - started}
 
@@ -101,6 +132,9 @@ def main():
     parser.add_argument("--start", type=date.fromisoformat, required=True)
     parser.add_argument("--end", type=date.fromisoformat, required=True)
     parser.add_argument("--workers", type=int, choices=(1, 2, 4, 8), default=4)
+    parser.add_argument("--stream", choices=("retro", "nrt"), default="retro")
+    parser.add_argument("--complete-months-only", action="store_true",
+                        help="Allow partial-month date ranges; publish only fully included months")
     parser.add_argument("--audit-only", action="store_true")
     parser.add_argument("--parallel-years", action="store_true",
                         help="Shared root lock plus exclusive year locks for disjoint campaigns")
@@ -108,10 +142,18 @@ def main():
                         help="Produce daily records from start, but omit its incomplete monthly summary")
     args = parser.parse_args()
     # Whole-month requests ensure monthly products are never silently partial.
-    months = requested_months(args.start, args.end, args.skip_incomplete_first_month)
+    if args.complete_months_only:
+        from hydro_ops.forcing.temporal_summary import next_month
+        first = args.start if args.start.day == 1 else next_month(args.start)
+        months = []
+        while next_month(first) <= args.end + timedelta(days=1):
+            months.append((first, next_month(first)))
+            first = next_month(first)
+    else:
+        months = requested_months(args.start, args.end, args.skip_incomplete_first_month)
     days = [d for d, _ in periods(args.start, args.end, "daily")]
     for d in [*days, args.end + timedelta(days=1)]:
-        audited(input_path(args.input_root, d))
+        audited(input_path(args.input_root, d), args.stream)
     print(
         json.dumps(
             {
@@ -135,7 +177,7 @@ def main():
         ) as pool:
             for result in pool.map(
                 reduce_day,
-                [(args.input_root, args.output_root, d, reducers, names, units) for d in days],
+                [(args.input_root, args.output_root, d, reducers, names, units, args.stream) for d in days],
             ):
                 print(json.dumps(result), flush=True)
         daily_seconds = time.monotonic() - started
@@ -150,8 +192,9 @@ def main():
                 units,
                 from_daily=True,
                 skip_existing=True,
+                replace_stale=args.stream == "nrt",
                 domain="conus",
-                stream="retro",
+                stream=args.stream,
             )
             print(json.dumps(result), flush=True)
         print(

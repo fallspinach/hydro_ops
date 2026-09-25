@@ -55,7 +55,8 @@ def test_mixed_legacy_modern(tmp_path, chunk_copy, modern_first):
 
 @pytest.mark.parametrize("chunk_copy", [False, True])
 @pytest.mark.parametrize("units_first", [False, True])
-def test_present_diagnostics_missing_attributes_and_window_reassembly(tmp_path, chunk_copy, units_first):
+@pytest.mark.parametrize("legacy_fill", [False, True])
+def test_present_diagnostics_missing_attributes_and_window_reassembly(tmp_path, chunk_copy, units_first, legacy_fill):
     paths = [tmp_path / f"source-{i}.nc" for i in range(2)]
     for i, path in enumerate(paths):
         with Dataset(path, "w") as ds:
@@ -75,6 +76,10 @@ def test_present_diagnostics_missing_attributes_and_window_reassembly(tmp_path, 
                 if name == "gfs_forecast_reference_time" or (i == 0) == units_first:
                     v.setncatts({k: schema.getncattr(k) for k in schema.ncattrs() if k != "_FillValue"})
                 v[:] = i
+                if name == "gfs_fallback_qc":
+                    v[0, 0, 0] = 255
+                if legacy_fill and (i == 0) == units_first and name != "gfs_forecast_reference_time":
+                    v.delncattr("_FillValue")
     before = [p.read_bytes() for p in paths]
     direct = tmp_path / "direct.nc"
     create_daily_archive(paths, direct, date(2003, 1, 1), expected_hours=2, chunk_copy=chunk_copy)
@@ -88,6 +93,8 @@ def test_present_diagnostics_missing_attributes_and_window_reassembly(tmp_path, 
     result = tmp_path / "calendar.nc"
     create_daily_archive(windows, result, date(2003, 1, 1), expected_hours=2, chunk_copy=chunk_copy)
     with Dataset(result) as ds:
+        assert np.ma.getmaskarray(ds["gfs_fallback_qc"][:, 0, 0]).all()
+        np.testing.assert_array_equal(ds["gfs_fallback_qc"][:, 1, 1], [0, 1])
         assert ds["gfs_forecast_lead_hours"].units == "hours"
         assert ds["native_donor_distance_km"].units == "km"
         np.testing.assert_array_equal(ds["gfs_forecast_lead_hours"][:], [0, 1])

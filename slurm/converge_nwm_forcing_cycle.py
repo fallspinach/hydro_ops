@@ -181,8 +181,9 @@ def main() -> int:
     if state["stream"] == "nrt" and state.get("recent_nrt_gfs_active"):
         # Run the recent source-aware tail before legacy older-window convergence.
         # This serializes their boundary baseline access; retro jobs never enter here.
-        command = ["sbatch", f"--partition={state['partition']}", "--nodes=1", "--ntasks=1",
-                   "--cpus-per-task=64", "--tmp=240000", "--time=48:00:00",
+        worker_partition = os.environ.get('HYDRO_OPS_NRT_PARTITION', 'compute-128')
+        command = ["sbatch", f"--partition={worker_partition}", "--nodes=1", "--ntasks=1",
+                   "--cpus-per-task=128", "--tmp=240000", "--time=48:00:00",
                    f"--job-name=nwm-cycle-{state['cycle']}-recent-nrt-gfs",
                    f"--output={project}/forcing/logs/recent-nrt-gfs-%j.out",
                    (f"--export=ALL,HYDRO_OPS_PROJECT_ROOT={project},"
@@ -299,6 +300,21 @@ def main() -> int:
         if state["stream"] == "retro" and state.get("cleanup_mode") == "deferred"
         else "complete"
     )
+    if state['stream'] == 'nrt' and state['cycle'] == 'daily':
+        import shlex
+        command = ['sbatch', f"--partition={state['partition']}", '--nodes=1', '--ntasks=1',
+                   '--cpus-per-task=16', '--time=12:00:00', '--job-name=nrt-daily-monthly-summary-refresh',
+                   f'--output={project}/forcing/logs/nrt-summary-refresh-%j.out',
+                   '--wrap', 'source bin/project_environment.sh; exec '+shlex.join([
+                       python, str(project / 'bin/refresh_nrt_summaries.py')])]
+        if state.get('account'):
+            command.insert(1, f"--account={state['account']}")
+        submitted = submit_with_quota_retry(command, project)
+        state['summary_refresh_job_id'] = submitted_job_id(submitted)
+        if submitted.returncode or not state['summary_refresh_job_id']:
+            state['status'] = 'hourly_complete_summary_submission_failed'
+            write_state(manifest, state)
+            return 2
     write_state(manifest, state)
     return 0
 

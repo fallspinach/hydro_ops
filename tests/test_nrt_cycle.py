@@ -191,6 +191,8 @@ def test_worker_adoption_preserves_historical_baseline_fingerprint():
     assert nrt_cycle.baseline_configuration(adopted) == old
     adopted.update(native_repair_workers=4, gfs_sparse_writes=True)
     assert nrt_cycle.baseline_configuration(adopted) == old
+    adopted.update(assembly_workers=16, precipitation_remap_workers=8, native_repair_workers=8)
+    assert nrt_cycle.baseline_configuration(adopted) == old
 
 
 def test_adopted_repair_options_and_reference_override(monkeypatch):

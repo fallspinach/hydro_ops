@@ -248,6 +248,7 @@ def produce_complete_day(
     precipitation_remap_workers: int = 1,
     start_hour: int = 0,
     end_hour: int = 23,
+    precipitation_end_hour: int | None = None,
     force: bool = False,
     precipitation_cache: Path | None = None,
 ) -> list[dict]:
@@ -287,7 +288,8 @@ def produce_complete_day(
     if valid_times[-1] >= cnrfc_policy_start:
         day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
         precipitation_times = [
-            day_start - timedelta(hours=5) + timedelta(hours=index) for index in range(30)
+            day_start - timedelta(hours=5) + timedelta(hours=index)
+            for index in range(30 if precipitation_end_hour is None else precipitation_end_hour + 6)
         ]
     candidates_and_quality = [
         discover_precipitation_candidates(valid, layout) for valid in precipitation_times

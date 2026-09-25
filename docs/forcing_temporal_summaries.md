@@ -235,4 +235,94 @@ warmth remains a caveat. The accepted backfill conservatively retains four worke
 At the subsequent commit review, years 1981–1984 were completed, 1985 was running,
 and suffix-rename job 4590540 remained pending. Consult SLURM and acceptance
 records for current completion, not this dated snapshot. Internal hourly layout
-migration remains unexecuted.
+migration was still unexecuted at that review; the September 23 cutover is now
+complete (see [cutover acceptance](forcing_hourly_cutover_checklist.md)).
+
+### Backfill from 1991 onward (September 23)
+
+`slurm/backfill_forcing_summaries_1991_2026.sh` covers 1991–2025 and January–February
+2026. Array index `i` maps to year `1991+i`; index 35 stops at February 28.
+March 1 hourly data supply the boundary record needed for February 28's daily
+summary. Partial March is deferred rather than publishing an incomplete month.
+The targets are **12,843 daily files and 422 monthly files**.
+
+Submitted array **4628364** after all **12,844 input-day audit checks** (including
+the final boundary day) passed. Logs are
+`forcing/logs/summary-1991-2026-4628364_<index>.out`. Submission is not a completion
+claim; per-task `status=completed` records confirm daily and monthly completion.
+
+The array requests eight CPUs per year task, four reduction processes per task,
+and at most sixteen concurrent tasks: **128 allocated CPUs / 64 reduction
+workers**, plus the separate existing NWM allocation. The established two-CPU
+allocation per worker provides memory headroom under this cluster's CPU-based
+memory allocation. Each task has a 48-hour limit and holds a disjoint year lock.
+Its complete input range, including the following boundary day, must pass the
+existing identity-matched source audits before any summaries are written.
+
+Historical post-2020 publications can retain a scratch-file identity in the
+content audit. The checker also accepts their explicit checksum-verified transfer
+chain: the manifest must match the current permanent file identity, the audit
+must match the recorded staged identity, and candidate and mask hashes must
+agree. Unlinked identity mismatches and unverified transfers remain rejected.
+This compatibility handling does not alter any hourly source data.
+
+Input: `forcing/outputs/conus/retro/hourly/YYYY/MM/`.
+Outputs remain siblings: `retro/daily/YYYY/MM/YYYYMMDD.LDASIN_DOMAIN1.daily`
+and `retro/monthly/YYYY/YYYYMM.LDASIN_DOMAIN1.monthly`.
+Hourly files are read-only. Matching existing summaries are reused; stale ones
+cause a failure instead of being overwritten. Monthly summaries are calculated
+from the completed daily summaries using the established reducer definitions.
+# NRT stream support (September 24, 2026)
+
+The existing annual backfill arrays target **retro only**. The shared backfill
+command now also accepts `--stream nrt --complete-months-only` and separate NRT
+input/output roots. NRT outputs belong under `forcing/outputs/conus/nrt/daily`
+and `forcing/outputs/conus/nrt/monthly`, with the same suffixes and variable
+semantics as retro. Do not merge the two streams.
+
+NRT uses identity-matched acceptance receipts, or the older strict static-envelope
+audit chain where no receipt exists. An existing stale/failed receipt is rejected.
+Unchanged summaries are skipped. Changed dependencies trigger atomic replacement
+of daily summaries and, subsequently, their complete monthly summaries.
+Daily bounds require all 01–00 UTC endpoints; a partial current-day file can
+supply the preceding day's final 00 UTC endpoint but cannot yield a premature
+summary of its own day. Monthly products remain complete calendar months only.
+
+Private daily/repeat smoke test: **4635198**, September 20, 2026. Automatic cron
+integration is not yet enabled. Recommended cadence is once daily after accepted
+NRT publication, on a separate job so reductions do not delay latest-hour forcing.
+Inspect the rolling revision window plus previously missing summaries; rebuild
+the affected complete months. Initial historical backfill is separate.
+
+An initial source audit accepted 191 of 205 NRT files. April 12 and September
+1–13 use other metadata schemes and need acceptance-chain review before broad
+summary backfill. This is not evidence of bad forcing values. Do not bypass those
+checks just to populate summaries.
+
+Subsequent content checks confirmed excess coverage in April 12 and sampled
+September files. Repair job **4635990** now targets those 14 dates; summaries
+must use its accepted replacements, not the pre-repair identities.
+
+### Planned operational dependency order (not installed yet)
+
+1. Publish/audit new hourly NRT files first; the six-hourly extension must not
+   wait for temporal summaries.
+2. After the daily hourly-revision cycle succeeds, launch a separately locked
+   NRT summary refresh. Inspect accepted replacements plus missing summary days.
+3. A changed hourly file dated D invalidates daily intervals D-1 and D because
+   the former uses D's 00 UTC record. Recompute affected summaries only; reject
+   incomplete intervals. Rebuild each affected **complete** calendar month from
+   current daily summaries, including the previous month at month boundaries.
+4. Report hourly and summary freshness separately. A failed refresh must remain
+   visibly stale, not be labeled current or hold up model-ready hourly forcing.
+
+Activation remains gated on hourly rollout tests and the NRT summary tests.
+The current backfill command supports atomic stale replacement; automated
+dependency selection and cron submission still need integration. Do not install
+a blind full-history reduction in the six-hourly critical path.
+
+`tests/test_nrt_summary_revision.py` now exercises the actual backfill command
+over two months with accepted small-grid NRT input fixtures. It verifies no-op
+reuse, an hourly revision spanning a month boundary, exact changed-output sets,
+and resulting daily/monthly numerical means. The test passes. It runs reduction
+tasks serially for determinism; cluster-scale parallelism is tested separately.

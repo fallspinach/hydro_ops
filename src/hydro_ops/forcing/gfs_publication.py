@@ -79,7 +79,8 @@ def write_changed_chunks(var, index, original, updated):
 
 def publish_gfs_day(source_path, output_path, envelope_path, geometry_path, conservative_path,
                     cache_path, work, *, nldas_available, as_of=None, historical_test=False,
-                    allow_mixed=False, require_native_repair=False, sparse_writes=False):
+                    allow_mixed=False, require_native_repair=False, sparse_writes=False,
+                    expected_hours=24):
     if source_path.resolve() == output_path.resolve() or output_path.exists():
         raise ValueError("Opt-in writer requires a new, separate destination")
     if not historical_test and as_of is None:
@@ -114,10 +115,11 @@ def publish_gfs_day(source_path, output_path, envelope_path, geometry_path, cons
         np.testing.assert_allclose(original["lat"][:], lat, rtol=0, atol=1e-5)
         np.testing.assert_allclose(original["lon"][:], lon, rtol=0, atol=1e-5)
         times = num2date(original["time"][:], original["time"].units, only_use_cftime_datetimes=False)
-        if (len(times) != 24 or [t.hour for t in times] != list(range(24))
+        if (not 1 <= expected_hours <= 24 or len(times) != expected_hours
+                or [t.hour for t in times] != list(range(expected_hours))
                 or len({t.date() for t in times}) != 1
                 or any(t.minute or t.second or t.microsecond for t in times)):
-            raise ValueError("Expected exactly one 00–23 UTC day")
+            raise ValueError("Expected contiguous UTC hours beginning at 00")
     original_manifest = source_path.with_name(source_path.name + ".manifest.json")
     provenance = json.loads(original_manifest.read_text()) if original_manifest.exists() else None
     work.mkdir(parents=True, exist_ok=True)
@@ -236,14 +238,14 @@ def publish_gfs_day(source_path, output_path, envelope_path, geometry_path, cons
             if "forcing_source_id" in dst.ncattrs():
                 dst.delncattr("forcing_source_id")
         with Dataset(staged, "r+") as checked:
-            for index in range(24):
+            for index in range(expected_hours):
                 for name in (*MET_FIELDS, "RAINRATE"):
                     stored = checked[name][index]
                     values = np.ma.getdata(stored)
                     missing = np.ma.getmaskarray(stored) | ~np.isfinite(values)
                     if sha(values) != expected[index, name] or np.any(missing & active) or np.any(~missing & ~keep):
                         raise ValueError(f"Full daily-file audit failed: {index} {name}")
-            checked.forcing_domain_content_audit = "all_24_hours_all_8_fields_active_complete_outside_envelope_missing_gfs_v1"
+            checked.forcing_domain_content_audit = f"all_{expected_hours}_hours_all_8_fields_active_complete_outside_envelope_missing_gfs_v1"
         stat = source_path.stat()
         if (stat.st_ino, stat.st_size, stat.st_mtime_ns) != (original_stat.st_ino, original_stat.st_size, original_stat.st_mtime_ns):
             raise ValueError("Input changed during processing")

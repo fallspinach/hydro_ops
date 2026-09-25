@@ -13,10 +13,11 @@ window_cache_max_bytes = 160000000000
 window_cache_max_age_days = 14
 lookback_days = 7
 maximum_old_replacement_days = 2
-assembly_workers = 8
-precipitation_remap_workers = 4
-# Paired field comparison 4578828 passed; rollback: 1 and false.
-native_repair_workers = 4
+# Paired reference/doubled/reference benchmark 4635991 passed: 12.5% less time.
+# Previous validated worker settings (rollback): 8 / 4 / 4.
+assembly_workers = 16
+precipitation_remap_workers = 8
+native_repair_workers = 8
 gfs_sparse_writes = true
 maximum_native_donor_km = 40
 activation_receipt = "forcing/status/nrt-gfs/activation.json"

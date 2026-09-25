@@ -1,8 +1,42 @@
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+import requests
+
 from hydro_ops.download.stage4 import Stage4Downloader, is_grib2, is_tar
+
+
+@pytest.mark.parametrize("status,offset,skip", [(404, 0, True), (200, 0, True),
+                                               (404, -1, False), (404, 1, False),
+                                               (403, 0, False), (500, 0, False),
+                                               (200, -1, False)])
+def test_realtime_unpublished_current_day_only(tmp_path, monkeypatch, caplog, status, offset, skip):
+    response = requests.Response()
+    response.status_code = status
+    response._content = b'<html>Directory listing</html>'
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def get(self, *args, **kwargs):
+            return response
+
+    downloader = Stage4Downloader(settings(tmp_path))
+    monkeypatch.setattr(downloader, "_session", Session)
+    day = datetime.now(UTC).date() + timedelta(days=offset)
+    if skip:
+        assert downloader.download_day(day, "realtime") == (0, 0)
+        assert "retry next refresh" in caplog.text
+        assert not (tmp_path / "realtime").exists()
+    else:
+        with pytest.raises((requests.HTTPError, RuntimeError)):
+            downloader.discover_realtime(day)
 
 
 def settings(tmp_path: Path):

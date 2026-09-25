@@ -133,3 +133,29 @@ See [cutover acceptance](forcing_hourly_cutover_checklist.md). An additional
 real-source NLDAS-arrival replay remains useful broader coverage, but is not
 claimed as part of these schema/cutover results. Input selection is explicitly
 versioned; compression/schema normalization alone does not invalidate baselines.
+
+## September 24 UTC: implicit versus explicit diagnostic fill
+
+Daily-cycle worker 4628622 published September 18–22 but failed September 16–17
+when legacy `gfs_fallback_qc` had no `_FillValue` attribute and newer inputs had
+explicit unsigned-byte fill 255. The compressed-chunk writer now accepts absent
+versus explicit **type-default** fill on canonical diagnostics only, checking
+the effective fill of both inputs and output. NetCDF already masks the implicit
+default; raw values and missing-value interpretation are therefore preserved.
+Other fill differences, physical-field metadata mismatches, and unit conflicts
+remain errors. Historical baselines need no rewrite.
+
+Regression coverage includes both source orders, masked QC sentinels, zero-valued
+valid QC, intermediate-window/calendar reassembly, and rejection of conflicting
+nondefault fill. All 48 focused archive/schema/Stage-IV tests passed.
+
+Stage-IV current-UTC-day directory 404s or empty listings are now logged as
+not-yet-published and retried on the next refresh, without marking data complete
+or creating placeholder files. Historical/future directory failures and other
+HTTP errors still fail. Retry **4629198** succeeded after five current-day files
+became available. Recovery controller **4629199** submitted worker **4629200**
+for the original September 16–22 tail, reusing unchanged successful publications
+where signatures match, then continuing older-window checks. The original failed
+cycle record is preserved; recovery state is
+`forcing/work/nwm-forcing-cycle-daily-recovery-4628621.json`.
+Submission is not a claim that production recovery has passed.
