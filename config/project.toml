@@ -10,6 +10,8 @@ account = ""
 time = "48:00:00"
 
 [nldas2]
+discovery = "cmr" # Earthdata Cloud; accepted by job 4629232.
+# Used only by an explicit --discovery legacy rollback before NASA shutdown.
 base_url = "https://hydro1.gesdisc.eosdis.nasa.gov/data/NLDAS/NLDAS_FORA0125_H.2.0"
 data_dir = "forcing/inputs/nasa/nldas2/fora0125_hourly_v2.0"
 netrc = "~/.netrc"

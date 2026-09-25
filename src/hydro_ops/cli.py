@@ -55,6 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
     sources = download.add_subparsers(dest="source", required=True)
     nldas = sources.add_parser("nldas2", help="NLDAS-2 primary hourly forcing")
     add_dates(nldas)
+    nldas.add_argument("--discovery", choices=("legacy", "cmr"))
+    nldas.add_argument("--discover-latest", action="store_true",
+                       help="Probe through today UTC beyond the lag cutoff; archive complete days")
     nldas.add_argument("--dry-run", action="store_true")
     stage4 = sources.add_parser("stage4", help="NOAA Stage-IV precipitation")
     add_dates(stage4)
@@ -76,6 +79,9 @@ def build_parser() -> argparse.ArgumentParser:
     sources = submit.add_subparsers(dest="source", required=True)
     nldas = sources.add_parser("nldas2", help="submit NLDAS-2 download")
     add_dates(nldas)
+    nldas.add_argument("--discovery", choices=("legacy", "cmr"))
+    nldas.add_argument("--discover-latest", action="store_true",
+                       help="Probe through today UTC beyond the lag cutoff; archive complete days")
     nldas.add_argument("--dry-run", action="store_true", help="print sbatch command")
     stage4 = sources.add_parser("stage4", help="submit Stage-IV download")
     add_dates(stage4)
@@ -103,9 +109,17 @@ def build_parser() -> argparse.ArgumentParser:
 def download_nldas2(args: argparse.Namespace) -> int:
     settings = load_settings()
     start, end = date_range(args, settings.nldas_lag_days)
-    downloader = Nldas2Downloader(settings, check_credentials=not args.dry_run)
+    latest = getattr(args, "discover_latest", False)
+    cutoff = datetime.now(UTC).date() - timedelta(days=settings.nldas_lag_days)
+    if latest:
+        end = max(end, datetime.now(UTC).date())
+    downloader = Nldas2Downloader(settings, check_credentials=not args.dry_run,
+                                 discovery=getattr(args, "discovery", None))
+    LOG.info("NLDAS-2 discovery backend: %s", getattr(downloader, "discovery", "unknown"))
     for day in iter_dates(start, end):
-        downloader.download_day(day, dry_run=args.dry_run)
+        downloader.download_day(day, dry_run=args.dry_run,
+                                allow_unpublished=latest and day > cutoff,
+                                aggregate_complete=latest)
     return 0
 
 
@@ -126,6 +140,10 @@ def submit_nldas2(args: argparse.Namespace) -> int:
     if settings.slurm_account:
         command.append(f"--account={settings.slurm_account}")
     command.append(str(settings.project_root / "slurm" / "download_nldas2.py"))
+    if getattr(args, "discovery", None):
+        command.extend(("--discovery", args.discovery))
+    if getattr(args, "discover_latest", False):
+        command.append("--discover-latest")
     for option in ("date", "start", "end"):
         value = getattr(args, option)
         if value:

@@ -126,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"SKIP   {workflow.source:<8} active job {workflow.job_name}")
                 continue
             command = [sys.executable, "-m", "hydro_ops.cli", "submit", workflow.source]
+            if workflow.source == "nldas2":
+                command.append("--discover-latest")
             if workflow.source == "stage4":
                 # A rolling refresh routinely outruns publication of the stable
                 # archive. Log missing days and continue; other errors stay fatal.

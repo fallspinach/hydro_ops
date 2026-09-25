@@ -46,6 +46,7 @@ class Settings:
     slurm_account: str
     slurm_time: str
     nldas_base_url: str
+    nldas_discovery: str
     nldas_data_dir: Path
     nldas_netrc: Path
     nldas_cookies: Path
@@ -124,6 +125,7 @@ def load_settings() -> Settings:
         slurm_account=str(env("SLURM_ACCOUNT", slurm["account"])),
         slurm_time=str(env("SLURM_TIME", slurm["time"])),
         nldas_base_url=str(env("NLDAS_BASE_URL", nldas["base_url"])).rstrip("/"),
+        nldas_discovery=str(env("NLDAS_DISCOVERY", nldas.get("discovery", "cmr"))),
         nldas_data_dir=_path(root, env("NLDAS_DATA_DIR", nldas["data_dir"])),
         nldas_netrc=_path(root, env("NLDAS_EARTHDATA_NETRC", nldas["netrc"])),
         nldas_cookies=_path(root, env("NLDAS_EARTHDATA_COOKIES", nldas["cookies"])),
