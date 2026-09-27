@@ -16,6 +16,54 @@ def test_month_segments():
     assert next(months(datetime(1980, 2, 1), datetime(1980, 3, 1)))[1].day == 1
 
 
+def test_reject_multihour_feature_only_collection(tmp_path):
+    path = tmp_path / '197901020100.CHRTOUT_DOMAIN1'
+    with nc.Dataset(path, 'w') as ds:
+        ds.createDimension('time', None)
+        ds.createDimension('feature_id', 2)
+        var = ds.createVariable('time', 'i4', ('time',))
+        var.units = 'hours since 1979-01-02 00:00:00'
+        var[:] = [1, 2]
+        ds.createVariable('streamflow', 'f4', ('feature_id',))[:] = [1, 2]
+    with pytest.raises(ValueError, match='Unrecoverable'):
+        publish_hourly([path], tmp_path / 'output', tmp_path / 'unused-ncrcat')
+    assert path.exists()
+    assert not (tmp_path / 'output').exists()
+
+
+def test_daily_channels_validation(tmp_path):
+    from hydro_ops.wrf_hydro.production import validate_daily_channels
+
+    start, end = datetime(1988, 1, 1), datetime(1988, 1, 2)
+    with pytest.raises(ValueError, match="coverage"):
+        validate_daily_channels(tmp_path, start, end)
+    path = tmp_path / "19880101.CHRTOUT_DOMAIN1.daily"
+    with nc.Dataset(path, "w") as ds:
+        ds.createDimension("time", 1)
+        ds.createDimension("bounds", 2)
+        ds.createDimension("feature_id", 2)
+        ds.createVariable("time", "f8", ("time",)).units = "hours since 1988-01-01 00:00:00"
+        ds.createVariable("time_bounds", "f8", ("time", "bounds"))[:] = [[0, 24]]
+        flow = ds.createVariable("streamflow", "f4", ("time", "feature_id"))
+        flow[:] = [[1, 2]]
+        flow.cell_methods = "time: mean"
+    assert validate_daily_channels(tmp_path, start, end) == [path]
+    with nc.Dataset(path, "r+") as ds:
+        ds["time_bounds"][:] = [[1, 25]]
+    with pytest.raises(ValueError, match="bounds"):
+        validate_daily_channels(tmp_path, start, end)
+    with nc.Dataset(path, "r+") as ds:
+        ds["time_bounds"][:] = [[0, 24]]
+        ds["streamflow"].delncattr("cell_methods")
+    with pytest.raises(ValueError, match="metadata"):
+        validate_daily_channels(tmp_path, start, end)
+    with nc.Dataset(path, "r+") as ds:
+        ds["streamflow"].cell_methods = "time: mean"
+        ds["streamflow"][:] = np.nan
+    with pytest.raises(ValueError, match="Nonfinite"):
+        validate_daily_channels(tmp_path, start, end)
+
+
 def test_namelist(tmp_path):
     path = tmp_path / "hydro.namelist"
     path.write_text("&HYDRO_nlist\n t0OutputFlag = 1 ! old\n/\n")

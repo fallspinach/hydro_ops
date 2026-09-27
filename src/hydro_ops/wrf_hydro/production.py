@@ -261,6 +261,32 @@ def output_inventory(work, logs):
     write_json(logs / "output-inventory.json", records)
 
 
+def validate_daily_channels(work, start, end):
+    """Require model-native UTC-day channel reductions before publication."""
+    paths = sorted(work.glob("*.CHRTOUT_DOMAIN1.daily"))
+    expected_days = list(dates(start, end))
+    if [p.name[:8] for p in paths] != [d.strftime("%Y%m%d") for d in expected_days]:
+        raise ValueError("Daily channel output coverage mismatch")
+    for path, day in zip(paths, expected_days):
+        with nc.Dataset(path) as ds:
+            if len(ds.dimensions["time"]) != 1:
+                raise ValueError(f"Expected one daily channel record: {path}")
+            bounds = nc.num2date(ds["time_bounds"][:].reshape(-1), ds["time"].units)
+            if list(map(str, bounds)) != [str(day), str(day + timedelta(days=1))]:
+                raise ValueError(f"Daily channel bounds mismatch: {path}")
+            flow = np.ma.asarray(ds["streamflow"][:])
+            if not flow.count():
+                raise ValueError(f"Empty daily streamflow: {path}")
+            for name, var in ds.variables.items():
+                if "time" not in var.dimensions or name in {"time", "time_bounds"}:
+                    continue
+                if "time:" not in getattr(var, "cell_methods", ""):
+                    raise ValueError(f"Missing daily channel reduction metadata: {name}")
+                if not np.isfinite(np.ma.asarray(var[:]).compressed()).all():
+                    raise ValueError(f"Nonfinite daily channel values: {name}")
+    return paths
+
+
 def normalize_archive_time(dataset, expected):
     """Verify raw coordinates before replacing inherited per-run range metadata."""
     var = dataset["time"]
@@ -286,35 +312,9 @@ def normalize_archive_time(dataset, expected):
 
 
 def publish_hourly(paths, destination, ncrcat):
-    groups = {}
-    for path in paths:
-        groups.setdefault(path.name[:8], []).append(path)
-    for day, inputs in groups.items():
-        output = destination / day[:4] / day[4:6] / f"{day}.CHRTOUT_DOMAIN1"
-        output.parent.mkdir(parents=True, exist_ok=True)
-        # Existing data is only the preceding segment's midnight boundary record.
-        expected = []
-        if output.exists():
-            with nc.Dataset(output) as ds:
-                expected = times(ds)
-            if len(expected) != 1 or expected[0].hour != 0:
-                raise ValueError(f"Refusing overlap with existing archive: {output}")
-            inputs = [output, *inputs]
-        for path in inputs[int(output.exists()) :]:
-            with nc.Dataset(path) as ds:
-                expected.extend(times(ds))
-        if expected != sorted(set(expected)) or len(expected) > 24:
-            raise ValueError("Duplicate/unordered hourly publication")
-        temporary = output.with_name(output.name + ".partial")
-        subprocess.run(
-            [str(ncrcat), "-O", "-4", "-L", "2", *map(str, inputs), str(temporary)], check=True
-        )
-        with nc.Dataset(temporary, "r+") as ds:
-            normalize_archive_time(ds, expected)
-            ds.storage_grouping = "calendar day 00-23 UTC"
-            ds.temporal_resolution = "hourly"
-            ds.calendar_day_complete = int(len(expected) == 24)
-        temporary.replace(output)
+    from hydro_ops.wrf_hydro.channel_archive import publish_hourly as stack_hourly
+
+    return stack_hourly(paths, destination, ncrcat)
 
 
 def run_segment(project, work, logs, output, restart_root, inputs, start, end, ranks):
@@ -365,7 +365,7 @@ def run_segment(project, work, logs, output, restart_root, inputs, start, end, r
             "t0OutputFlag": 0,
             "CHRTOUT_DOMAIN": 1,
             "CHRTOUT_HOURLY": 1,
-            "CHRTOUT_DAILY": 0,
+            "CHRTOUT_DAILY": 1,
             "LDASOUT_HOURLY": 0,
             "LDASOUT_DAILY": 1,
             "LSMOUT_DOMAIN": 0,
@@ -399,6 +399,7 @@ def run_segment(project, work, logs, output, restart_root, inputs, start, end, r
     if "The model finished successfully" not in (logs / "model.log").read_text():
         raise ValueError("Model completion sentinel missing")
     hourly, daily = validate_outputs(work, start, end)
+    daily_channels = validate_daily_channels(work, start, end)
     terminal = [work / name for name in restart_names(end)]
     restart_check(terminal, end)
     with nc.Dataset(domain / "domain/wrfinput_CONUS_NLDAS2.nc") as ds:
@@ -407,7 +408,7 @@ def run_segment(project, work, logs, output, restart_root, inputs, start, end, r
     for path in daily:
         check_active_state(path, active, ("SOIL_M", "SOIL_T", "SNEQV"))
     publish_hourly(hourly, output / "hourly", Path(os.sys.executable).parent / "ncrcat")
-    for path in daily:
+    for path in [*daily, *daily_channels]:
         copy_atomic(path, output / "daily" / path.name[:4] / path.name[4:6] / path.name)
     destinations = [restart_root / end.strftime("%Y/%m") / p.name for p in terminal]
     for src, dst in zip(terminal, destinations):
@@ -420,9 +421,10 @@ def run_segment(project, work, logs, output, restart_root, inputs, start, end, r
         "mpi_ranks": ranks,
         "hourly_records": len(hourly),
         "daily_records": len(daily),
+        "daily_channel_records": len(daily_channels),
         "restarts": destinations,
         "outputs": output,
-        "scratch_output_bytes": sum(p.stat().st_size for p in [*hourly, *daily]),
+        "scratch_output_bytes": sum(p.stat().st_size for p in [*hourly, *daily, *daily_channels]),
     }
     write_json(logs / "accepted.json", report)
     # Only this run's validated scratch intermediates are removed.
@@ -476,17 +478,24 @@ def main():
                 inputs = [Path(p) for p in json.loads(marker.read_text())["restarts"]]
                 restart_check(inputs, stop)
                 continue
-            inputs = run_segment(
-                project,
-                scratch / f"{args.campaign}-{kind}-{segment_label}",
-                logs,
-                output,
-                restarts,
-                inputs,
-                begin,
-                stop,
-                int(os.environ["SLURM_NTASKS"]),
-            )
+            work = scratch / f"{args.campaign}-{kind}-{segment_label}"
+            try:
+                inputs = run_segment(
+                    project, work, logs, output, restarts, inputs, begin, stop,
+                    int(os.environ["SLURM_NTASKS"]),
+                )
+            except BaseException as error:
+                # Preserve recoverable originals if validation/publication fails;
+                # job-local scratch may disappear when the allocation ends.
+                recovery = output / "failed_raw" / os.environ["SLURM_JOB_ID"] / segment_label
+                write_json(logs / "failed.json", {"error": str(error), "scratch": work,
+                                                  "recovery": recovery})
+                if work.exists():
+                    for path in work.iterdir():
+                        if path.is_file() and (path.name.endswith("CHRTOUT_DOMAIN1")
+                                               or path.name.startswith(("RESTART.", "HYDRO_RST."))):
+                            copy_atomic(path, recovery / path.name)
+                raise
         write_json(
             gate if args.test else campaign / f"{args.year}-passed.json",
             {

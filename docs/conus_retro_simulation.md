@@ -1,5 +1,15 @@
 # CONUS retrospective simulation: gated production
 
+**Hourly CHRTOUT archive acceptance is revoked pending repair.** The
+[record-dimension recovery investigation](chrtout_archive_recovery.md) found
+that calendar collections retained a single channel array despite multiple time
+coordinates. The original 1988–2002 chain was held; the old 1987 allocation was
+cancelled after preserving 720 raw June hourly files and its restart files.
+Recovery uses a separate `recovery_record_stack_v1` campaign and the corrected
+publisher; see the investigation for launch records. Native daily land outputs and
+restart checkpoints are not implicated by this publication bug. Do not derive
+daily channel statistics from the affected hourly collections.
+
 The initial campaign starts **1979-01-02 00 UTC**, excluding the incomplete
 1979-01-01 forcing day. It recycles the accepted 1986-01-01 spin-up restart
 state, not a historical 1979 state estimate. The accepted local hydrography
@@ -34,6 +44,29 @@ PCP_PARTITION_OPTION=1, lakes off, t0OutputFlag=0. Output-enabled annual runtime
 is not yet measured; the earlier output-free spin-up timing is not a guarantee.
 
 ## Restart safety and monthly execution
+
+### Daily channel output enabled for remaining years
+
+The production runner now enables **both `CHRTOUT_HOURLY=1` and
+`CHRTOUT_DAILY=1`**, retaining daily-only LDASOUT. At the change, CONUS year
+1987 (job 4524572) was running with the already-loaded old runner. That allocation
+was subsequently cancelled after scratch preservation during the archive incident.
+The original 1988–2002 chain must not be released simply to adopt this setting;
+recovery requires its own acceptance gate and corrected archive publication.
+Recovery campaigns enable both channel resolutions. Existing completed artifacts
+are not automatically recalculated by changing the runner configuration.
+
+The model computes daily channel reductions internally, using per-variable
+`cell_methods` and 00–00 UTC bounds. The runner requires one daily record for
+every simulated day, validates bounds, finite values and reduction metadata,
+and publishes `YYYYMMDD.CHRTOUT_DOMAIN1.daily` beside daily LDASOUT under
+`production/daily/YYYY/MM/`. Monthly reports retain `daily_records` for LDASOUT
+and add `daily_channel_records`. Missing or invalid daily channel output blocks
+monthly acceptance rather than being silently discarded. Hourly publication and
+restart logic are unchanged. Simultaneous output is already exercised by the
+CNRFC production campaign; there is no separate daily-channel postprocessing job.
+
+## Monthly checkpoint behavior
 
 Each annual job runs successive calendar-month segments. Only the segment's
 terminal 00 UTC restart pair is written, at the first of the next month. This
@@ -84,7 +117,9 @@ No hourly or day-of-month restart subdirectories are produced.
 ## Output temporal resolution versus file grouping
 
 - `nwm/outputs/conus/retro/<campaign>/production/daily/YYYY/MM/` contains
-  native `YYYYMMDD.LDASOUT_DOMAIN1.daily` files, one daily-resolution record.
+  native `YYYYMMDD.LDASOUT_DOMAIN1.daily` files, one daily-resolution record,
+  and `YYYYMMDD.CHRTOUT_DOMAIN1.daily` for runs using the new dual-channel setting
+  (including the separate recovery campaigns).
   Reduction is specified by each variable's `cell_methods`, not a blanket mean.
 - `.../production/hourly/YYYY/MM/` contains
   `YYYYMMDD.CHRTOUT_DOMAIN1`, with hourly-resolution records grouped 00–23 UTC.
