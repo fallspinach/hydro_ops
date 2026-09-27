@@ -22,3 +22,5 @@ CRON_TZ=UTC
 # Read-only dashboard status every two hours (may coincide with cycle submission). The
 # writer atomically replaces the canonical JSON document, so web readers never see partial JSON.
 30 */2 * * * /usr/bin/bash /cw3e/mead/projects/cwp206/agentization/hydro_ops/bin/run_cron.sh bin/report_forcing_status.py --format json --output forcing/status/forcing-status.json >> /cw3e/mead/projects/cwp206/agentization/hydro_ops/forcing/logs/forcing-status.log 2>&1
+
+# CNRFC catch-up is dependency-chained by the forcing cycles; no separate cron row.

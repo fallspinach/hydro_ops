@@ -81,6 +81,7 @@ def test_cron_template_uses_wrapper():
         if line and line[0].isdigit()
     ]
     assert len(entries) == 4
+    assert not any('bin/submit_cnrfc_sync.py' in line for line in entries)
     assert all("bin/run_cron.sh " in line and "conda run" not in line for line in entries)
     assert all(">> /cw3e/" in line for line in entries)
 

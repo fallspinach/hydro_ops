@@ -2,6 +2,10 @@
 
 ## Rollout status
 
+CNRFC subsets now have dependent update jobs after latest-hour publication and
+after daily summary refresh. See [CNRFC forcing propagation](cnrfc_forcing_operations.md)
+for hourly/daily/monthly synchronization, catch-up scheduling, and status reports.
+
 ### Staged revisions enabled
 
 `config/nrt_gfs.toml` now exposes `revision_pipeline = "serial"` or

@@ -9,3 +9,4 @@ CRON_TZ=UTC
 0 10 18 * * /usr/bin/bash @WRAPPER@ bin/update_nwm_forcing.py --cycle monthly-retro >> @LOG_ROOT@/nwm-cycle-retro.log 2>&1
 # Read-only dashboard status.
 30 */2 * * * /usr/bin/bash @WRAPPER@ bin/report_forcing_status.py --format json --output forcing/status/forcing-status.json >> @LOG_ROOT@/forcing-status.log 2>&1
+# CNRFC catch-up is dependency-chained by the forcing cycles; no separate cron row.

@@ -319,6 +319,16 @@ def main() -> int:
             state['status'] = 'hourly_complete_summary_submission_failed'
             write_state(manifest, state)
             return 2
+    from hydro_ops.forcing.cnrfc_sync import submit as submit_cnrfc
+    try:
+        state['cnrfc_sync_job_id'] = submit_cnrfc(
+            project, stream='all' if state['cycle'] == 'daily' else state['stream'], frequency='all',
+            after=state.get('summary_refresh_job_id') or os.environ.get('SLURM_JOB_ID'),
+            partition=state['partition'], account=state.get('account', ''))
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+        state.update(status='conus_complete_cnrfc_submission_failed', cnrfc_submission_error=str(error))
+        write_state(manifest, state)
+        return 2
     write_state(manifest, state)
     return 0
 

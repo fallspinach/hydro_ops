@@ -150,9 +150,19 @@ def main() -> int:
                     follow.insert(1, f'--account={settings.slurm_account}')
                 plan['revision_launcher_job_id'] = subprocess.check_output(
                     follow, cwd=settings.project_root, text=True).strip().split(';')[0]
+            from hydro_ops.forcing.cnrfc_sync import submit as submit_cnrfc
+            try:
+                # Daily gets a full catch-up after revision/summary completion;
+                # six-hourly also catches any summaries published since its last run.
+                plan['cnrfc_sync_frequency'] = 'all' if args.cycle == 'six-hourly' else 'hourly'
+                plan['cnrfc_hourly_job_id'] = submit_cnrfc(
+                    settings.project_root, stream='nrt', frequency=plan['cnrfc_sync_frequency'], after=job,
+                    partition=settings.slurm_partition, account=settings.slurm_account)
+            except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+                plan['cnrfc_submission_error'] = str(error)
             manifest.write_text(json.dumps(plan, indent=2)+'\n')
             print(json.dumps(plan, indent=2))
-            return 0
+            return 2 if plan.get('cnrfc_submission_error') else 0
         if args.dry_run:
             return 0
         refresh_output = ""
