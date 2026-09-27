@@ -1,5 +1,10 @@
 # NRT and retrospective forcing validation results
 
+> **Historical experiment/recovery record — not a current runbook.** Job states,
+> commands and acceptance results below refer to the original campaign, not the
+> current configuration. Start with the [current workflow index](experiment_catalog.md)
+> before submitting work or using these results. Retained for provenance.
+
 This log records promotion evidence for the test plan in
 `docs/forcing_stream_validation_plan.md`. Outputs and machine-readable reports are isolated under
 `forcing/outputs/validation/` and are not operational products.

@@ -1,5 +1,10 @@
 # Detailed post-2020 repair timing study
 
+> **Historical experiment/recovery record — not a current runbook.** Job states,
+> commands and acceptance results below refer to the original campaign, not the
+> current configuration. Start with the [current workflow index](experiment_catalog.md)
+> before submitting work or using these results. Retained for provenance.
+
 The paired production benchmark passed exact comparisons but improved only from
 5:43:20 to 5:24:30 for seven published days (5.5%). Stage-only improvements are
 therefore insufficient evidence for large campaign speedups.

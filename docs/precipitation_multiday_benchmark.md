@@ -1,5 +1,10 @@
 # Multi-day precipitation remapping pilot
 
+> **Historical experiment/recovery record — not a current runbook.** Job states,
+> commands and acceptance results below refer to the original campaign, not the
+> current configuration. Start with the [current workflow index](experiment_catalog.md)
+> before submitting work or using these results. Retained for provenance.
+
 Job **4521679** runs `bin/benchmark_precipitation_multiday.py` for April 11–13,
 2026, covering the previously inspected wet CNRFC day. No running production
 code or published forcing is changed. The allocation is 64 CPUs, 240 GB node

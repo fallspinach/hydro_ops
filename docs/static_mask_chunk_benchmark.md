@@ -1,5 +1,10 @@
 # Static-mask compressed-chunk benchmark
 
+> **Historical experiment/recovery record — not a current runbook.** Job states,
+> commands and acceptance results below refer to the original campaign, not the
+> current configuration. Start with the [current workflow index](experiment_catalog.md)
+> before submitting work or using these results. Retained for provenance.
+
 The historical masking campaign remains unchanged while this experiment runs.
 `bin/benchmark_static_mask_chunks.py` writes only a separate scratch candidate;
 it cannot publish or replace an archive file. Benchmark job 4520734 uses

@@ -47,7 +47,7 @@ missing diagnostic masks, physical-value preservation, unchanged source files,
 and rejection of incompatible physical metadata. The real September 14–15,
 2026 baseline boundary passes the read-only schema preflight.
 
-`sbatch slurm/test_nrt_baseline_schema.sh` runs full-size PRISM reconciliation
+The removed `slurm/test_nrt_baseline_schema.sh` (Git revision `7761087`) ran full-size PRISM reconciliation
 for September 15 into `forcing/work/nrt-schema-v1-JOBID/output`, using real
 September 14–16 baselines. It does not overwrite published NRT forcing or remove
 baseline files. Inspect its completed publication audit and timing before
@@ -83,7 +83,8 @@ domain audit reports zero missing required active cells across all eight fields.
 Older chunks required the decoded fallback writer. Published NRT files and
 baseline inputs remained untouched by this isolated test.
 
-Operational follow-up **4627429** uses `slurm/test_nrt_schema_operational.sh` to
+Historical operational follow-up **4627429** used the now-retired
+`slurm/test_nrt_schema_operational.sh` (Git revision `7761087`) to
 repair September 15 through `run_cycle` with production paths and its normal
 lock, then repeat without external refresh. It requires unchanged status and
 unchanged file identities on the second cycle. Reports are saved in

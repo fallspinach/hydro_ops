@@ -1,5 +1,10 @@
 # NRT efficiency experiment — September 24, 2026
 
+> **Historical experiment/recovery record — not a current runbook.** Job states,
+> commands and acceptance results below refer to the original campaign, not the
+> current configuration. Start with the [current workflow index](experiment_catalog.md)
+> before submitting work or using these results. Retained for provenance.
+
 Job **4629922** is an isolated paired benchmark, dependency-ordered after
 operational controller **4629401**. It requests **64 CPUs and 240000 MB scratch**,
 retaining production's 8 assembly and 4 precipitation-remap workers. It does not

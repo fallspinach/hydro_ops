@@ -1,5 +1,10 @@
 # September 2026 NRT catch-up recovery
 
+> **Historical experiment/recovery record — not a current runbook.** Job states,
+> commands and acceptance results below refer to the original campaign, not the
+> current configuration. Start with the [current workflow index](experiment_catalog.md)
+> before submitting work or using these results. Retained for provenance.
+
 The September 22 daily cycle published September 14–20 successfully, but failed
 to publish September 1–13 after bounded retries. Two separate problems occurred:
 

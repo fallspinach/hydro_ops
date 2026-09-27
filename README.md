@@ -2,6 +2,10 @@
 
 Portable workflows for meteorological forcing, hydrologic model runs, and analysis on SLURM.
 
+Start with the [current workflows and experiment catalog](docs/experiment_catalog.md)
+before reusing test scripts or results. Historical job receipts are not current
+production acceptance; obsolete launchers are removed and retained in Git history.
+
 The verified cluster build procedure for the WRF-Hydro 5.4.0 code corresponding to operational
 NWM 3.1 is documented in [WRF-Hydro 5.4.0 build on AWARE](docs/wrf_hydro_build.md).
 The authoritative public NWM 3.1.6 CONUS static-input inventory, downloader, compatibility

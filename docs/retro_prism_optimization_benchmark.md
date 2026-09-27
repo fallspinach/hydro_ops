@@ -1,5 +1,10 @@
 # Isolated 2003 PRISM publication optimization benchmark
 
+> **Historical experiment/recovery record — not a current runbook.** Job states,
+> commands and acceptance results below refer to the original campaign, not the
+> current configuration. Start with the [current workflow index](experiment_catalog.md)
+> before submitting work or using these results. Retained for provenance.
+
 `bin/benchmark_retro_prism_optimization.py --submit` submits two paired tests:
 January 15–16 and July 15–16, 2003. Each reference/optimized arm gets 12 CPUs,
 240 GB scratch, and a six-hour limit. Four arms may run concurrently (48 CPUs

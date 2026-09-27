@@ -1,5 +1,10 @@
 # Hourly-directory cutover — completed and accepted
 
+> **Historical experiment/recovery record — not a current runbook.** Job states,
+> commands and acceptance results below refer to the original campaign, not the
+> current configuration. Start with the [current workflow index](experiment_catalog.md)
+> before submitting work or using these results. Retained for provenance.
+
 September 23, 2026: all 97 inventoried year directories have been renamed into
 `hourly/`. Every one of 35,752 file identities matched immediately after rename.
 Production defaults and NWM INDIR use the new paths. Rebinding completed for
