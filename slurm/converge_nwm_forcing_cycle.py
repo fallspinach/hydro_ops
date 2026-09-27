@@ -181,14 +181,18 @@ def main() -> int:
     if state["stream"] == "nrt" and state.get("recent_nrt_gfs_active"):
         # Run the recent source-aware tail before legacy older-window convergence.
         # This serializes their boundary baseline access; retro jobs never enter here.
+        from hydro_ops.forcing.nrt_cycle import configuration
+        revision_pipeline = configuration(project).get('revision_pipeline', 'serial')
+        state['revision_pipeline'] = revision_pipeline
+        scratch_mb = 300000 if revision_pipeline == 'staged_v1' else 240000
         worker_partition = os.environ.get('HYDRO_OPS_NRT_PARTITION', 'compute-128')
         command = ["sbatch", f"--partition={worker_partition}", "--nodes=1", "--ntasks=1",
-                   "--cpus-per-task=128", "--tmp=240000", "--time=48:00:00",
+                   "--cpus-per-task=128", f"--tmp={scratch_mb}", "--time=48:00:00",
                    f"--job-name=nwm-cycle-{state['cycle']}-recent-nrt-gfs",
                    f"--output={project}/forcing/logs/recent-nrt-gfs-%j.out",
                    (f"--export=ALL,HYDRO_OPS_PROJECT_ROOT={project},"
                     f"NRT_START={state['recent_nrt_start']},NRT_END={state['recent_nrt_end']},"
-                    f"NRT_REQUESTED_AT={state['created']}"),
+                    f"NRT_REQUESTED_AT={state['created']},NRT_REVISION_PIPELINE={revision_pipeline}"),
                    "--wrap", f"{python} {project}/slurm/run_recent_nrt.py"]
         if state.get("account"):
             command.insert(1, f"--account={state['account']}")

@@ -2,6 +2,23 @@
 
 ## Rollout status
 
+### Staged revisions enabled
+
+`config/nrt_gfs.toml` now exposes `revision_pipeline = "serial"` or
+`"staged_v1"`. The staged option uses bounded 4/4/2 baseline, PRISM-window and
+calendar-publication workers and is now the **production default for new revision
+submissions**, following acceptance job 4655814. That test took 28 minutes versus
+39m23s serial, matched all compared values exactly, and completed an unchanged
+repeat in 16 seconds without rewriting outputs. These worker timings exclude
+external refresh and queueing. Latest-hour extension is unchanged. Details are in
+[revision parallelism](nrt_revision_parallel_benchmark.md).
+
+The scheduler records/pins the selected pipeline for each revision submission.
+Staged jobs request 128 CPUs and 300 GB scratch (serial retains 240 GB).
+Reverting the switch to `serial` affects new submissions; it does not change
+running jobs. Worker-profile changes are excluded from scientific baseline
+fingerprints, so toggling the switch alone does not invalidate existing data.
+
 The NLDAS-2 Earthdata Cloud backend passed acceptance and became the operational
 default on September 24, 2026 UTC; see
 [cloud migration and compatibility checks](nldas_earthdata_cloud_migration.md).

@@ -1,6 +1,12 @@
 # Recent NRT only. Existing retrospective rebuild submissions do not read this file.
 # Required for operational NRT: disabling blocks scheduling, not a legacy-mode switch.
 enabled = true
+# Accepted by incremental job 4655814: exact values, 28-minute revision, 16-second repeat.
+# Rollback: serial. Latest-hour extension is unaffected by this switch.
+revision_pipeline = "staged_v1"
+revision_baseline_workers = 4
+revision_window_workers = 4
+revision_publication_workers = 2
 # Validated by paired benchmark 4555698; "reference" restores previous writers.
 reconciliation_writer_profile = "validated_chunks_reuse_v1"
 # Validated by paired NLDAS-2/HRRR benchmark 4556629; rollback: "reference".
