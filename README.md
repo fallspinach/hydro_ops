@@ -7,6 +7,9 @@ NWM 3.1 is documented in [WRF-Hydro 5.4.0 build on AWARE](docs/wrf_hydro_build.m
 The authoritative public NWM 3.1.6 CONUS static-input inventory, downloader, compatibility
 boundaries, and initialization strategy are documented in
 [NWM 3.1 operational inputs](docs/nwm_operational_inputs.md).
+Regional initialization from existing CONUS states is documented in
+[NWM restart subsetting](docs/nwm_restart_subsetting.md), including the accepted
+CNRFC warm-start test and reach/groundwater indexing rules.
 The canonical split between the forcing and NWM production systems is documented in
 [Forcing and NWM project layout](docs/project_layout.md).
 

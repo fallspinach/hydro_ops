@@ -21,7 +21,8 @@ def test_masks_must_align():
         derive_masks([[1]], [[1, 0]], [[1]])
 
 
-def test_forcing_subset_exact_values_and_active_failure(tmp_path, monkeypatch):
+@pytest.mark.parametrize('resolution', ['hourly', 'P1D', 'P1M'])
+def test_forcing_subset_exact_values_and_active_failure(tmp_path, monkeypatch, resolution):
     import importlib
     import json
     import shutil
@@ -39,8 +40,15 @@ def test_forcing_subset_exact_values_and_active_failure(tmp_path, monkeypatch):
         d.createVariable('time', 'f8', ('time',))[:] = [0, 1]
         for name, values in [('lat', lat), ('lon', lon)]:
             d.createVariable(name, 'f4', ('y', 'x'))[:] = values
-        for name in tool.FIELDS:
+        d.temporal_resolution = resolution
+        if resolution != 'hourly':
+            d.createDimension('bounds', 2)
+            d.createVariable('time_bounds', 'f8', ('time', 'bounds'))[:] = [[0, 1], [1, 2]]
+            d.aggregation_signature = 'parent-signature'
+        for name in (tool.FIELDS if resolution == 'hourly' else tool.SUMMARY_FIELDS):
             d.createVariable(name, 'f4', ('time', 'y', 'x'), fill_value=-9999)[:] = np.arange(24).reshape(2, 3, 4)
+            d[name].units = 'test units'
+            d[name].cell_methods = 'time: mean'
         d.forcing_static_mask_status = 'parent evidence'
     with Dataset(mask, 'w') as d:
         d.createDimension('y', 2); d.createDimension('x', 2)
@@ -56,6 +64,11 @@ def test_forcing_subset_exact_values_and_active_failure(tmp_path, monkeypatch):
         assert d['T2D'][0, 0, 1] == 2  # Inactive-but-retained forcing cell.
         assert np.ma.getmaskarray(d['T2D'][0])[1].all()
         assert 'forcing_static_mask_status' not in d.ncattrs()
+        assert d['T2D'].cell_methods == 'time: mean'
+        if resolution != 'hourly':
+            np.testing.assert_array_equal(d['time_bounds'][:], [[0, 1], [1, 2]])
+            assert d.parent_aggregation_signature == 'parent-signature'
+            assert 'aggregation_signature' not in d.ncattrs()
     with Dataset(source, 'r+') as d:
         d['T2D'][0, 0, 1] = -9999
     failed = tmp_path / 'failed.nc'
