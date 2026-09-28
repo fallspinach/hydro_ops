@@ -7,19 +7,59 @@ import json
 import re
 import subprocess
 from datetime import UTC, date, datetime, timedelta
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
+
+import numpy as np
+from netCDF4 import Dataset, num2date
 
 from hydro_ops.config import Settings
 from hydro_ops.forcing.nrt_cycle import activation, configuration, read_json
 from hydro_ops.forcing_status import forcing_coverage
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 DAY_FILE = re.compile(r"^(\d{8})\.LDASIN_DOMAIN1$")
 
 
 def _iso(value: datetime | date | None) -> str | None:
     return value.isoformat() if value is not None else None
+
+
+def latest_hour(paths: list[Path], day: date | None) -> dict[str, Any]:
+    """Read only the newest collection's small time coordinate, not forcing arrays."""
+    result = {"latest_valid_utc": None, "latest_time_status": "missing",
+              "latest_time_error": None, "latest_file_records": None}
+    if not paths:
+        return result
+    if len(paths) != 1:
+        return result | {"latest_time_status": "unknown",
+                         "latest_time_error": "duplicate newest-day files"}
+    path = paths[0]
+    try:
+        before = path.stat()
+        with Dataset(path) as data:
+            coordinate = data.variables['time']
+            if coordinate.ndim != 1 or not 1 <= coordinate.size <= 24:
+                raise ValueError('Expected 1–24 hourly time records')
+            values = coordinate[:]
+            if np.ma.is_masked(values) or not np.isfinite(values).all():
+                raise ValueError('Missing/invalid time coordinates')
+            times = num2date(values, coordinate.units,
+                            calendar=getattr(coordinate, 'calendar', 'standard'))
+            stamps = [datetime(t.year, t.month, t.day, t.hour, t.minute, t.second,
+                               t.microsecond, tzinfo=UTC) for t in times]
+            if any(t.date() != day or t.minute or t.second or t.microsecond for t in stamps):
+                raise ValueError('Time records disagree with calendar-day filename/hourly resolution')
+            if any(a >= b for a, b in pairwise(stamps)):
+                raise ValueError('Non-increasing or duplicate time records')
+        after = path.stat()
+        if (before.st_ino, before.st_size, before.st_mtime_ns) != (after.st_ino, after.st_size, after.st_mtime_ns):
+            raise ValueError('File changed during timestamp scan; retry report')
+        return result | {"latest_valid_utc": stamps[-1].isoformat(),
+                         "latest_time_status": "read", "latest_file_records": len(stamps)}
+    except (OSError, ValueError, KeyError, AttributeError, RuntimeError, OverflowError) as error:
+        return result | {"latest_time_status": "unknown", "latest_time_error": str(error)}
 
 
 def _runs(days: list[date]) -> list[dict[str, Any]]:
@@ -67,10 +107,8 @@ def production_inventory(
     partial_files = 0
     if root.is_dir():
         for path in root.rglob("*"):
-            if not path.is_file():
-                continue
             if path.name.endswith(".part"):
-                partial_files += 1
+                partial_files += path.is_file()
                 continue
             match = pattern.match(path.name)
             if not match:
@@ -82,6 +120,8 @@ def production_inventory(
             except ValueError:
                 continue
             if (start and day < start) or (end and day > end):
+                continue
+            if not path.is_file():
                 continue
             paths.setdefault(day, []).append(path)
             bytes_total += path.stat().st_size
@@ -112,6 +152,8 @@ def production_inventory(
         "missing_day_examples": [item.isoformat() for item in missing[:gap_limit]],
         "missing_days_truncated": len(missing) > gap_limit,
     }
+    if frequency == 'hourly':
+        result.update(latest_hour(paths[days[-1]] if days else [], days[-1] if days else None))
     if monthly:
         # Months are periods, not isolated days or 30-day approximations.
         for key in list(result):
@@ -223,34 +265,41 @@ def build_status(
                 "status": "available" if row.latest else "missing",
             }
         )
-    nwm_root = settings.output_root / "conus"
-    production = {
-        stream: production_inventory(nwm_root / stream / "hourly", start=start, end=end, gap_limit=gap_limit)
-        for stream in ("baseline", "nrt", "retro")
-    }
-    summaries = {
-        domain.name: {
-            stream: {
-                frequency: production_inventory(
-                    domain / stream / frequency, start=start, end=end,
-                    gap_limit=gap_limit, frequency=frequency,
-                )
-                for frequency in ("daily", "monthly")
+    names = {'conus'}
+    if settings.output_root.is_dir():
+        names.update(p.name for p in settings.output_root.iterdir() if p.is_dir()
+                     and any((p / s).is_dir() for s in ('baseline', 'nrt', 'retro')))
+    domains = {}
+    for name in sorted(names):
+        domain = settings.output_root / name
+        domains[name] = {}
+        for stream in ('baseline', 'nrt', 'retro'):
+            if stream == 'baseline' and name != 'conus' and not (domain / stream).is_dir():
+                continue
+            domains[name][stream] = {
+                frequency: production_inventory(domain / stream / frequency,
+                    start=start, end=end, gap_limit=gap_limit, frequency=frequency)
+                for frequency in (('hourly',) if stream == 'baseline' else ('hourly', 'daily', 'monthly'))
             }
-            for stream in ("nrt", "retro")
-        }
-        for domain in sorted(settings.output_root.iterdir())
-        if domain.is_dir() and any((domain / stream).is_dir() for stream in ("nrt", "retro"))
-    } if settings.output_root.is_dir() else {}
+    # Backward-compatible views; new consumers should use domains.
+    production = {stream: frequencies['hourly'] for stream, frequencies in domains['conus'].items()}
+    summaries = {name: {stream: {f: item for f, item in frequencies.items() if f != 'hourly'}
+                       for stream, frequencies in streams.items() if stream != 'baseline'}
+                 for name, streams in domains.items()}
     summary_refresh = read_json(settings.project_root / "forcing/status/nrt-summaries/latest.json")
     issues = []
     if not activation(settings.project_root):
         issues.append("required NRT GFS northern fallback is inactive; NRT scheduling blocked")
-    for stream, item in production.items():
-        if item["partial_files"]:
-            issues.append(f"{stream}: {item['partial_files']} partial file(s)")
-        if item["duplicate_days"]:
-            issues.append(f"{stream}: {len(item['duplicate_days'])} duplicate day(s)")
+    for domain, streams in domains.items():
+        for stream, frequencies in streams.items():
+            item = frequencies['hourly']
+            label = f'{domain}/{stream}/hourly'
+            if item['partial_files']:
+                issues.append(f"{label}: {item['partial_files']} partial file(s)")
+            if item['duplicate_days']:
+                issues.append(f"{label}: {len(item['duplicate_days'])} duplicate day(s)")
+            if item['latest_time_error']:
+                issues.append(f"{label}: latest hour unknown: {item['latest_time_error']}")
     recent = read_json(settings.project_root / "forcing/status/nrt-gfs/latest.json")
     if recent.get("status") == "failed":
         issues.append("recent NRT GFS cycle failed; previous accepted daily files retained")
@@ -271,6 +320,7 @@ def build_status(
         "summary": {"status": "attention" if issues else "ok", "issues": issues},
         "external_sources": external,
         "production_streams": production,
+        "domains": domains,
         "summary_streams": summaries,
         "nrt_summary_refresh": summary_refresh,
         "slurm": slurm_inventory() if include_slurm else {"available": False, "skipped": True},
@@ -283,6 +333,7 @@ def build_status(
             "acceptance": read_json(settings.project_root / "forcing/status/nrt-gfs/activation.json"),
         },
         "scan": {"mode": "metadata", "netcdf_contents_validated": False,
+                 "hourly_latest_time_source": "newest calendar-day NetCDF time coordinate per domain/stream",
                  "summary_freshness_validated": False,
                  "summary_gap_scope": "explicit audit window or first-to-last existing period; not hourly backlog"},
     }
@@ -314,28 +365,23 @@ def format_text(report: dict[str, Any]) -> str:
         lines.append(
             f"{row['product']:<25} {(row['latest_valid_utc'] or 'missing'):<25} {age:>10} {row['files']:>10,d}"
         )
-    lines.extend(
-        [
-            "",
-            "NWM hourly production streams (calendar-day files)",
-            f"{'Stream':<10} {'First':<12} {'Last':<12} {'Days':>8} {'Missing':>9} {'Size':>11}",
-            "-" * 68,
-        ]
-    )
-    for name, item in report["production_streams"].items():
-        lines.append(
-            f"{name:<10} {(item['first_day'] or '-'):<12} {(item['last_day'] or '-'):<12} {item['unique_days']:>8,d} {item['missing_days']:>9,d} {_size(item['bytes']):>11}"
-        )
-    lines.extend(["", "Daily/monthly forcing summaries (file coverage, not freshness)",
-                  f"{'Domain/stream/resolution':<30} {'First':<12} {'Last':<12} {'Periods':>8} {'Missing':>8} {'Size':>11}"])
-    for domain, streams in report.get("summary_streams", {}).items():
+    lines.extend(['', 'Production by domain (hourly timestamps UTC; daily/monthly period labels)',
+                  'Missing counts are files/periods, not missing hours; summaries are not freshness-audited.'])
+    for domain, streams in report['domains'].items():
+        lines.extend(['', f'Domain: {domain}',
+                      f"{'Stream':<10} {'Resolution':<10} {'First period':<12} {'Latest UTC / period':<20} {'Periods':>8} {'Missing':>8} {'Size':>11}",
+                      '-' * 85])
         for stream, frequencies in streams.items():
             for frequency, item in frequencies.items():
                 unit = "month" if frequency == "monthly" else "day"
-                label = f"{domain}/{stream}/{frequency}"
+                latest = item[f'last_{unit}'] or '-'
+                if frequency == 'hourly':
+                    stamp = item.get('latest_valid_utc')
+                    latest = datetime.fromisoformat(stamp).strftime('%Y-%m-%d %H:%M') if stamp else (
+                        'unknown (read error)' if item['files'] else '-')
                 lines.append(
-                    f"{label:<30} {(item[f'first_{unit}'] or '-'):<12} "
-                    f"{(item[f'last_{unit}'] or '-'):<12} {item[f'unique_{unit}s']:>8,d} "
+                    f"{stream:<10} {frequency:<10} {(item[f'first_{unit}'] or '-'):<12} "
+                    f"{latest:<20} {item[f'unique_{unit}s']:>8,d} "
                     f"{item[f'missing_{unit}s']:>8,d} {_size(item['bytes']):>11}"
                 )
     refresh = report.get("nrt_summary_refresh", {})

@@ -73,8 +73,11 @@ SLURM/queue/source-publication latency remains outside the worker benchmark.
 `forcing/status/nrt-summaries/latest.json` reports summary refresh success/failure.
 The regular `bin/report_forcing_status.py` report now includes daily/monthly file
 inventories for every discovered domain's NRT and retro streams, in both terminal
-and JSON output. JSON schema 1.1 adds `summary_streams[domain][stream][frequency]`
+and JSON output. JSON schema 1.1 added `summary_streams[domain][stream][frequency]`
 and `nrt_summary_refresh`, preserving the existing hourly `production_streams`.
+Schema 1.2 adds a unified domain/stream/resolution hierarchy, hourly coverage for
+all discovered domains, and actual newest-file UTC hours. Terminal output uses
+domain-grouped tables; see [status report semantics](forcing_status_report.md).
 Each inventory reports first/last period, counts, bytes, duplicates, partial files,
 and gaps (monthly gaps count calendar months). Without `--start`/`--end`, gaps are
 only within each inventory's first-to-last existing period, not an estimate of the

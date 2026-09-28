@@ -3,6 +3,8 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+from netCDF4 import Dataset
+
 from hydro_ops.status_monitor import build_status, format_text, production_inventory
 
 
@@ -41,6 +43,7 @@ def test_build_status_is_json_serializable_and_formats_text(tmp_path, monkeypatc
     touch(settings.output_root / "conus/nrt/hourly/2026/01/20260101.LDASIN_DOMAIN1", 7)
     touch(settings.output_root / "cnrfc/retro/daily/2026/01/20260101.LDASIN_DOMAIN1.daily", 4)
     touch(settings.output_root / "cnrfc/retro/monthly/2026/202601.LDASIN_DOMAIN1.monthly", 6)
+    hourly_file(settings.output_root / 'new_region/nrt/hourly/2026/01/20260101.LDASIN_DOMAIN1', [0, 1, 2, 3])
     status = tmp_path / "forcing/status/nrt-summaries/latest.json"
     status.parent.mkdir(parents=True)
     status.write_text(json.dumps({"status": "failed", "job_id": "123"}))
@@ -49,15 +52,63 @@ def test_build_status_is_json_serializable_and_formats_text(tmp_path, monkeypatc
         lambda: {"available": True, "jobs": [], "job_count": 0, "states": {}},
     )
     report = build_status(settings, now=datetime(2026, 1, 2, tzinfo=UTC))
-    assert json.loads(json.dumps(report))["schema_version"] == "1.1"
+    assert json.loads(json.dumps(report))["schema_version"] == "1.2"
     assert report["production_streams"]["nrt"]["bytes"] == 7
-    assert "NWM hourly production streams" in format_text(report)
-    assert "conus/nrt/monthly" in format_text(report)
+    assert "Domain: conus" in format_text(report)
+    assert "Domain: cnrfc" in format_text(report)
+    assert "Domain: new_region" in format_text(report)
+    assert "2026-01-01 03:00" in format_text(report)
+    assert report['domains']['new_region']['nrt']['hourly']['latest_file_records'] == 4
+    assert 'baseline' not in report['domains']['new_region']
+    assert "Resolution" in format_text(report)
+    assert "monthly" in format_text(report)
+    assert report['domains']['cnrfc']['retro']['hourly']['latest_valid_utc'] is None
     assert report["scan"]["summary_freshness_validated"] is False
     assert report["summary_streams"]["cnrfc"]["retro"]["daily"]["bytes"] == 4
     assert report["summary_streams"]["cnrfc"]["retro"]["monthly"]["unique_months"] == 1
     assert "NRT summary refresh: failed; job=123" in format_text(report)
     assert any("summary refresh failed" in issue for issue in report["summary"]["issues"])
+
+
+def hourly_file(path, hours, units='hours since 2026-01-01 00:00:00'):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with Dataset(path, 'w') as data:
+        data.createDimension('time', len(hours))
+        time = data.createVariable('time', 'f8', ('time',))
+        time.units = units
+        time[:] = hours
+
+
+def test_actual_hour_not_assumed_end_of_day(tmp_path):
+    hourly_file(tmp_path / '20260101.LDASIN_DOMAIN1', range(24))
+    hourly_file(tmp_path / '20260102.LDASIN_DOMAIN1', [24, 25, 26, 27])
+    report = production_inventory(tmp_path)
+    assert report['last_day'] == '2026-01-02'
+    assert report['latest_valid_utc'] == '2026-01-02T03:00:00+00:00'
+    assert report['latest_file_records'] == 4
+    assert report['latest_time_status'] == 'read'
+    earlier = production_inventory(tmp_path, end=date(2026, 1, 1))
+    assert earlier['latest_valid_utc'] == '2026-01-01T23:00:00+00:00'
+
+
+def test_bad_newest_file_is_unknown_not_previous_day(tmp_path):
+    hourly_file(tmp_path / '20260101.LDASIN_DOMAIN1', range(24))
+    touch(tmp_path / '20260102.LDASIN_DOMAIN1', 10)
+    report = production_inventory(tmp_path)
+    assert report['latest_valid_utc'] is None
+    assert report['latest_time_status'] == 'unknown'
+    assert report['latest_time_error']
+
+
+def test_wrong_day_and_duplicates_are_unknown(tmp_path):
+    path = tmp_path / '20260101.LDASIN_DOMAIN1'
+    hourly_file(path, [24])
+    assert production_inventory(tmp_path)['latest_time_status'] == 'unknown'
+    hourly_file(path, [0, 0])
+    assert production_inventory(tmp_path)['latest_time_status'] == 'unknown'
+    hourly_file(path, [0, 1])
+    hourly_file(tmp_path / 'duplicate/20260101.LDASIN_DOMAIN1', [0, 1])
+    assert production_inventory(tmp_path)['latest_time_error'] == 'duplicate newest-day files'
 
 
 def test_summary_period_inventory(tmp_path):

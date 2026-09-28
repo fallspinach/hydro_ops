@@ -88,6 +88,8 @@ Account policy: `mpan` is for prototyping/testing **without NRTRES**; real opera
 will use `cw3ehydro` with NRTRES explicitly configured. See the
 [deployment account policy](docs/cron_environment.md#user-accounts-and-operational-reservation-policy).
 
+The [forcing status report](docs/forcing_status_report.md) groups products by
+domain, stream and resolution and reports the actual latest UTC hour for hourly data.
 The coordinated forcing entry runs source refresh, baseline production, stream publication, and
 dependency-gated cleanup in the required order. Preview any cycle without submission:
 
