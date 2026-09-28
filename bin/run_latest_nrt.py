@@ -12,6 +12,7 @@ from hydro_ops.config import load_settings
 from hydro_ops.download.hrrr import HrrrDownloader
 from hydro_ops.forcing.gfs_publication import _atomic_json
 from hydro_ops.forcing.nrt_cycle import RecentNrt, identity, read_json
+from hydro_ops.forcing.recent_observations import refresh_recent_observations
 from hydro_ops.forcing.retro_publication import check_scratch
 
 
@@ -70,6 +71,10 @@ def main():
                         end_hour = hour
                 if end_hour < 0 or midnight+timedelta(hours=end_hour) <= accepted:
                     break
+                refresh = refresh_recent_observations(root, day, end_hour)
+                report.setdefault('observation_refresh', []).append(
+                    {'day': day.isoformat(), 'sources': refresh})
+                _atomic_json(state / 'latest-extension.json', report)
                 result = engine.produce_day(day, end_hour=end_hour, latest=True)
                 accepted = midnight+timedelta(hours=end_hour)
                 report['days'].append(result)

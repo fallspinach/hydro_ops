@@ -119,8 +119,9 @@ def main() -> int:
         print(json.dumps(plan, indent=2))
         if stream == "nrt" and not args.revisions_only:
             # Latest-hour publication has no dependency on optional-source refreshes.
-            if any('|hrrr_download' in line for line in active):
-                print('SKIP active HRRR acquisition; avoid concurrent canonical writers')
+            if any(any(f'|{source}_download' in line for source in ('hrrr', 'mrms', 'stage4'))
+                   for line in active):
+                print('SKIP active source acquisition; avoid concurrent canonical writers')
                 return 0
             worker_partition = os.environ.get('HYDRO_OPS_NRT_PARTITION', 'compute-128')
             plan['latest_worker_partition'] = worker_partition
