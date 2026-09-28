@@ -84,6 +84,10 @@ The canonical project schedule is tracked in `cron/hydro_ops.crontab`, including
 refresh and rolling forcing-production submission. Installation remains gated by
 [operational reliability acceptance](docs/nrt_reliability_acceptance.md); the inspected
 host has no installed crontab. Do not install duplicate source-only schedules alongside it.
+Account policy: `mpan` is for prototyping/testing **without NRTRES**; real operations
+will use `cw3ehydro` with NRTRES explicitly configured. See the
+[deployment account policy](docs/cron_environment.md#user-accounts-and-operational-reservation-policy).
+
 The coordinated forcing entry runs source refresh, baseline production, stream publication, and
 dependency-gated cleanup in the required order. Preview any cycle without submission:
 

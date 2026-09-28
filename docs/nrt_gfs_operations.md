@@ -19,6 +19,46 @@ external refresh and queueing. Latest-hour extension is unchanged. Details are i
 
 The scheduler records/pins the selected pipeline for each revision submission.
 Staged jobs request 128 CPUs and 300 GB scratch (serial retains 240 GB).
+Routine recent-NRT revision workers now request **three hours**, rather than 48 hours,
+to improve their chances of fitting available scheduling windows. This is a
+safety ceiling, not expected runtime: the accepted staged incremental revision
+took 28 minutes and the cold staged benchmark took about 64 minutes. Source
+downloads, filesystem contention and extra changes can increase wall time.
+The longer-lived coordinating job retains its separate limit because it waits
+for queued workers and downstream work. The current `mpan` prototype/test
+deployment must not use `NRTRES`, including as a queue-delay workaround. Real
+operations will run as `cw3ehydro` with `NRTRES` explicitly activated. Slurm access
+eligibility alone does not authorize prototype use. See the
+[account/reservation policy](cron_environment.md#user-accounts-and-operational-reservation-policy)
+and deployment checks; automatic reservation selection is not implemented here.
+Pending worker 4662607 was updated in place to six hours on September 27,
+preserving its job ID and waiting controller; no cancellation/resubmission or
+reservation change was needed. A shorter limit does not guarantee prompt dispatch.
+That job subsequently passed in **1h01m22s**, rebuilding eight baseline days and
+publishing seven revised days. The routine default was then reduced from six to
+three hours; completed/running jobs and latest-hour extension limits are unchanged.
+
+For exceptional catch-up, explicitly request six hours (360 minutes) when
+submitting the cycle from the project root:
+
+```bash
+HYDRO_OPS_NRT_REVISION_MINUTES=360 /usr/bin/bash bin/run_cron.sh bin/update_nwm_forcing.py --cycle daily
+```
+
+The override is inherited by the revision launcher/controller and validated as
+1–10080 whole minutes. Routine cron entries need no modification. The selected
+limit is saved as `revision_time_limit` in the cycle manifest. This setting is
+scheduling-only and does not invalidate scientific baseline fingerprints.
+
+Workload and timing evidence already persists in
+`forcing/status/nrt-gfs/cycle-JOB.json` (not just the overwritten `latest.json`):
+`staged_timings.baseline_days` records rebuilt/reused days, `windows` records
+prepared PRISM windows, `days` records published/unchanged outputs, and stage
+seconds plus `latency` distinguish processing from end-to-end delay. Retain these
+per-job reports and compare them with Slurm elapsed/wait times before adding an
+automatic estimator. A fixed three-hour routine ceiling with an explicit catch-up
+override is intentional; no speculative workload estimator is enabled yet.
+
 Reverting the switch to `serial` affects new submissions; it does not change
 running jobs. Worker-profile changes are excluded from scientific baseline
 fingerprints, so toggling the switch alone does not invalidate existing data.

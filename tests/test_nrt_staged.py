@@ -1,11 +1,25 @@
 import json
+import ast
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from hydro_ops.forcing import nrt_cycle as cycle
 from hydro_ops.forcing import nrt_staged as staged
+
+
+def test_recent_worker_uses_selected_limit_without_reservation():
+    path = Path(__file__).resolve().parents[1] / 'slurm/converge_nwm_forcing_cycle.py'
+    tree = ast.parse(path.read_text())
+    command = next(node for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                   and any(isinstance(t, ast.Name) and t.id == 'command' for t in node.targets)
+                   and 'recent-nrt-gfs' in ast.unparse(node.value))
+    text = ast.unparse(command.value)
+    assert '--time={revision_limit}' in text
+    assert '--time=48:00:00' not in text
+    assert '--reservation' not in text
 
 
 def test_switch_does_not_invalidate_baselines():

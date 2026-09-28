@@ -3,6 +3,26 @@ import json
 from datetime import date
 from pathlib import Path
 
+import pytest
+
+
+def test_revision_time_limit_default_and_catchup_override(monkeypatch):
+    module = load_slurm_script('converge_nwm_forcing_cycle.py')
+    monkeypatch.delenv('HYDRO_OPS_NRT_REVISION_MINUTES', raising=False)
+    assert module.revision_time_limit() == '03:00:00'
+    monkeypatch.setenv('HYDRO_OPS_NRT_REVISION_MINUTES', '360')
+    assert module.revision_time_limit() == '06:00:00'
+    monkeypatch.setenv('HYDRO_OPS_NRT_REVISION_MINUTES', '210')
+    assert module.revision_time_limit() == '03:30:00'
+
+
+@pytest.mark.parametrize('value', ['0', '-1', '10081', '1.5', 'six', ''])
+def test_revision_time_limit_rejects_invalid_override(monkeypatch, value):
+    module = load_slurm_script('converge_nwm_forcing_cycle.py')
+    monkeypatch.setenv('HYDRO_OPS_NRT_REVISION_MINUTES', value)
+    with pytest.raises(ValueError, match='whole minutes'):
+        module.revision_time_limit()
+
 
 def load_script(name: str):
     path = Path(__file__).parents[1] / "bin" / name

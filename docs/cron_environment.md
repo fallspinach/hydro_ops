@@ -4,6 +4,31 @@ Use `bin/run_cron.sh` for each entry in `cron/hydro_ops.crontab`. Keep the sched
 installed on **one login node only**. The user removed the login2 crontab before
 the login1 wrapper tests; this change does not install a crontab on either node.
 
+## User accounts and operational reservation policy
+
+The Unix execution account determines the deployment context:
+
+| Account | Purpose | NRTRES policy |
+| --- | --- | --- |
+| `mpan` | Prototyping, development, benchmarks and operational-cycle tests | Do **not** request `NRTRES`, even to work around long queue waits. |
+| `cw3ehydro` | Real operational production | Explicitly activate `NRTRES` in the operational job-submission configuration. |
+
+Slurm listing `mpan` among a reservation's permitted users is technical access,
+not authorization under this project's operating policy. The earlier suggestion
+to use `NRTRES` as a last resort for `mpan` is withdrawn. Do not substitute another
+operations-only reservation as a workaround.
+
+Current submissions run as `mpan` without an NRT reservation. No automatic
+account-based reservation selection has been implemented by this documentation
+change. Before deploying as `cw3ehydro`, explicitly configure and verify
+reservation use for the operational compute jobs, including jobs submitted by
+controllers and dependent follow-ups; changing the crontab owner alone does not
+ensure that nested submissions request it. Also verify environment paths,
+credentials, filesystem permissions and single-host scheduling for that account.
+Do not run overlapping prototype and operational writers against the same outputs.
+
+## Wrapper and scheduling
+
 The previous log's fatal error was `FileNotFoundError: 'squeue'`, not a Python
 `subprocess` import failure. Cron did not inherit the interactive SLURM module.
 The preceding `which: no fi_info` came from the base Conda MPI deactivation hook.

@@ -26,6 +26,15 @@ from netCDF4 import Dataset
 JOB_ID = re.compile(r"Submitted batch job (\d+)")
 
 
+def revision_time_limit() -> str:
+    """Routine three-hour ceiling; explicit minutes override for catch-up work."""
+    value = os.environ.get("HYDRO_OPS_NRT_REVISION_MINUTES", "180")
+    if not value.isdecimal() or not 1 <= int(value) <= 10080:
+        raise ValueError("HYDRO_OPS_NRT_REVISION_MINUTES must be 1–10080 whole minutes")
+    hours, minutes = divmod(int(value), 60)
+    return f"{hours:02d}:{minutes:02d}:00"
+
+
 def write_state(path: Path, state: dict[str, Any]) -> None:
     temporary = path.with_name(path.name + ".part")
     temporary.write_text(json.dumps(state, indent=2) + "\n")
@@ -184,10 +193,12 @@ def main() -> int:
         from hydro_ops.forcing.nrt_cycle import configuration
         revision_pipeline = configuration(project).get('revision_pipeline', 'serial')
         state['revision_pipeline'] = revision_pipeline
+        revision_limit = revision_time_limit()
+        state['revision_time_limit'] = revision_limit
         scratch_mb = 300000 if revision_pipeline == 'staged_v1' else 240000
         worker_partition = os.environ.get('HYDRO_OPS_NRT_PARTITION', 'compute-128')
         command = ["sbatch", f"--partition={worker_partition}", "--nodes=1", "--ntasks=1",
-                   "--cpus-per-task=128", f"--tmp={scratch_mb}", "--time=48:00:00",
+                   "--cpus-per-task=128", f"--tmp={scratch_mb}", f"--time={revision_limit}",
                    f"--job-name=nwm-cycle-{state['cycle']}-recent-nrt-gfs",
                    f"--output={project}/forcing/logs/recent-nrt-gfs-%j.out",
                    (f"--export=ALL,HYDRO_OPS_PROJECT_ROOT={project},"
