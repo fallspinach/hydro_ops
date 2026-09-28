@@ -5,7 +5,31 @@ import argparse
 import json
 import re
 import subprocess
+from datetime import datetime
 from pathlib import Path
+
+
+def verify_completed_predecessor(project, campaign, year, job):
+    """Require accounting success and the accepted terminal restart pair."""
+    from hydro_ops.wrf_hydro.production import restart_check, restart_names
+
+    result = subprocess.check_output(
+        ["sacct", "-j", str(job), "-X", "-n", "-P", "--format=JobID,State,ExitCode"],
+        text=True,
+    )
+    rows = [line.strip().split("|") for line in result.splitlines()]
+    if not any(row[:3] == [str(job), "COMPLETED", "0:0"] for row in rows):
+        raise RuntimeError(f"Predecessor {job} has no successful accounting record")
+    root = project / "nwm/runs/conus/retro" / campaign
+    accepted = json.loads((root / f"{year}-passed.json").read_text())
+    end = datetime(year + 1, 1, 1)  # noqa: DTZ001 -- model clocks are naive UTC
+    if accepted.get("passed") is not True or accepted.get("end") != str(end):
+        raise RuntimeError("Predecessor annual acceptance is missing or inconsistent")
+    restart_root = project / "nwm/restarts/conus/retro" / campaign / "production"
+    paths = [restart_root / end.strftime("%Y/%m") / name for name in restart_names(end)]
+    if accepted.get("restarts") != [str(path) for path in paths]:
+        raise RuntimeError("Predecessor restart paths do not match the campaign")
+    restart_check(paths, end)
 
 
 def main():
@@ -14,7 +38,11 @@ def main():
     parser.add_argument("--end-year", type=int, default=1980)
     parser.add_argument("--submit", action="store_true")
     parser.add_argument("--extend", action="store_true", help="Append years to an existing chain")
+    parser.add_argument("--completed-predecessor", action="store_true",
+                        help="Verify completed predecessor and restart pair instead of live dependency")
     args = parser.parse_args()
+    if args.completed_predecessor and not args.extend:
+        parser.error("--completed-predecessor requires --extend")
     if not re.fullmatch(r"[A-Za-z0-9_-]+", args.campaign):
         parser.error("Invalid campaign name")
     if not 1979 <= args.end_year <= 2002:
@@ -35,6 +63,9 @@ def main():
             parser.error("Existing chain must end in an annual job")
         last_year = int(command[command.index("--year") + 1])
         dependency = last["job"]
+        if args.completed_predecessor:
+            verify_completed_predecessor(project, args.campaign, last_year, dependency)
+            dependency = None
         years = list(range(last_year + 1, args.end_year + 1))
         if not years:
             parser.error("Requested end year is already covered")

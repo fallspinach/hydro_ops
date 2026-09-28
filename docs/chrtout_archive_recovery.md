@@ -194,8 +194,7 @@ CONUS recovery has now been submitted separately from the original held chain:
 Both use the new `recovery_record_stack_v1` CONUS campaign, with separate
 `acceptance` and `production` output/restart directories. Outputs are daily
 LDASOUT, hourly calendar-day CHRTOUT collections and native daily CHRTOUT. The
-original CONUS 1988–2002 continuation remains held; no later recovery years have
-yet been submitted. Failed CONUS segments now attempt to preserve raw hourly
+original CONUS 1988–2002 continuation remains held. Failed CONUS segments now attempt to preserve raw hourly
 channel files and any restart files to permanent `failed_raw/<job>/<segment>`
 storage before exiting (this cannot protect against abrupt node loss or kill).
 Ten publisher/production tests and the production-module lint check passed.
@@ -203,3 +202,33 @@ Ten publisher/production tests and the production-module lint check passed.
 The June 1987 rescue report confirms **720 raw hourly files** and cancellation
 of the old allocation only after preservation. These remain available for
 republication without rerunning that month; recovery publication is still to do.
+
+### CONUS continuation through 2002 (2026-09-28 UTC)
+
+The corrected 1979 recovery job **4652106** passed in **36h 51m 48s**,
+ending at 1980-01-01 00 UTC. Its accepted terminal restart pair was checked
+before extending the same campaign through 2002:
+
+```bash
+python bin/submit_conus_retro_simulation.py \
+  --campaign recovery_record_stack_v1 --extend --completed-predecessor \
+  --end-year 2002 --submit
+```
+
+Jobs **4665003–4665025** cover **1980–2002**, one year per job, with
+`afterok` dependencies between consecutive years. Job 4665003 started immediately;
+the rest wait for their predecessor. Each requests 120 MPI ranks, 48 hours and
+240 GB scratch, without NRTRES. Daily LDASOUT, hourly and daily CHRTOUT, and
+monthly restart checkpoints remain enabled. The old held campaign is untouched.
+At the 1979 rate, this sequential chain represents about 35 days of processing,
+excluding queue delays and year-to-year runtime variation.
+
+`--completed-predecessor` is only for extending a completed chain whose final
+job may have aged out of SLURM's live job table. It requires a successful
+`sacct` exit record, the annual acceptance marker, and the expected terminal
+restart pair with validated timestamps before omitting that old dependency.
+Omit `--submit` to preview; repeat submission is rejected once the requested
+end year is already recorded. All 8,402 expected daily forcing paths from
+1980-01-01 through 2003-01-01 were present at submission; monthly model preflight
+still validates required times and variables. This path check is not a new
+full-field forcing audit. Submission and production tests: 12 passed.
