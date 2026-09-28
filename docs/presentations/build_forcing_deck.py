@@ -226,7 +226,7 @@ s=Slide('Scheduled opportunities ≠ current-hour delivery','Repository schedule
 table(s,['Lane','UTC schedule','Current scan / behavior'],[
 ['NRT','02 / 14 / 20','10 target days; skip unchanged'],
 ['Daily NRT','08 each day','200-day deeper revision check'],
-['Retro','10 on the 18th','45-day eligibility window; stable only']],[2.6,3,6.7],row_h=.95)
+['Retro','18 on the 18th','45-day eligibility window; stable only']],[2.6,3,6.7],row_h=.95)
 s.text(.7,5.92,11.9,.55,'NRT endpoint: UTC today − 2 days. No partial-current-day delivery.',20,RED,True)
 s.text(.7,6.58,11.9,.3,'Status report template: every 2 hours • 7-day recent GFS-aware processing tail',15,GRAY)
 

@@ -17,7 +17,8 @@ CRON_TZ=UTC
 
 # Stable retrospective promotion after PRISM's normal mid-month revision cycle. Cleanup is a
 # dependency-gated final stage and never runs inside parallel PRISM workers.
-0 10 18 * * /usr/bin/bash /cw3e/mead/projects/cwp206/agentization/hydro_ops/bin/run_cron.sh bin/update_nwm_forcing.py --cycle monthly-retro >> /cw3e/mead/projects/cwp206/agentization/hydro_ops/forcing/logs/nwm-cycle-retro.log 2>&1
+# Prefer ordinary resources for this non-urgent cycle, not NRTRES.
+0 18 18 * * /usr/bin/bash /cw3e/mead/projects/cwp206/agentization/hydro_ops/bin/run_cron.sh bin/update_nwm_forcing.py --cycle monthly-retro >> /cw3e/mead/projects/cwp206/agentization/hydro_ops/forcing/logs/nwm-cycle-retro.log 2>&1
 
 # Read-only dashboard status every two hours (may coincide with cycle submission). The
 # writer atomically replaces the canonical JSON document, so web readers never see partial JSON.

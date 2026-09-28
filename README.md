@@ -81,9 +81,10 @@ python bin/update_forcing.py --dry-run
 ```
 
 The canonical project schedule is tracked in `cron/hydro_ops.crontab`, including download
-refresh and rolling forcing-production submission. Installation remains gated by
-[operational reliability acceptance](docs/nrt_reliability_acceptance.md); the inspected
-host has no installed crontab. Do not install duplicate source-only schedules alongside it.
+refresh and rolling forcing-production submission. Following operational testing,
+the user confirmed manual installation on login1 on September 28, 2026.
+See [operational reliability acceptance](docs/nrt_reliability_acceptance.md).
+Keep the schedule on one host only; do not install duplicate source-only schedules alongside it.
 Account policy: `mpan` is for prototyping/testing **without NRTRES**; real operations
 will use `cw3ehydro` with NRTRES explicitly configured. See the
 [deployment account policy](docs/cron_environment.md#user-accounts-and-operational-reservation-policy).
@@ -538,11 +539,11 @@ method, before deletion.
 
 The operational cadence has three passes:
 
-| Pass | Schedule (local time) | Scan window |
+| Pass | Schedule (UTC) | Scan window |
 |---|---:|---:|
-| Fast NRT | 02:45, 08:45, 14:45, 20:45 daily | Latest 10 eligible days |
-| NRT reconciliation | 04:30 daily | Latest 200 eligible days |
-| Stable retrospective | 05:30 on the 18th monthly | 45 days ending at the six-month boundary |
+| Fast NRT | 08:30, 14:30, 20:30 daily | Extend through latest available contiguous hour |
+| NRT reconciliation | 02:30 daily | Extension, then recent revisions and 200-day scan |
+| Stable retrospective | 18:00 on the 18th monthly | 45 days ending at the six-month boundary; prefer non-reserved resources |
 
 The retrospective window is deliberately offset: it scans newly stable dates approximately six
 months behind the current date, not the latest 45 calendar days. Existing current outputs are

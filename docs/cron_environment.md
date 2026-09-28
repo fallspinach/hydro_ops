@@ -1,8 +1,10 @@
 # Cron environment on AWARE login nodes
 
 Use `bin/run_cron.sh` for each entry in `cron/hydro_ops.crontab`. Keep the schedule
-installed on **one login node only**. The user removed the login2 crontab before
-the login1 wrapper tests; this change does not install a crontab on either node.
+installed on **one login node only**. On September 28, 2026, the user confirmed
+manual installation of the updated schedule on **login1**. This is a user-reported
+deployment confirmation, not a cross-host audit. Ensure no duplicate schedule
+remains on login2. Future edits to the saved files still require reinstallation.
 
 ## User accounts and operational reservation policy
 
@@ -11,7 +13,7 @@ The Unix execution account determines the deployment context:
 | Account | Purpose | NRTRES policy |
 | --- | --- | --- |
 | `mpan` | Prototyping, development, benchmarks and operational-cycle tests | Do **not** request `NRTRES`, even to work around long queue waits. |
-| `cw3ehydro` | Real operational production | Explicitly activate `NRTRES` in the operational job-submission configuration. |
+| `cw3ehydro` | Real operational production | Explicitly activate `NRTRES` for time-critical NRT work; prefer ordinary resources for monthly retro work. |
 
 Slurm listing `mpan` among a reservation's permitted users is technical access,
 not authorization under this project's operating policy. The earlier suggestion
@@ -67,7 +69,15 @@ Installing a file replaces that host's current user crontab, so preserve any unr
 entries. The saved UTC schedule runs daily at **02:30**, with extension-only cycles
 at **08:30, 14:30, and 20:30**. Daily includes the extension, so do not add a second
 six-hourly invocation at 02:30. Status reporting remains every two hours at minute
-30; retrospective promotion remains at 10:00 UTC on the 18th of each month.
+30; retrospective promotion runs at **18:00 UTC on the 18th of each month**.
+The monthly cycle is non-urgent and should use ordinary resources rather than
+NRTRES when possible, including its dependent jobs. Current `mpan` submissions
+do not request NRTRES at all. This preference must also be preserved when
+configuring the future `cw3ehydro` deployment; do not apply a blanket reservation
+setting to every cycle. The 18th gives a buffer after PRISM's approximate
+mid-month updates, not a guarantee that every daily grid is stable; normal
+stable-data eligibility checks still apply. The later UTC hour avoids the
+early-day workload.
 See [NRT scheduling](nrt_operational_extension_schedule.md) for the timing rationale.
 Do not add a duplicate source-only refresh schedule.
 Observe the first live cycle and its dependent jobs after installation; successful
