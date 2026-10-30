@@ -17,6 +17,11 @@ nwm/**
 !nwm/**/
 !nwm/**/.gitkeep
 
+# Observation downloads and generated metadata inventories
+observations/**
+!observations/**/
+!observations/**/.gitkeep
+
 # Runtime compatibility links and default SLURM output
 /work
 /logs

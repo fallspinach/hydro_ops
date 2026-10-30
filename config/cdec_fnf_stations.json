@@ -1,0 +1,5 @@
+{
+  "provider": "CDEC",
+  "purpose": "Full natural flow metadata inventory for model validation",
+  "station_ids": ["AMF", "CSN", "EFC", "EWR", "FTO", "KGF", "KRI", "KWT", "MKM", "MRC", "MSS", "PSH", "SBB", "SCC", "SDT", "SIS", "SBF", "SNS", "TLG", "TNL", "TRF", "WFC", "WWR", "YRS"]
+}

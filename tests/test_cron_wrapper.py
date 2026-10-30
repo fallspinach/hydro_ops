@@ -80,7 +80,14 @@ def test_cron_template_uses_wrapper():
         for line in (ROOT / "cron/hydro_ops.crontab").read_text().splitlines()
         if line and line[0].isdigit()
     ]
-    assert len(entries) == 4
+    assert len(entries) == 7
+    assert any(line.startswith('15 19 * * * ') and 'bin/submit_cdec_swe.py' in line
+               for line in entries)
+    assert any(line.startswith('0 19 * * * ') and 'bin/submit_cdec_fnf.py' in line
+               for line in entries)
+    assert any(line.startswith('0 18 * * * ') and
+               'submit_stage4_revision_monitor.py --until 2026-11-30' in line
+               for line in entries)
     assert not any('bin/submit_cnrfc_sync.py' in line for line in entries)
     assert all("bin/run_cron.sh " in line and "conda run" not in line for line in entries)
     assert all(">> /cw3e/" in line for line in entries)

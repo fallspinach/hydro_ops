@@ -10,3 +10,9 @@ CRON_TZ=UTC
 # Read-only dashboard status.
 30 */2 * * * /usr/bin/bash @WRAPPER@ bin/report_forcing_status.py --format json --output forcing/status/forcing-status.json >> @LOG_ROOT@/forcing-status.log 2>&1
 # CNRFC catch-up is dependency-chained by the forcing cycles; no separate cron row.
+# CDEC FNF observations: daily full-history refresh at 19 UTC (11 PST), ordinary resources.
+0 19 * * * /usr/bin/bash @WRAPPER@ bin/submit_cdec_fnf.py >> @OBS_LOG_ROOT@/cdec-fnf-submit.log 2>&1
+# SWE: native sensor-3/82 updates; wait for accepted initial backfill; no NRTRES.
+15 19 * * * /usr/bin/bash @WRAPPER@ bin/submit_cdec_swe.py >> @OBS_LOG_ROOT@/cdec-swe-submit.log 2>&1
+# Temporary Stage-IV revision observations through November 30, 2026; no production writes.
+0 18 * * * /usr/bin/bash @WRAPPER@ bin/submit_stage4_revision_monitor.py --until 2026-11-30 >> @LOG_ROOT@/stage4-revision-monitor.log 2>&1

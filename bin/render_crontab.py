@@ -13,6 +13,8 @@ def render(root: Path, template: str) -> str:
         raise ValueError("Cron project paths cannot contain percent or newline characters")
     return template.replace("@WRAPPER@", shlex.quote(str(root / "bin/run_cron.sh"))).replace(
         "@LOG_ROOT@", shlex.quote(str(root / "forcing/logs"))
+    ).replace(
+        "@OBS_LOG_ROOT@", shlex.quote(str(root / "observations/logs"))
     )
 
 
