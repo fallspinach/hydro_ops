@@ -13,10 +13,20 @@ import shlex
 import subprocess
 import sys
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 from hydro_ops.config import load_settings
 from hydro_ops.forcing.nrt_cycle import activation, configuration, require_operational_gfs
 from hydro_ops.forcing.streams import forcing_stream_root
+
+
+def latest_time_limit() -> str:
+    """Two-hour routine ceiling, with an explicit catch-up override."""
+    value = os.environ.get("HYDRO_OPS_NRT_LATEST_MINUTES", "120")
+    if not value.isdecimal() or not 1 <= int(value) <= 10080:
+        raise ValueError("HYDRO_OPS_NRT_LATEST_MINUTES must be 1–10080 whole minutes")
+    hours, minutes = divmod(int(value), 60)
+    return f"{hours:02d}:{minutes:02d}:00"
 
 
 def cycle_window(cycle: str, today: date) -> tuple[str, date, date, int, int]:
@@ -28,6 +38,26 @@ def cycle_window(cycle: str, today: date) -> tuple[str, date, date, int, int]:
         return "nrt", end - timedelta(days=199), end, 200, 12
     end = today - timedelta(days=183)
     return "retro", end - timedelta(days=44), end, 45, 8
+
+
+def retro_backlog(root: Path, window_start: date, floor: date = date(1981, 1, 1)) -> list[date]:
+    """Find filename gaps behind the rolling window; scientific audits run in SLURM.
+
+    Daily PRISM starts in 1981. The 1979–1980 monthly-constrained archive is
+    intentionally outside this workflow. Fail closed on an uninitialized root.
+    """
+    if not root.is_dir():
+        raise ValueError('Retro archive missing; initialize with an explicit window')
+    available = {p.name[:8] for p in root.glob('*/*/????????.LDASIN_DOMAIN1') if p.is_file()}
+    if not available:
+        raise ValueError('Retro archive empty; initialize with an explicit window')
+    gaps = []
+    day = floor
+    while day < window_start:
+        if day.strftime('%Y%m%d') not in available:
+            gaps.append(day)
+        day += timedelta(days=1)
+    return gaps
 
 
 def main() -> int:
@@ -89,6 +119,12 @@ def main() -> int:
         ):
             print(f"SKIP active coordinated {stream} workflow ({coordinator_prefix})")
             return 0
+        nominal_start = start
+        backlog = []
+        if args.cycle == 'monthly-retro' and not explicit_window:
+            backlog = retro_backlog(forcing_stream_root(settings.project_root, 'retro'), start)
+            if backlog:
+                start = min(start, backlog[0])
         plan = {
             "created": launched_at,
             "cycle": args.cycle,
@@ -103,6 +139,11 @@ def main() -> int:
             "maximum_attempts": 4,
             "initial_dependency": args.dependency,
         }
+        if args.cycle == 'monthly-retro':
+            plan['nominal_window_start'] = nominal_start.isoformat()
+            plan['backlog_scan_enabled'] = not explicit_window
+            plan['historical_filename_gaps'] = [day.isoformat() for day in backlog]
+            plan['coverage_scan_scope'] = '1981 onward; filename existence, not scientific acceptance'
         if stream == "nrt":
             require_operational_gfs(settings.project_root)
             config = configuration(settings.project_root)
@@ -125,9 +166,11 @@ def main() -> int:
                 return 0
             worker_partition = os.environ.get('HYDRO_OPS_NRT_PARTITION', 'compute-128')
             plan['latest_worker_partition'] = worker_partition
+            latest_limit = latest_time_limit()
+            plan['latest_time_limit'] = latest_limit
             command = ['sbatch', '--parsable', f'--partition={worker_partition}',
                        '--nodes=1', '--ntasks=1', '--cpus-per-task=128', '--tmp=240000',
-                       '--time=06:00:00', f'--job-name=nwm-cycle-{args.cycle}-latest-hour',
+                       f'--time={latest_limit}', f'--job-name=nwm-cycle-{args.cycle}-latest-hour',
                        f'--output={settings.log_root}/nrt-latest-extension-%j.out',
                        '--wrap', 'source bin/project_environment.sh; exec ' +
                        shlex.join([sys.executable, 'bin/run_latest_nrt.py'])]

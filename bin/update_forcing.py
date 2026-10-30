@@ -129,9 +129,9 @@ def main(argv: list[str] | None = None) -> int:
             if workflow.source == "nldas2":
                 command.append("--discover-latest")
             if workflow.source == "stage4":
-                # A rolling refresh routinely outruns publication of the stable
-                # archive. Log missing days and continue; other errors stay fatal.
-                command.append("--allow-missing")
+                # Routine acquisition uses NOMADS only. The apparently stalled
+                # EMC archive remains available for explicit historical backfills.
+                command.extend(("--stream", "realtime"))
             planned = refresh_dates(
                 workflow.source,
                 settings,

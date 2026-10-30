@@ -16,7 +16,7 @@ def load(name):
     return module
 
 
-def test_refresh_allows_only_stage4_missing_archives(tmp_path, monkeypatch):
+def test_refresh_uses_stage4_realtime_without_archive_requests(tmp_path, monkeypatch):
     module = load("update_forcing")
     monkeypatch.setattr(module, "load_settings", lambda: SimpleNamespace(work_root=tmp_path))
     monkeypatch.setattr(module, "forcing_coverage", lambda settings: [])
@@ -30,7 +30,9 @@ def test_refresh_allows_only_stage4_missing_archives(tmp_path, monkeypatch):
     monkeypatch.setattr(module.subprocess, "run", run)
     assert module.main([]) == 0
     assert len(commands) == 5
-    assert all(("--allow-missing" in command) == ("stage4" in command) for command in commands)
+    assert all('--allow-missing' not in command for command in commands)
+    stage4 = next(command for command in commands if 'stage4' in command)
+    assert stage4[stage4.index('--stream') + 1] == 'realtime'
     assert all(("--discover-latest" in command) == ("nldas2" in command) for command in commands)
 
 

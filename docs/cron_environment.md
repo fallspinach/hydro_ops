@@ -80,5 +80,15 @@ stable-data eligibility checks still apply. The later UTC hour avoids the
 early-day workload.
 See [NRT scheduling](nrt_operational_extension_schedule.md) for the timing rationale.
 Do not add a duplicate source-only refresh schedule.
+The saved schedule also submits CDEC daily/monthly full-natural-flow refreshes
+at **19:00 UTC daily** through `bin/submit_cdec_fnf.py`. It uses ordinary SLURM
+resources, its own dataset lock, and `observations/logs/`; see
+[CDEC observations](cdec_observations.md). Reinstall the saved schedule manually
+after reviewing this addition; saving the row does not install it.
+The SWE observation update follows at **19:15 UTC** through
+`bin/submit_cdec_swe.py`. It skips active SWE campaigns and requires accepted
+initial history. See [CDEC SWE observations](cdec_swe_observations.md) for its
+native durations, incremental windows and historical revision policy. These
+saved observation rows still require manual installation on login1.
 Observe the first live cycle and its dependent jobs after installation; successful
 environment tests are not an end-to-end production validation.

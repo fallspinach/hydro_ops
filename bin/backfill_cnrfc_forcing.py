@@ -120,7 +120,7 @@ def process(task):
             finally:
                 staging.unlink(missing_ok=True)
         return result | {'status': 'published', 'seconds': time.monotonic() - started}
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- every per-file failure must be recorded
         return result | {'status': 'failed', 'error': str(error),
                          'seconds': time.monotonic() - started}
 
@@ -148,10 +148,13 @@ def main():
     parser.add_argument('--stream', choices=('all', 'retro', 'nrt'), default='all')
     parser.add_argument('--frequency', choices=('all', 'hourly', 'daily', 'monthly'), default='all')
     parser.add_argument('--incremental', action='store_true', help='Operational synchronization report and bounded source-race retries')
+    parser.add_argument('--migration-test', action='store_true', help='Explicit post-promotion validation only')
     args = parser.parse_args()
     if args.workers < 1:
         parser.error('--workers must be positive')
     root = Path(__file__).resolve().parents[1]
+    from hydro_ops.cnrfc_domain import require_available
+    require_available(root, migration_test=args.migration_test)
     parent = root / 'forcing/outputs/conus'
     output = root / 'forcing/outputs/cnrfc'
     mask = root / 'nwm/static/domains/cnrfc/masks/cnrfc_masks.nc'
@@ -182,7 +185,7 @@ def main():
                   'published': 0, 'skipped': 0, 'failed': 0, 'workers': args.workers,
                   'counts': counts, 'job_id': os.environ['SLURM_JOB_ID']}
         atomic_json(campaign / 'status.json', report)
-        with (campaign / 'results.jsonl').open('a', buffering=1) as log:
+        with (campaign / 'results.jsonl').open('a', buffering=1) as log:  # noqa: SIM117
             with ProcessPoolExecutor(max_workers=args.workers,
                                      mp_context=multiprocessing.get_context('spawn')) as pool:
                 for result in pool.map(process_retry if args.incremental else process, tasks, chunksize=1):

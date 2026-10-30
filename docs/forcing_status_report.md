@@ -21,6 +21,22 @@ report additional domains following the same layout.
 
 ## Latest hour and scope
 
+To view the saved cron report without rescanning files or contacting SLURM:
+
+```bash
+python bin/report_forcing_status.py --read-report
+python bin/report_forcing_status.py --read-report /path/to/report.json
+```
+
+With no path, `--read-report` reads `forcing/status/forcing-status.json` under
+the project containing the script. An explicit relative path is relative to
+the current directory. It uses the same terminal tables as a live scan and
+preserves the saved generation timestamp, ages and scheduler snapshot; these
+are not refreshed. `--format json` and `--output` also work, but the input report
+cannot be overwritten. Live scan options (`--start`, `--end`, `--gap-limit`,
+`--no-slurm`) cannot be combined with `--read-report`. Missing, malformed or
+incompatible reports produce an error, never an implicit live scan.
+
 Hourly products remain calendar-day collections. The reporter reads only the
 small `time` coordinate in the newest collection for each domain/stream and
 prints its actual last timestamp in UTC. It does not assume that a file named

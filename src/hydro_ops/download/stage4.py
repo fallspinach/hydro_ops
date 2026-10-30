@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import logging
 import re
 import tarfile
@@ -20,6 +21,19 @@ from hydro_ops.download.http import apply_remote_mtime, local_matches_remote
 from hydro_ops.download.stage4_convert import Stage4Converter
 
 LOG = logging.getLogger(__name__)
+
+
+def realtime_availability(day: date, names: list[str], today: date) -> dict:
+    """Remote listing completeness, not a local download or value audit."""
+    expected = [f'st4_conus.{day:%Y%m%d}{hour:02d}.{period:02d}h.grb2'
+                for period, hours in ((1, range(24)), (6, range(0, 24, 6))) for hour in hours]
+    missing = sorted(set(expected) - set(names))
+    age = (today-day).days
+    status = ('at_risk' if age >= 7 else 'incomplete') if missing and age >= 2 else (
+        'recent_pending' if missing else 'complete')
+    return {'date': day.isoformat(), 'checked_at': datetime.now(UTC).isoformat(),
+            'scope': 'remote_listing_only', 'status': status, 'age_days': age,
+            'missing_files': missing}
 
 
 @dataclass(frozen=True)
@@ -80,6 +94,16 @@ class Stage4Downloader:
                 return []
             response.raise_for_status()
         names = sorted(set(pattern.findall(response.text)))
+        availability = realtime_availability(day, names, datetime.now(UTC).date())
+        report = self.settings.stage4_data_dir / 'status/realtime-availability' / f'{stamp}.json'
+        report.parent.mkdir(parents=True, exist_ok=True)
+        temporary = report.with_suffix('.json.partial')
+        temporary.write_text(json.dumps(availability, indent=2) + '\n')
+        temporary.replace(report)
+        if availability['status'] in ('incomplete', 'at_risk'):
+            LOG.warning('Stage-IV realtime availability %s: %s missing files on %s; '
+                        'repair before NOMADS retention expires', availability['status'],
+                        len(availability['missing_files']), day)
         if not names:
             if day == datetime.now(UTC).date():
                 LOG.warning("Stage-IV realtime %s has no published files yet; retry next refresh", day)

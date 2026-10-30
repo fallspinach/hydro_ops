@@ -8,6 +8,28 @@ import requests
 from hydro_ops.download.stage4 import Stage4Downloader, is_grib2, is_tar
 
 
+def test_operational_defaults_and_explicit_archive():
+    from hydro_ops.cli import build_parser
+    parser = build_parser()
+    for action in ('download', 'submit'):
+        assert parser.parse_args([action, 'stage4']).stream == 'realtime'
+        assert parser.parse_args([action, 'stage4', '--stream', 'archive']).stream == 'archive'
+        assert parser.parse_args([action, 'stage4', '--stream', 'both']).stream == 'both'
+
+
+def test_realtime_missing_hour_alerts():
+    from hydro_ops.download.stage4 import realtime_availability
+    day = date(2026, 10, 1)
+    names = [f'st4_conus.20261001{h:02d}.{period:02d}h.grb2'
+             for period, hours in ((1, range(24)), (6, range(0, 24, 6))) for h in hours]
+    assert realtime_availability(day, names, date(2026, 10, 8))['status'] == 'complete'
+    names.remove('st4_conus.2026100103.01h.grb2')
+    report = realtime_availability(day, names, date(2026, 10, 8))
+    assert report['status'] == 'at_risk'
+    assert report['missing_files'] == ['st4_conus.2026100103.01h.grb2']
+    assert realtime_availability(day, names, day)['status'] == 'recent_pending'
+
+
 @pytest.mark.parametrize("status,offset,skip", [(404, 0, True), (200, 0, True),
                                                (404, -1, False), (404, 1, False),
                                                (403, 0, False), (500, 0, False),

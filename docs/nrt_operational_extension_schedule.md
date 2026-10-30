@@ -14,6 +14,42 @@ project's ordinary partition. The initial rejected submission started no jobs.
 
 ## UTC schedule
 
+### Monthly retro gap catch-up
+
+Automatic monthly-retro planning retains its normal 45-day window ending
+183 days behind the current UTC date, but first scans published CONUS retro
+hourly filenames from January 1, 1981 to the day before that window. If older
+dates are missing, it moves the start back to the earliest gap. The plan records
+`nominal_window_start`, `historical_filename_gaps`, and `backlog_scan_enabled`.
+This prevents a missed cron cycle from permanently dropping days as the moving
+window advances. An absent/empty archive fails closed and requires explicit
+initialization; the 1979–1980 monthly-PRISM product is outside this daily workflow.
+
+The scan is metadata-only, not scientific certification. Compute-node controller
+checks still require 24 calendar-day records, accepted PRISM reconciliation and
+stable precipitation constraints. Accepted products are skipped, unresolved
+dates are retried using the existing bounded convergence cycle, and baseline
+cleanup still requires accepted replacements. Source refresh retains its normal
+lookback; missing historical source inputs can still block a repair and require
+a separate download. Failed days remain discoverable in later monthly cycles.
+Explicit `--start/--end` windows remain exact and bypass automatic range expansion.
+
+The October 27, 2026 dry run identified precisely March 3–4 behind its nominal
+March 14 start. Those dates had fallen between the older March 2 archive endpoint
+and the October 18 cycle's March 5–April 18 window. Both baseline files remained
+available. No crontab installation or schedule change is needed for this fix.
+
+Targeted repair submitted October 27: baseline boundary rebuild **5030586**
+(one task), followed by convergence controller **5030587** for March 3–4.
+The controller will apply stable PRISM constraints, check acceptance, perform
+audited baseline cleanup and submit normal summary/CNRFC propagation follow-ups.
+Manifest: `forcing/work/nwm-forcing-cycle-monthly-retro-20261027T074804Z.json`.
+Submission does not imply completed publication. Regression suite: 527 passed,
+2 skipped. The expanded-domain model chain remains frozen at March 2 until
+the repaired continuity is verified and a continuation is separately scheduled.
+
+### Submission times
+
 The saved schedule and relocation template use `CRON_TZ=UTC`:
 
 | Cycle | Submission time (UTC) | Work |
@@ -61,6 +97,21 @@ it no longer caps the latest-hour worker. The broad daily revision window and
 its existing recent-tail lookback have not been retuned in this change.
 
 ## Safety and status
+
+Latest-hour jobs for both daily and six-hourly cycles request **two hours** by
+default. Recent daily extensions typically took 20–30 minutes, with a checked
+historical maximum of 52m 53s. This limit does not include dependent revision,
+summary or CNRFC jobs and does not alter their limits. For exceptional multi-day
+catch-up, explicitly override the latest-hour ceiling (whole minutes):
+
+```bash
+HYDRO_OPS_NRT_LATEST_MINUTES=360 /usr/bin/bash bin/run_cron.sh \
+  bin/update_nwm_forcing.py --cycle six-hourly
+```
+
+The selected `latest_time_limit` is recorded in the cycle submission manifest.
+Changing the default affects future submissions only; existing allocations and
+pending jobs retain their current SLURM limits. No crontab edit is required.
 
 The extension holds `forcing/status/nrt-gfs/cycle.lock`, validates the last
 published receipt and its midnight-prefix time axis, and fills forward without

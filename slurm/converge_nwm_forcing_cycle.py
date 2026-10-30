@@ -333,11 +333,58 @@ def main() -> int:
     from hydro_ops.forcing.cnrfc_sync import submit as submit_cnrfc
     try:
         state['cnrfc_sync_job_id'] = submit_cnrfc(
-            project, stream='all' if state['cycle'] == 'daily' else state['stream'], frequency='all',
+            project, stream=state['stream'], frequency='all',
             after=state.get('summary_refresh_job_id') or os.environ.get('SLURM_JOB_ID'),
             partition=state['partition'], account=state.get('account', ''))
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         state.update(status='conus_complete_cnrfc_submission_failed', cnrfc_submission_error=str(error))
+        write_state(manifest, state)
+        return 2
+    if state['stream'] == 'nrt' and state['cycle'] == 'daily':
+        from hydro_ops.wrf_hydro.nrt_schedule import submit_if_enabled
+        try:
+            dependencies = [state['cnrfc_sync_job_id'], state['summary_refresh_job_id']]
+            if os.environ.get('SLURM_JOB_ID'):
+                dependencies.append(os.environ['SLURM_JOB_ID'])
+            state['cnrfc_model_cycle'] = submit_if_enabled(project, dependencies)
+        except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+            state.update(status='forcing_complete_model_submission_failed', model_submission_error=str(error))
+            write_state(manifest, state)
+            return 2
+    if state['stream'] == 'nrt' and state['cycle'] == 'daily':
+        from hydro_ops.forcing.subdomain_sync import submit_daily_branches
+        try:
+            state['subdomain_sync_jobs'] = submit_daily_branches(
+                project, cnrfc_job=state['cnrfc_sync_job_id'],
+                summary_job=state['summary_refresh_job_id'],
+                cycle_id=os.environ['SLURM_JOB_ID'],
+                partition=state['partition'], account=state.get('account', ''))
+            state['subdomain_model_cycles'] = {}
+            for domain in ('b120', 'yampa'):
+                try:
+                    state['subdomain_model_cycles'][domain] = submit_if_enabled(
+                        project, [state['subdomain_sync_jobs'][domain],
+                                  state['summary_refresh_job_id'], os.environ['SLURM_JOB_ID']],
+                        domain=domain)
+                except (OSError, ValueError, RuntimeError, KeyError, subprocess.CalledProcessError) as error:
+                    state.setdefault('subdomain_model_submission_errors', {})[domain] = str(error)
+        except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+            state['subdomain_sync_submission_error'] = str(error)
+    if state['stream'] == 'nrt' and state['cycle'] == 'daily':
+        # Historical catch-up must not gate today's NRT model run. Submit it last
+        # so the existing serialization queue gives NRT synchronization priority.
+        try:
+            state['cnrfc_retro_sync_job_id'] = submit_cnrfc(
+                project, stream='retro', frequency='all', after=state['cnrfc_sync_job_id'],
+                partition=state['partition'], account=state.get('account', ''))
+        except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+            state['cnrfc_retro_sync_submission_error'] = str(error)
+    if state.get('subdomain_sync_submission_error'):
+        state['status'] = 'forcing_complete_subdomain_submission_failed'
+        write_state(manifest, state)
+        return 2
+    if state.get('subdomain_model_submission_errors'):
+        state['status'] = 'forcing_complete_subdomain_model_submission_failed'
         write_state(manifest, state)
         return 2
     write_state(manifest, state)

@@ -25,6 +25,7 @@ read_timeout_seconds = 300
 [stage4]
 realtime_base_url = "https://nomads.ncep.noaa.gov/pub/data/nccf/com/pcpanl/prod"
 archive_base_url = "https://ftp.emc.ncep.noaa.gov/mmb/sref/st2n4.arch"
+# Archive access is explicit/backfill-only; routine downloads use NOMADS realtime.
 data_dir = "forcing/inputs/noaa/stage4"
 download_jobs = 4
 realtime_lookback_days = 7

@@ -6,6 +6,24 @@ from pathlib import Path
 import pytest
 
 
+def test_latest_time_limit_default_and_catchup_override(monkeypatch):
+    module = load_script('update_nwm_forcing.py')
+    monkeypatch.delenv('HYDRO_OPS_NRT_LATEST_MINUTES', raising=False)
+    assert module.latest_time_limit() == '02:00:00'
+    monkeypatch.setenv('HYDRO_OPS_NRT_LATEST_MINUTES', '360')
+    assert module.latest_time_limit() == '06:00:00'
+    monkeypatch.setenv('HYDRO_OPS_NRT_LATEST_MINUTES', '150')
+    assert module.latest_time_limit() == '02:30:00'
+
+
+@pytest.mark.parametrize('value', ['0', '-1', '10081', '1.5', 'six', ''])
+def test_latest_time_limit_rejects_invalid_override(monkeypatch, value):
+    module = load_script('update_nwm_forcing.py')
+    monkeypatch.setenv('HYDRO_OPS_NRT_LATEST_MINUTES', value)
+    with pytest.raises(ValueError, match='whole minutes'):
+        module.latest_time_limit()
+
+
 def test_revision_time_limit_default_and_catchup_override(monkeypatch):
     module = load_slurm_script('converge_nwm_forcing_cycle.py')
     monkeypatch.delenv('HYDRO_OPS_NRT_REVISION_MINUTES', raising=False)
@@ -66,6 +84,29 @@ def test_prism_revision_routing() -> None:
     assert module.revision_for_day(date(2026, 8, 1), today, "nrt") == "provisional"
     assert module.revision_for_day(date(2026, 3, 4), today, "nrt") is None
     assert module.revision_for_day(date(2026, 3, 4), today, "retro") == "stable"
+
+
+def test_retro_backlog_catches_gap_behind_window(tmp_path):
+    module = load_script('update_nwm_forcing.py')
+    for stamp in ('20260301', '20260302', '20260305', '20260418'):
+        p = tmp_path / stamp[:4] / stamp[4:6] / (stamp + '.LDASIN_DOMAIN1')
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.touch()
+    # A sidecar must not conceal a missing data file.
+    (tmp_path / '2026/03/20260303.LDASIN_DOMAIN1.manifest.json').touch()
+    assert module.retro_backlog(tmp_path, date(2026, 3, 5), date(2026, 3, 1)) == [
+        date(2026, 3, 3), date(2026, 3, 4)]
+    for stamp in ('20260303', '20260304'):
+        (tmp_path / '2026/03' / (stamp + '.LDASIN_DOMAIN1')).touch()
+    assert module.retro_backlog(tmp_path, date(2026, 3, 5), date(2026, 3, 1)) == []
+
+
+def test_retro_backlog_refuses_uninitialized_archive(tmp_path):
+    module = load_script('update_nwm_forcing.py')
+    with pytest.raises(ValueError, match='empty'):
+        module.retro_backlog(tmp_path, date(2026, 3, 5))
+    with pytest.raises(ValueError, match='missing'):
+        module.retro_backlog(tmp_path / 'absent', date(2026, 3, 5))
 
 
 def test_batches_split_at_revision_boundary() -> None:

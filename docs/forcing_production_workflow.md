@@ -37,6 +37,13 @@ The production system combines MRMS, Stage-IV, NLDAS-2, HRRR, PRISM, and GFS. GF
 short forecasts are a **required northern-coverage fallback in NRT operations**
 for HRRR-selected hours, not an opt-in experiment or a replacement for NLDAS-2.
 NLDAS-only hours and stable retrospective production do not require GFS.
+Routine Stage-IV acquisition uses NOMADS realtime only, retaining the seven-day
+revision lookback and hourly/six-hourly products. The apparently stalled EMC
+archive is used only for explicitly requested historical downloads; previously
+downloaded archive data remain valid inputs. Missing older realtime listing
+entries are logged and recorded under the Stage-IV input `status/realtime-availability/`
+directory. This acquisition change does not alter precipitation selection,
+the CNRFC correction, or existing forcing products. See the README Stage-IV setup.
 Source choice depends
 on the variable, latency, revision state, effective resolution, quality information, and
 physical consistency. No product is assumed to be universally best merely because its nominal

@@ -25,6 +25,10 @@ def command(root, stream, frequency, partition, account, dependencies):
 
 
 def submit(root: Path, *, stream='nrt', frequency='all', after=None, partition=None, account=None):
+    from hydro_ops.cnrfc_domain import migration_state
+    if migration_state(root).get('blocked'):
+        print(json.dumps({'status': 'disabled_cnrfc_grid_migration'}), flush=True)
+        return None
     from hydro_ops.config import load_settings
     settings = load_settings()
     partition = partition or settings.slurm_partition
