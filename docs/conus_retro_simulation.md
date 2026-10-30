@@ -45,6 +45,17 @@ is not yet measured; the earlier output-free spin-up timing is not a guarantee.
 
 ## Restart safety and monthly execution
 
+### Coupled restart configuration transition (2026-10-10)
+
+Future warm starts use `rst_typ=1` to restore coupled soil/ponded-water state,
+with `RSTRT_SWC=0`, `GW_RESTART=1` unchanged. Existing retro history is retained;
+no full historical rerun is requested. Year 1988 job 4665011 was already running
+with option 0 and is left unchanged; newly launched 1989–2002 jobs pick up option
+1. Verify generated namelists and acceptance reports at the transition. Future
+calibration reruns use option 1. This applies to coupled terrain-routing runs,
+not indiscriminately to cold starts or channel-only runs. See the
+[diagnostic evidence and commissioning plan](cnrfc_nrt_daily_operations.md).
+
 ### Daily channel output enabled for remaining years
 
 The production runner now enables **both `CHRTOUT_HOURLY=1` and

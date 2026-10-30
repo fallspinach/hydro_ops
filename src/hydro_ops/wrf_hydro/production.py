@@ -359,7 +359,7 @@ def run_segment(project, work, logs, output, restart_root, inputs, start, end, r
         {
             "RESTART_FILE": repr(str(inputs[1])),
             "rst_dt": hours * 60,
-            "rst_typ": 0,
+            "rst_typ": 1,
             "RSTRT_SWC": 0,
             "GW_RESTART": 1,
             "t0OutputFlag": 0,
@@ -416,6 +416,7 @@ def run_segment(project, work, logs, output, restart_root, inputs, start, end, r
     restart_check(destinations, end)
     report = {
         "passed": True,
+        "rst_typ": 1,
         "start": start,
         "end": end,
         "mpi_ranks": ranks,

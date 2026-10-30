@@ -61,9 +61,12 @@ changes generally need link/path and diff checks, not production jobs.
 
 ## Layout and scientific invariants
 
-- The top-level subprojects are `forcing/` and `nwm/`; do not reintroduce old
+- The top-level subprojects are `forcing/`, `nwm/` and `observations/`; do not reintroduce old
   `data/forcing/` or `outputs/forcing/nwm/` compatibility paths. See
   [project layout](docs/project_layout.md).
+- Shared observations are stored once by provider/station, retaining raw values,
+  flags and provider timestamps. Do not assume CDEC PST date labels match NWM UTC
+  daily intervals; see [CDEC observations](docs/cdec_observations.md).
 - Keep domains, streams (`baseline`, `nrt`, `retro`) and temporal resolutions
   distinct. Forcing outputs use
   `forcing/outputs/<domain>/<stream>/<resolution>/YYYY/MM/`.
@@ -96,6 +99,11 @@ changes generally need link/path and diff checks, not production jobs.
   hourly/daily CHRTOUT modes, hourly record stacking, and monthly checkpoints.
   See [archive recovery](docs/chrtout_archive_recovery.md) and
   [CONUS production](docs/conus_retro_simulation.md).
+- Fully coupled warm starts with terrain routing enabled use `rst_typ=1` and
+  matching land/hydro restart pairs. Preserve `RSTRT_SWC=0` and `GW_RESTART=1`.
+  Do not apply this setting blindly to cold starts or channel-only configurations.
+  Existing option-0 history is retained, not silently invalidated or rerun; future
+  calibration reruns use option 1. See [restart transition](docs/cnrfc_nrt_daily_operations.md).
 - CNRFC work: [domain boundary](docs/cnrfc_domain_boundary.md),
   [forcing subsetting](docs/cnrfc_forcing_operations.md), and
   [restart subsetting](docs/nwm_restart_subsetting.md).

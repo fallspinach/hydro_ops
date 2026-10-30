@@ -100,6 +100,7 @@ else
     sed -i "s|^RESTART_FILENAME_REQUESTED.*|RESTART_FILENAME_REQUESTED = '$input_land'|" \
         "$run_root/namelist.hrldas"
     sed -i \
+        -e 's/^[[:space:]]*rst_typ[[:space:]]*=.*/rst_typ = 1/' \
         -e "s|^[[:space:]]*RESTART_FILE.*|RESTART_FILE = '$input_hydro'|" \
         -e 's/^[[:space:]]*RSTRT_SWC[[:space:]]*=.*/RSTRT_SWC = 0/' \
         -e 's/^[[:space:]]*GW_RESTART[[:space:]]*=.*/GW_RESTART = 1/' \

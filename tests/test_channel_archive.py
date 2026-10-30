@@ -2,7 +2,7 @@ import netCDF4 as nc
 import numpy as np
 import pytest
 
-from hydro_ops.wrf_hydro.channel_archive import publish_hourly
+from hydro_ops.wrf_hydro.channel_archive import publish_day, publish_hourly
 
 
 def native(path, hour, reference=0, ids=(10, 20, 30)):
@@ -63,3 +63,23 @@ def test_static_alignment_and_time_gaps_fail(tmp_path):
     native(second, 3)
     with pytest.raises(ValueError, match='gapped'):
         publish_hourly([first, second], tmp_path / 'gap')
+
+
+def test_replay_replaces_overlap_preserves_midnight(tmp_path):
+    paths = []
+    for hour in range(3):
+        p = tmp_path / f'19790201{hour:02d}00.CHRTOUT_DOMAIN1'
+        native(p, hour)
+        paths.append(p)
+    old = tmp_path / 'old/19790201.CHRTOUT_DOMAIN1'
+    publish_day(paths, old)
+    native(paths[1], 1, reference=100)
+    with nc.Dataset(paths[1], 'r+') as ds:
+        ds['streamflow'][:] = [999., 888., -9999.]
+    new = tmp_path / 'new/19790201.CHRTOUT_DOMAIN1'
+    publish_day([old, paths[1]], new, replace_overlap=True)
+    with nc.Dataset(new) as ds:
+        np.testing.assert_array_equal(ds['streamflow'][:, 0], [1, 999, 3])
+        np.testing.assert_array_equal(ds['reference_time'][:], [0, 100, 0])
+    with nc.Dataset(old) as ds:
+        np.testing.assert_array_equal(ds['streamflow'][:, 0], [1, 2, 3])

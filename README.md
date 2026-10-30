@@ -2,6 +2,15 @@
 
 Portable workflows for meteorological forcing, hydrologic model runs, and analysis on SLURM.
 
+Shared validation observations are stored under `observations/`. See
+[CDEC full-natural-flow observations](docs/cdec_observations.md) for the 24-station
+metadata inventory, daily/monthly historical records and daily update command.
+The [CDEC SWE workflow](docs/cdec_swe_observations.md) preserves sensor-3/82
+monthly, daily, hourly and event records with separate daily update scheduling.
+The [USGS daily streamflow inventory](docs/usgs_streamflow_observations.md) uses
+the v1 API and preserves station time-zone metadata, with reporting-region lists
+for CNRFC, B120, UCRB and Yampa.
+
 Start with the [current workflows and experiment catalog](docs/experiment_catalog.md)
 before reusing test scripts or results. Historical job receipts are not current
 production acceptance; obsolete launchers are removed and retained in Git history.
@@ -115,7 +124,7 @@ The underlying source refresh can still be run independently using the project e
 ```
 
 The individual workflows retain their configured latency and refresh behavior: NLDAS-2
-targets its lagged day, Stage-IV refreshes realtime plus archive data, PRISM checks its
+targets its lagged day, Stage-IV refreshes NOMADS realtime data only, PRISM checks its
 revision window, HRRR retrieves the previous complete UTC day, and MRMS refreshes recent
 Pass 1, Pass 2, and quality fields.
 
@@ -630,7 +639,9 @@ The submission requests one node, one task, and `download_jobs` CPUs on `shared-
 
 ## Stage-IV setup
 
-Stage-IV precipitation is available without credentials from two NOAA streams. The
+Stage-IV acquisition supports two NOAA streams without credentials, but routine
+operations use **NOMADS realtime only**. The EMC archive appears stalled at
+September 12, 2026; this is not a confirmed NOAA discontinuation announcement. The
 realtime NOMADS stream contains individual GRIB2 files and is refreshed on every run
 because files can be revised. The stable archive stream contains daily tar files; valid
 local copies are skipped when their size and modification time match the server copy.
@@ -639,7 +650,7 @@ converted separately with `wgrib2` to preserve that reporting hour's full projec
 and missing-data mask; products with different accumulation periods are never merged.
 
 ```bash
-# Refresh the configured seven-day realtime lookback and fetch the archive day.
+# Refresh today and the configured seven-day realtime lookback (no archive request).
 hydro-ops download stage4
 
 # Select one stream and an inclusive date range.
@@ -649,9 +660,19 @@ hydro-ops submit stage4 --stream archive --start 2026-07-01 --end 2026-07-31
 
 Data are stored below `forcing/inputs/noaa/stage4/{realtime,archive}`. With no
 date arguments, realtime refreshes today plus the preceding seven days, while archive
-fetches the day eight UTC days ago. These values and both server URLs are configurable
+fetches the day eight UTC days ago only when explicitly selected with `--stream archive`
+or `--stream both`. Use explicit dates for historical backfills. These values and both server URLs are configurable
 under `[stage4]` or with `HYDRO_OPS_STAGE4_*` environment variables.
 Converted files are stored below `forcing/inputs/noaa/stage4/netcdf/{realtime,archive}`.
+Existing archives are retained; this acquisition change does not reprocess forcing.
+Hourly and six-hourly products remain available for the CNRFC correction policy.
+Remote listing audits are written to
+`forcing/inputs/noaa/stage4/status/realtime-availability/YYYYMMDD.json`.
+Missing hourly/six-hourly files trigger log warnings for dates at least two days
+old, labeled `at_risk` at seven days. These are listing checks, not local data
+validation or email alerts. NOMADS has recently retained about 14 calendar dates,
+but retention is not guaranteed; prolonged outages need explicit gap recovery.
+The separate late-revision monitor remains unchanged.
 Existing local files can be converted without contacting NOAA:
 
 ```bash

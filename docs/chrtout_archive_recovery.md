@@ -232,3 +232,48 @@ end year is already recorded. All 8,402 expected daily forcing paths from
 1980-01-01 through 2003-01-01 were present at submission; monthly model preflight
 still validates required times and variables. This path check is not a new
 full-field forcing audit. Submission and production tests: 12 passed.
+
+### CNRFC canonical publication (October 2026)
+
+The completed CNRFC recovery record spans 1979-01-02 00 UTC to
+2026-03-02 00 UTC: 567 accepted monthly/partial segments, 17,226 daily
+files for each of LDASOUT and CHRTOUT, and 413,424 hourly channel records
+in 17,227 calendar-day collections. The initial collection has 23 records;
+the terminal collection has the next midnight record only. These are expected
+simulation-boundary effects, not missing records.
+
+`bin/promote_cnrfc_retro.py --execute` audits segment continuity, expected
+file coverage, restart presence, and all hourly archive receipts against their
+published inode/size/modification-time identities. It holds the campaign lock,
+refuses queued/running CNRFC jobs or destination conflicts, and uses
+same-filesystem directory renames. Every moved file's identity is then checked
+again; no NetCDF data or scientific results are recalculated by promotion.
+This relies on the existing model acceptance checks and full-variable archive
+verification, rather than claiming a new full-field scientific audit.
+
+Published paths no longer need the `recovery_record_stack_v1` level:
+
+```text
+nwm/outputs/cnrfc/retro/{hourly,daily}/YYYY/MM/
+nwm/restarts/cnrfc/retro/YYYY/MM/
+```
+
+The definitive completion gate is
+`nwm/status/cnrfc/retro-promotion/promotion.json` (`status: complete`).
+`plan.json` records the full old/new file inventory and identities. Rewritten
+operational run JSON files have their originals backed up under
+`metadata-before/` alongside that journal. Run records and logs retain the
+campaign identifier; older campaigns and tests remain historical and are not
+promoted. No compatibility symlinks are needed. The CNRFC runner uses canonical
+paths only after the completion gate and refuses an incomplete migration.
+If interrupted, inspect the journal and completed moves before any recovery;
+the promotion command deliberately refuses a blind second execution.
+
+CONUS recovery is independent and remains in its existing active campaign
+layout. CNRFC promotion does not move or rewrite any CONUS files.
+
+Promotion completed October 4, 2026: all 50 directory renames and identity
+checks for all 70,040 moved files passed. The terminal March 2 restart pair
+also passed its timestamp, required-state and finite-routing-state checks.
+The four focused CNRFC runner tests passed, including canonical-path selection
+and refusal to run during incomplete promotion.

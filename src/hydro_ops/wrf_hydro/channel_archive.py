@@ -41,7 +41,7 @@ def raw_record(variable, index, count):
     return variable[:]
 
 
-def publish_day(inputs, output):
+def publish_day(inputs, output, *, replace_overlap=False):
     # Import here to keep the public production API backwards compatible.
     from hydro_ops.wrf_hydro.production import normalize_archive_time, times
 
@@ -65,6 +65,11 @@ def publish_day(inputs, output):
                         and name != 'reference_time' and len(stamps) != 1):
                     raise ValueError(f"Unrecoverable multihour field without time: {name}")
             records.extend((path, i, len(stamps), stamp) for i, stamp in enumerate(stamps))
+    if replace_overlap:
+        # Explicit replay mode: later inputs replace matching timestamps only.
+        # Default publication continues to reject any overlap.
+        selected = {row[3]: row for row in records}
+        records = [selected[t] for t in sorted(selected)]
     stamps = [row[3] for row in records]
     if (not stamps or len(stamps) > 24 or stamps != sorted(set(stamps))
             or stamps[0].strftime('%Y%m%d') != output.name[:8]

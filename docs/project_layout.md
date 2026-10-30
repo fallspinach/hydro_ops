@@ -1,4 +1,4 @@
-# Forcing and NWM project layout
+# Forcing, NWM and observation project layout
 
 For moving the entire project to another filesystem location or cluster, see
 [project relocation](project_relocation.md). That is separate from the internal
@@ -7,6 +7,8 @@ temporal-resolution directory migration described below.
 The repository operates two coupled production systems. `forcing` owns acquisition and production
 of meteorological forcing; `nwm` owns WRF-Hydro/NWM domains, runs, state, and model products. A
 forcing product is immutable input to an NWM run and is referenced rather than copied.
+`observations/` owns provider observations and station metadata shared across
+all domains; model-specific comparisons live under `nwm/validation/`.
 
 ```text
 forcing/
@@ -22,14 +24,54 @@ forcing/
 
 nwm/
   static/                         versioned domains, hydrofabric, and parameters
-  inputs/                         observations and other model-specific dynamic inputs
+  inputs/                         model-specific dynamic inputs; shared observations are referenced
   runs/<domain>/                  experiment and cycle workspaces; large transient work uses scratch
   outputs/<domain>/<stream>/      published model history products
   restarts/<domain>/<stream>/YYYY/MM/
                                   paired, verified 00 UTC land and routing checkpoints
   logs/                           WRF-Hydro/NWM logs
   status/                         domain inventories and model-operation status
+
+observations/
+  static/stations/<provider>/     station and sensor metadata, source notes
+  static/domains/                 station-to-domain/reach mappings when validated
+  inputs/<provider>/              preserved source responses and revisions
+  processed/<provider>/           standardized records, units and quality flags
+  status/                         acquisition plans, coverage and update reports
+  logs/                           acquisition/submission logs
+  work/                           temporary observation processing state
 ```
+
+For CDEC full-natural-flow records and daily cron acquisition, see
+[CDEC observations](cdec_observations.md). Store station records once by provider,
+resolution, station and year rather than duplicating them per model domain.
+The [USGS streamflow inventory](usgs_streamflow_observations.md) similarly keeps
+one CONUS station/series snapshot and derives reporting-region lists for the
+four subdomains without duplicating observation records.
+
+### CNRFC model publication
+
+The [expanded-grid promotion](cnrfc_grid_promotion.md) makes the validated HU2-18
+grid canonical `cnrfc`, with flat resolution/year/month publication directories.
+Run/status campaigns retain their names; published forcing/output/restart paths
+do not require a `cnrfc_hu18_v1` alias or temporary campaign nesting.
+
+Validated CNRFC retrospective model products use these canonical destinations:
+
+```text
+nwm/outputs/cnrfc/retro/hourly/YYYY/MM/YYYYMMDD.CHRTOUT_DOMAIN1
+nwm/outputs/cnrfc/retro/daily/YYYY/MM/YYYYMMDD.CHRTOUT_DOMAIN1.daily
+nwm/outputs/cnrfc/retro/daily/YYYY/MM/YYYYMMDD.LDASOUT_DOMAIN1.daily
+nwm/restarts/cnrfc/retro/YYYY/MM/
+```
+
+`recovery_record_stack_v1` is a recovery campaign identifier, not a permanent
+publication level. Run records and logs retain that identifier for provenance.
+The promotion audit/journal is `nwm/status/cnrfc/retro-promotion/`; its
+`promotion.json` must say `complete` before the recovery runner uses these
+canonical destinations. Earlier campaign/test directories are historical, not
+the current published record. CONUS remains in its active recovery campaign
+layout until it is separately audited and promoted.
 
 The forcing domain name describes the output grid, not the source-product domains. The current
 full NWM grid is `conus`; future subset products use stable lowercase identifiers such as `croton`

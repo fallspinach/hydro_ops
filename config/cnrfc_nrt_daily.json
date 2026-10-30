@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "rewind_days": 11,
+  "archive_gate": "nwm/status/cnrfc/grid-promotion/handoff-acceptance.json",
+  "grid_version": "cnrfc_hu18_v1",
+  "mask_sha256": "9ea3c1eac13b7eb6bae5594cd7b8f95e9fe2f56b1e16031b2d7f6900d0d7d79c",
+  "note": "Expanded grid promoted to canonical CNRFC; runtime migration gate blocks operations until synchronization, replay and audited retirement pass. Pinned forcing, rst_typ=1; retention remains plan-only."
+}

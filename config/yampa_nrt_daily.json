@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "rewind_days": 11,
+  "mpi_ranks": 32,
+  "daily_acceptance": "nwm/runs/yampa/nrt/cycles/job-5069198/cycle.json",
+  "archive_gate": "nwm/status/subdomain-nrt-catchup/yampa/handoff-acceptance.json",
+  "note": "Require promoted NRT archive and a passed domain-specific daily replay test before activation. Paired daily 00 UTC checkpoints; retention remains plan-only."
+}
