@@ -54,6 +54,8 @@ def read(path, layer_name, target):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     root = Path(__file__).resolve().parents[1]
+    from hydro_ops.cnrfc_domain import require_legacy_grid
+    require_legacy_grid(root)
     parser.add_argument('--output', type=Path, default=root / 'nwm/static/domains/cnrfc/boundaries')
     args = parser.parse_args()
     out = args.output.resolve()

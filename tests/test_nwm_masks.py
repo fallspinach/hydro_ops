@@ -50,6 +50,13 @@ def test_forcing_subset_exact_values_and_active_failure(tmp_path, monkeypatch, r
             d[name].units = 'test units'
             d[name].cell_methods = 'time: mean'
         d.forcing_static_mask_status = 'parent evidence'
+        qc = d.createVariable('gfs_fallback_qc', 'u1', ('time', 'y', 'x'), fill_value=255)
+        qc.flag_masks = np.array([1, 2], dtype='u1')
+        qc.flag_meanings = 'gfs_meteorology gfs_precipitation'
+        qc[:] = 255  # Unknown provenance, including on the active cell.
+        qc[1, 0, 2] = 0  # Known no-action flag must stay distinct from missing.
+        distance = d.createVariable('gfs_donor_distance', 'f4', ('time', 'y', 'x'), fill_value=-9999)
+        distance[:] = -9999
     with Dataset(mask, 'w') as d:
         d.createDimension('y', 2); d.createDimension('x', 2)
         d.source_window = json.dumps({'west_east_start': 1, 'west_east_end': 2,
@@ -65,10 +72,35 @@ def test_forcing_subset_exact_values_and_active_failure(tmp_path, monkeypatch, r
         assert np.ma.getmaskarray(d['T2D'][0])[1].all()
         assert 'forcing_static_mask_status' not in d.ncattrs()
         assert d['T2D'].cell_methods == 'time: mean'
+        assert np.ma.getmaskarray(d['gfs_fallback_qc'][:])[:, 0, 0].all()
+        assert d['gfs_fallback_qc'][1, 0, 1] == 0
+        assert d['gfs_fallback_qc'].flag_meanings == 'gfs_meteorology gfs_precipitation'
+        assert np.ma.getmaskarray(d['gfs_donor_distance'][:]).all()
         if resolution != 'hourly':
             np.testing.assert_array_equal(d['time_bounds'][:], [[0, 1], [1, 2]])
             assert d.parent_aggregation_signature == 'parent-signature'
             assert 'aggregation_signature' not in d.ncattrs()
+    nested_mask = tmp_path / 'nested-mask.nc'
+    shutil.copy2(mask, nested_mask)
+    with Dataset(nested_mask, 'r+') as d:
+        values = d['model_mask'][:]
+        values[0, 1] = 1
+        d['model_mask'][:] = values
+        d['model_mask'].sha256 = mask_digest(values)
+    nested = tmp_path / 'nested.nc'
+    assert tool.subset(output, nested, nested_mask)['active_cells'] == 2
+    with Dataset(nested) as d, Dataset(output) as parent:
+        np.testing.assert_array_equal(d['T2D'][:], parent['T2D'][:])
+        assert d['subset_model_mask'][0, 1] == 1
+        assert json.loads(d.subset_window)['west_east_start'] == 1
+        assert json.loads(d.subset_parent_provenance)['subset_source'] == str(source.resolve())
+    with Dataset(nested_mask, 'r+') as d:
+        values = d['forcing_mask'][:]
+        values[1, 0] = 1
+        d['forcing_mask'][:] = values
+        d['forcing_mask'].sha256 = mask_digest(values)
+    with pytest.raises(ValueError, match='parent forcing coverage'):
+        tool.subset(output, tmp_path / 'outside.nc', nested_mask)
     with Dataset(source, 'r+') as d:
         d['T2D'][0, 0, 1] = -9999
     failed = tmp_path / 'failed.nc'

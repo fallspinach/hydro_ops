@@ -1,4 +1,4 @@
-"""Crop a CONUS LDASIN to a shared domain window and apply its forcing mask.
+"""Crop a CONUS or already-subset LDASIN using absolute parent-grid windows.
 
 No remapping, interpolation or nearest-neighbor filling. Input remains untouched.
 """
@@ -24,6 +24,21 @@ def subset(source, output, mask_path):
     ys = slice(window.south_north_start, window.south_north_end+1)
     xs = slice(window.west_east_start, window.west_east_end+1)
     with Dataset(source) as data:
+        if 'subset_window' in data.ncattrs():
+            parent = json.loads(data.subset_window)
+            y0, x0 = parent['south_north_start'], parent['west_east_start']
+            if (len(data.dimensions['y']) != parent['south_north_end'] - y0 + 1
+                    or len(data.dimensions['x']) != parent['west_east_end'] - x0 + 1):
+                raise ValueError('Parent subset window/dimension mismatch')
+            ys = slice(ys.start - y0, ys.stop - y0)
+            xs = slice(xs.start - x0, xs.stop - x0)
+        if not (0 <= ys.start < ys.stop <= len(data.dimensions['y'])
+                and 0 <= xs.start < xs.stop <= len(data.dimensions['x'])):
+            raise ValueError('Target window is outside source grid')
+        if 'subset_forcing_mask' in data.variables:
+            parent_keep = np.asarray(data['subset_forcing_mask'][ys, xs], dtype=bool)
+            if np.any(masks['forcing_mask'] & ~parent_keep):
+                raise ValueError('Target forcing mask exceeds parent forcing coverage')
         resolution = getattr(data, 'temporal_resolution', 'hourly')
         required = SUMMARY_FIELDS if resolution in ('P1D', 'P1M') else FIELDS
         fields = tuple(dict.fromkeys((*required, *(name for name, variable in data.variables.items()
@@ -47,16 +62,23 @@ def subset(source, output, mask_path):
                 for index in range(len(times)):
                     values = np.ma.array(variable[index], copy=True)
                     invalid = np.ma.getmaskarray(values) | ~np.isfinite(np.ma.getdata(values))
-                    if np.any(invalid & masks['model_mask']):
+                    # Ancillary QC/diagnostics may legitimately lack legacy provenance.
+                    # Preserve their missing values; only weather fields drive the model.
+                    if name in required and np.any(invalid & masks['model_mask']):
                         raise ValueError(f'{name} hour {index}: missing active-cell forcing; no fill attempted')
                     variable[index] = np.ma.masked_where(~masks['forcing_mask'], values)
             for name in ('model_mask', 'forcing_mask'):
-                v = data.createVariable('subset_'+name, 'u1', ('y', 'x'), zlib=True, complevel=2)
+                key = 'subset_' + name
+                v = data[key] if key in data.variables else data.createVariable(
+                    key, 'u1', ('y', 'x'), zlib=True, complevel=2)
                 v[:] = masks[name]; v.sha256 = mask_digest(masks[name])
             # CONUS audit/count metadata is retained only as parent evidence.
             for key in list(data.ncattrs()):
                 if key.startswith(('forcing_domain_', 'forcing_static_mask', 'forcing_gap_fill_', 'forcing_active_mask')):
                     data.setncattr('parent_'+key, data.getncattr(key)); data.delncattr(key)
+            if 'subset_window' in data.ncattrs():
+                data.subset_parent_provenance = json.dumps({
+                    key: data.getncattr(key) for key in data.ncattrs() if key.startswith('subset_')})
             data.subset_mask_file = str(mask_path.resolve())
             data.subset_source = str(source.resolve())
             data.subset_window = json.dumps(window.__dict__)
@@ -90,6 +112,8 @@ def subset(source, output, mask_path):
               'retained_forcing_cells': int(masks['forcing_mask'].sum()),
               'missing_active_values': 0, 'retained_values_exact_match': True,
               'temporal_resolution': resolution, 'validated_fields': list(fields),
+              'active_completeness_fields': list(required),
+              'ancillary_missing_policy': 'preserve source missing values; exact retained-value audit',
               'nonspatial_coordinates_and_bounds_preserved': True}
     output.with_name(output.name+'.subset.json').write_text(json.dumps(report, indent=2)+'\n')
     return report

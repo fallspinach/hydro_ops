@@ -1,0 +1,11 @@
+{
+  "domain": "cnrfc_hu18_v1",
+  "authorized": true,
+  "start": "2026-01-01T00:00:00",
+  "end_exclusive": "2026-04-18T00:00:00",
+  "campaign": "hu18_pilot_v1",
+  "gate": "nwm/status/cnrfc_hu18_v1/hu18_pilot_v1/job-4956455/acceptance.json",
+  "predecessor_acceptance": "nwm/runs/cnrfc_hu18_v1/retro/hu18_pilot_v1/2025-passed.json",
+  "operational_cutover": false,
+  "endpoint_reason": "March 3-4 repaired; continuous CONUS retro forcing through April 18 provides final midnight boundary"
+}
